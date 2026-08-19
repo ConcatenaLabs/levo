@@ -95,16 +95,6 @@ export default function Beam({ tiers, stakeAtoms = 0, compactMode = false, showM
           <line key={'t' + s.i} x1={s.x0} y1={H - padB} x2={s.x0} y2={H - padB + 6}
                 stroke="var(--line)" strokeWidth="1" vectorEffect="non-scaling-stroke" />
         ))}
-        {/* what each step is worth: the y axis, said rather than implied */}
-        {steps.map((s) => (
-          s.tier.cap_atoms > 0 ? (
-            <text key={'c' + s.i} x={s.x0 + 8} y={s.y - 8}
-                  fill="var(--brass)" fontSize="15"
-                  fontFamily="var(--mono)" opacity="0.85">
-              {compact(s.tier.cap_atoms)}
-            </text>
-          ) : null
-        ))}
         {showMarker && (
           <g>
             <line x1={mx} y1={my} x2={mx} y2={H - padB}
@@ -116,6 +106,20 @@ export default function Beam({ tiers, stakeAtoms = 0, compactMode = false, showM
           </g>
         )}
       </svg>
+      {/* The step values live in HTML, not in the SVG: the geometry is scaled
+          non-uniformly so the steps fill the width, and text inside it would be
+          squashed with them. */}
+      <div className="beam-caps">
+        {steps.map((s) => (
+          s.tier.cap_atoms > 0 ? (
+            <span key={'cap' + s.i} className="beam-cap"
+                  style={{ left: (s.x0 / W) * 100 + '%',
+                           top: (s.y - (compactMode ? 15 : 19)) + 'px' }}>
+              {compact(s.tier.cap_atoms)}
+            </span>
+          ) : null
+        ))}
+      </div>
       <div className="beam-cap-note">up to · USDX per sale</div>
       <div className="beam-labels">
         {tiers.map((t, i) => (

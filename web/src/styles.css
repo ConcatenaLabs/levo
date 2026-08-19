@@ -122,7 +122,7 @@ p { margin: 0 0 1rem; }
 
 .footer {
   border-top: 1px solid var(--line);
-  margin-top: 6rem; padding: 2.5rem 0 4rem;
+  margin-top: 6rem; padding-block: 2.5rem 4rem;
   color: var(--muted); font-size: .875rem;
 }
 .footer-in { display: flex; flex-wrap: wrap; gap: 1.5rem 2.5rem; align-items: baseline; }
@@ -193,6 +193,13 @@ p { margin: 0 0 1rem; }
   text-transform: uppercase; color: var(--muted);
 }
 
+.beam-caps { position: absolute; inset: 0; pointer-events: none; }
+.beam-cap {
+  position: absolute; margin-left: 7px;
+  font-family: var(--mono); font-size: .72rem; color: var(--brass);
+}
+.beam.compact .beam-cap { font-size: .64rem; margin-left: 5px; }
+
 .beam-labels { position: relative; height: 0; }
 .beam-label {
   position: absolute; top: -26px; padding-left: 2px;
@@ -207,7 +214,11 @@ p { margin: 0 0 1rem; }
 
 /* ---------- hero ---------- */
 
-.hero { padding: clamp(3.5rem, 9vw, 7rem) 0 3rem; }
+/* padding-BLOCK, not the shorthand: these classes are used together with
+   .wrap, and `padding: x 0 y` would silently wipe out the gutter .wrap sets.
+   Above 1180px the max-width centring hides that; below it the text sits flush
+   against the edge of the screen. */
+.hero { padding-block: clamp(3.5rem, 9vw, 7rem) 3rem; }
 .hero h1 { max-width: 15ch; }
 .hero-lede {
   max-width: 52ch; margin-top: 1.5rem; font-size: clamp(1.02rem, 1.6vw, 1.18rem);
@@ -227,7 +238,7 @@ p { margin: 0 0 1rem; }
 
 /* ---------- generic layout helpers ---------- */
 
-.section { padding: clamp(2.5rem, 6vw, 4.5rem) 0; }
+.section { padding-block: clamp(2.5rem, 6vw, 4.5rem); }
 .section-head { margin-bottom: 2rem; max-width: 62ch; }
 .section-head p { color: var(--muted); margin-top: .75rem; }
 
@@ -339,3 +350,40 @@ input:focus, select:focus, textarea:focus { border-color: var(--brass-dim); }
 .rail span { display: block; font-size: .75rem; color: var(--muted); margin-top: .15rem; }
 .rail.on { border-color: var(--brass); background: #1b1a13; }
 .rail:disabled { opacity: .45; cursor: not-allowed; }
+
+/* ---------- small screens ---------- */
+/* The display face is wide by design, which is the point of it and also its
+   hazard: a long word set large has nowhere to go on a narrow screen. These
+   rules give it somewhere. */
+
+h1, h2, h3 { overflow-wrap: break-word; }
+
+@media (max-width: 640px) {
+  /* Sized so the longest word in the headline fits the line rather than
+     breaking: a wide display face and a fourteen-letter word leave no slack,
+     and a broken word costs more than the extra size buys. */
+  h1 { font-size: clamp(1.45rem, 6.6vw, 3rem); line-height: 1.08; }
+  .hero { padding-block-start: 2.5rem; }
+  .hero-lede { font-size: 1rem; }
+
+  /* The links matter more than keeping them on one line with the wordmark. */
+  .nav-in { height: auto; padding: .7rem 0; flex-wrap: wrap; row-gap: .5rem; }
+  .nav-links { margin-left: 0; width: 100%; gap: 1.1rem; font-size: .9rem; }
+  .nav a { font-size: .88rem; }
+
+  /* Four thresholds do not fit across 390px; the names carry the meaning and
+     the amounts are on the tiers page in full. */
+  .beam-label span { display: none; }
+  .beam-label { font-size: .6rem; }
+  .beam-cap-note { display: none; }
+
+  .rail-pick { grid-template-columns: 1fr; }
+  .row { gap: .5rem; }
+  .terms th { width: 40%; }
+  .step { grid-template-columns: 22px 1fr; gap: .6rem; }
+}
+
+@media (max-width: 420px) {
+  /* Keep the two ends: they are the ones that say what the scale spans. */
+  .beam-label:nth-child(2), .beam-label:nth-child(3) { display: none; }
+}
