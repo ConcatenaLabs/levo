@@ -223,10 +223,19 @@ class Handler(BaseHTTPRequestHandler):
             _check_pubkey(staker)
             app.stake_challenges.redeem(message)
             # The statement names both parties, so a signature proving control
-            # of this key cannot be replayed onto a different account.
-            if T.StakeLinks.binding_statement(acct, staker, _nonce_of(message)) != message:
-                raise ValueError("the signed statement does not match this "
-                                 "account and staking key")
+            # of this key cannot be replayed onto a different account. Check the
+            # NAMED FIELDS rather than comparing the whole statement verbatim:
+            # the signature already covers the exact bytes, and an exact string
+            # match would reject a caller whose transport trimmed a trailing
+            # newline -- which shell command substitution does, silently.
+            named = _fields_of(message)
+            if named.get("Account") != acct:
+                raise ValueError("the signed statement names account %r, but you "
+                                 "are signed in as %r"
+                                 % (named.get("Account"), acct))
+            if named.get("Staking key") != staker:
+                raise ValueError("the signed statement names staking key %r, "
+                                 "not %r" % (named.get("Staking key"), staker))
             if not A.verify_signature(message, b.get("signature") or "", staker):
                 raise A.BadSignature("that signature was not made by %s" % staker)
             app.links.link(acct, staker)
@@ -341,11 +350,26 @@ def _check_pubkey(pk):
         raise ValueError("staker_pubkey must be a 33-byte compressed key in hex")
 
 
-def _nonce_of(message):
+def _fields_of(message):
+    """The `Label: value` lines of a signed statement.
+
+    Levo's statements are written to be read by the person signing them, so
+    their fields are the contract. Reading the fields back out is what lets a
+    signature be checked against what it actually says.
+    """
+    out = {}
     for line in str(message).splitlines():
-        if line.startswith("Nonce: "):
-            return line[len("Nonce: "):].strip()
-    raise ValueError("no nonce in the signed statement")
+        if ": " in line:
+            k, v = line.split(": ", 1)
+            out[k.strip()] = v.strip()
+    return out
+
+
+def _nonce_of(message):
+    n = _fields_of(message).get("Nonce")
+    if not n:
+        raise ValueError("no nonce in the signed statement")
+    return n
 
 
 def main():

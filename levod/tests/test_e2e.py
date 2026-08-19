@@ -144,6 +144,30 @@ def main():
     ok.eq(st["tier"]["name"], "Founder", "issuer reaches the top tier")
     ok.eq(st["tier"]["may_list"], True, "top tier may list")
 
+    # A statement whose trailing newline was trimmed in transit must still
+    # link. Shell command substitution strips it silently, so an exact
+    # whole-string comparison would reject every CLI user.
+    pk2 = SH.pubkey_of(buyer_stake_sec)
+    _, ch2 = _req(base, "POST", "/api/stake/challenge",
+                  {"staker_pubkey": pk2}, token=buyer_tok)
+    trimmed = ch2["message"].rstrip("\n")
+    code, r = _req(base, "POST", "/api/stake/link",
+                   {"message": trimmed,
+                    "signature": SH.sign_recoverable(buyer_stake_sec, trimmed),
+                    "staker_pubkey": pk2}, token=buyer_tok)
+    ok.eq(code, 200, "a statement with its trailing newline trimmed still links")
+
+    # But a statement naming a DIFFERENT account must not.
+    _, ch3 = _req(base, "POST", "/api/stake/challenge",
+                  {"staker_pubkey": pk2}, token=buyer_tok)
+    forged = ch3["message"].replace("Account: " + SH.pubkey_of(buyer_sec),
+                                    "Account: " + SH.pubkey_of(issuer_sec))
+    code, r = _req(base, "POST", "/api/stake/link",
+                   {"message": forged,
+                    "signature": SH.sign_recoverable(buyer_stake_sec, forged),
+                    "staker_pubkey": pk2}, token=buyer_tok)
+    ok.eq(code, 400, "a statement naming another account is refused")
+
     st = link_stake(buyer_tok, buyer_sec, buyer_stake_sec)
     ok.eq(st["tier"]["name"], "Contributor", "buyer reaches tier 1")
     ok.eq(st["tier"]["may_list"], False, "tier 1 may not list")
