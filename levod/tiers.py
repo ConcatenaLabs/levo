@@ -25,6 +25,9 @@ signing a binding statement with each key. An account cannot claim a stranger's
 stake by naming their public key.
 """
 
+import json
+import os
+
 SEQ_ATOMS = 100_000_000          # SEQ has 8 decimal places
 POS_MIN_STAKE_ATOMS = 4_000_000_000_000   # 40,000 SEQ: the chain's own floor
 
@@ -53,17 +56,61 @@ class Tier:
 # Cap figures are payment-asset atoms (USDX, 8 dp), per sale.
 USDX_ATOMS = 100_000_000
 
+# The default thresholds are shares of the 400,000,000 SEQ supply, which is
+# where the protocol's own floor comes from: 40,000 SEQ is 0.01% (whitepaper
+# section 3.3). Expressing them that way rather than as round numbers means they
+# keep their meaning as the network grows.
+#
+#   Contributor  0.01%   the floor below which consensus ignores a staker
+#   Backer       0.05%
+#   Founder      0.25%   and the only tier that may list
 DEFAULT_TIERS = [
     Tier(0, "Visitor", 0, 0, False,
          "Browse every sale. Staking 40,000 SEQ opens the first allocation tier."),
     Tier(1, "Contributor", POS_MIN_STAKE_ATOMS, 1_000 * USDX_ATOMS, False,
-         "The chain's own blocksigner floor. Up to 1,000 USDX into any one sale."),
+         "0.01% of supply staked, the chain's own blocksigner floor. Up to "
+         "1,000 USDX into any one sale."),
     Tier(2, "Backer", 5 * POS_MIN_STAKE_ATOMS, 10_000 * USDX_ATOMS, False,
-         "200,000 SEQ staked. Up to 10,000 USDX into any one sale."),
+         "0.05% of supply staked. Up to 10,000 USDX into any one sale."),
     Tier(3, "Founder", 25 * POS_MIN_STAKE_ATOMS, 100_000 * USDX_ATOMS, True,
-         "1,000,000 SEQ staked. Up to 100,000 USDX into any one sale, and the "
+         "0.25% of supply staked. Up to 100,000 USDX into any one sale, and the "
          "only tier that may list a project."),
 ]
+
+
+def tiers_from_env(env=None):
+    """Thresholds an operator can set without editing code.
+
+    LEVOD_TIERS is a JSON list of objects with `name`, `min_stake` (in whole
+    SEQ), `cap` (in whole units of the payment asset), `may_list` and an
+    optional `blurb`. A deployment whose stakers all sit near the protocol floor
+    needs lower thresholds than mainnet defaults, and changing them is an
+    operator's decision rather than a code change.
+
+    The tier table the interface shows comes from here, so whatever is
+    configured is what users are told.
+    """
+    env = env if env is not None else os.environ
+    raw = env.get("LEVOD_TIERS")
+    if not raw:
+        return None
+    spec = json.loads(raw)
+    tiers = []
+    for level, t in enumerate(sorted(spec, key=lambda x: float(x.get("min_stake", 0)))):
+        tiers.append(Tier(
+            level, t["name"],
+            int(round(float(t.get("min_stake", 0)) * SEQ_ATOMS)),
+            int(round(float(t.get("cap", 0)) * USDX_ATOMS)),
+            bool(t.get("may_list", False)),
+            t.get("blurb", "")))
+    if not tiers:
+        raise ValueError("LEVOD_TIERS is empty")
+    if not any(t.may_list for t in tiers):
+        raise ValueError("LEVOD_TIERS has no tier that may list a project")
+    if tiers[0].min_stake_atoms != 0:
+        raise ValueError("the lowest tier must start at 0 stake, so that every "
+                         "visitor lands somewhere")
+    return tiers
 
 
 class TierPolicy:
