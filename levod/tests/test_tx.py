@@ -201,3 +201,28 @@ def test_txid_matches_a_real_node(t):
     t.eq(built["txid"],
          "ac71f527bc41bd2bc90395a5ce30bd6b9e08436ea8b8e05d342ab4592ae96c1c",
          "txid matches what a live node computed for these exact bytes")
+
+
+def test_set_witness_replaces_one_input_and_leaves_the_rest(t):
+    """A wallet signs the inputs it owns and leaves the covenant's alone,
+    because it knows nothing about the leaf. The covenant's witness goes in
+    afterwards, and putting it in the wrong place would either strip the leaf or
+    corrupt the transaction. Verified against a live node's decode."""
+    s = _sale()
+    plan = s.plan_buy("b", T.TierPolicy().for_stake(TOP), token_atoms=1000 * 10**8, height=1)
+    built = TX.build_buy(s, plan, _buyer())
+    marker = [b"\xde" * 64, b"\xad" * 33]
+    out = TX.set_witness(built["unsigned_tx_hex"], 1, marker)
+
+    t.ok(out != built["unsigned_tx_hex"], "the transaction changed")
+    t.ok(marker[0].hex() in out, "the new witness is present")
+    t.ok(s.cov.sell_leaf.hex() in out, "the covenant's leaf survived untouched")
+    # And the covenant's own witness can be replaced without disturbing others.
+    out2 = TX.set_witness(out, 0, [b"\x01", b"\x02"])
+    t.ok(marker[0].hex() in out2, "input 1's witness is still there")
+
+    try:
+        TX.set_witness(built["unsigned_tx_hex"], 9, marker)
+        t.ok(False, "should refuse an input index that does not exist")
+    except TX.BuildError:
+        t.ok(True, "refuses an input index that does not exist")

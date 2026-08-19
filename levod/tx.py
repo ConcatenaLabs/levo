@@ -529,3 +529,66 @@ def build_reclaim(sale, destination_spk, fee_inputs, fee_atoms, fee_asset,
         {"index": n + 1, "outpoint": "%s:%d" % (i["txid"], i["vout"])}
         for n, i in enumerate(fee_inputs or [])]
     return result
+
+
+# --- filling in a witness after the fact -------------------------------------
+
+def set_witness(tx_hex, index, stack):
+    """Replace one input's witness in an already-serialised transaction.
+
+    A wallet signs the inputs it owns and leaves the covenant's alone, because
+    it knows nothing about the leaf. The covenant's witness therefore has to go
+    in afterwards, which means walking the serialisation to find the right
+    span rather than rebuilding the transaction from scratch and risking a
+    different one.
+    """
+    raw = bytes.fromhex(tx_hex) if isinstance(tx_hex, str) else bytes(tx_hex)
+    pos = 4                                        # version
+    flags = raw[pos]
+    pos += 1
+    if not flags & 1:
+        raise BuildError("that transaction has no witness section to fill")
+
+    def rd(p):
+        n = raw[p]
+        if n < 0xfd:
+            return n, p + 1
+        if n == 0xfd:
+            return struct.unpack_from("<H", raw, p + 1)[0], p + 3
+        if n == 0xfe:
+            return struct.unpack_from("<I", raw, p + 1)[0], p + 5
+        return struct.unpack_from("<Q", raw, p + 1)[0], p + 9
+
+    n_in, pos = rd(pos)
+    for _ in range(n_in):
+        pos += 36                                  # outpoint
+        ln, pos = rd(pos)
+        pos += ln                                  # scriptSig
+        pos += 4                                   # sequence
+    n_out, pos = rd(pos)
+    for _ in range(n_out):
+        pos += 33 if raw[pos] == 1 else 1          # asset
+        pos += 9 if raw[pos] == 1 else 33          # value
+        pos += 1 if raw[pos] == 0 else 33          # nonce
+        ln, pos = rd(pos)
+        pos += ln                                  # scriptPubKey
+    pos += 4                                       # locktime
+
+    spans = []
+    for _ in range(n_in):
+        s0 = pos
+        for _ in range(2):                         # issuance rangeproofs
+            ln, pos = rd(pos)
+            pos += ln
+        for _ in range(2):                         # script witness, pegin witness
+            cnt, pos = rd(pos)
+            for _ in range(cnt):
+                ln, pos = rd(pos)
+                pos += ln
+        spans.append((s0, pos))
+    if not 0 <= index < len(spans):
+        raise BuildError("input %d is not in this transaction" % index)
+    a, b = spans[index]
+    rebuilt = (ser_string(b"") + ser_string(b"")
+               + ser_string_vector(list(stack)) + ser_string_vector([]))
+    return (raw[:a] + rebuilt + raw[b:]).hex()
