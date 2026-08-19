@@ -79,6 +79,14 @@ cd web && npm install && npm run build     # build the app once
 python3 levod/demo.py                      # then open http://127.0.0.1:8099
 ```
 
+The app builds with **Node 22.12 or newer**. On an older Node the native
+bundler binding is skipped as an unmet engine and the build fails on a missing
+module rather than on the version, which is a confusing way to find out.
+
+Serving from a sub-path (`/levo/` behind a reverse proxy that strips the
+prefix) needs `LEVO_BASE=/levo/ npm run build`; the app reads its own base at
+runtime, so nothing else changes.
+
 `demo.py` replaces the node with a stub and seeds two sales, so the whole
 platform can be clicked through without a chain. Covenant addresses, signature
 recovery and tier arithmetic are the shipped code; only the node is faked.

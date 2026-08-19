@@ -200,6 +200,13 @@ export default function Launch() {
           <label htmlFor="asset">Token asset id</label>
           <input id="asset" className="mono" value={form.token_asset} onChange={set('token_asset')}
                  placeholder="64 hex characters" />
+          <div className="hint">
+            Issue it with a contract naming the token and its ticker, and
+            register that contract, so wallets show a name instead of a hex id.
+            An asset issued without one stays anonymous for as long as it
+            exists: the contract is committed at issuance and cannot be added
+            later.
+          </div>
         </div>
         <div className="grid-2">
           <div className="field">
