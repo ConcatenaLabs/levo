@@ -62,8 +62,52 @@ class NodeRPC:
     # --- the questions Levo actually asks ---------------------------------
 
     def staker_weights(self):
-        """{staker public key hex: stake weight in policy-asset atoms}."""
+        """{staker public key hex: stake weight in policy-asset atoms}.
+
+        Weights keyed by SIGNER: what the chain uses to produce blocks. A
+        delegated stake appears here under the pool operator, not its owner.
+        """
         return {str(k).lower(): int(v) for k, v in (self.call("getstakerinfo") or {}).items()}
+
+    def controller_weights(self):
+        """{controller public key hex: {weight_atoms, delegated, signer}}.
+
+        Weight keyed by the key that OWNS the stake, which is the question Levo
+        is actually asking. A stake delegated to a pool still belongs to the
+        controller -- delegation lends block-signing rights and never the coins,
+        and only the controller can ever spend them -- so it counts for the
+        controller here. The pool operator is credited with its own stake only,
+        rather than with weight its depositors put up.
+
+        Falls back to signer-keyed weights on a node that does not support the
+        question, and says so, because silently reporting a delegator as having
+        no stake would lock them out with no explanation.
+        """
+        try:
+            raw = self.call("getstakerinfo", True, True) or {}
+            out = {}
+            for k, v in raw.items():
+                if isinstance(v, dict):
+                    out[str(k).lower()] = {
+                        "weight_atoms": int(v.get("weight", 0)),
+                        "delegated": bool(v.get("delegated")),
+                        "signer": (v.get("signer") or "").lower() or None,
+                    }
+                else:
+                    out[str(k).lower()] = {"weight_atoms": int(v),
+                                           "delegated": False, "signer": None}
+            return out, True
+        except RPCError:
+            return ({k: {"weight_atoms": v, "delegated": False, "signer": None}
+                     for k, v in self.staker_weights().items()}, False)
+
+    def delegations(self):
+        """{controller: signer} for every live delegation, or {} if unavailable."""
+        try:
+            return {str(k).lower(): str(v).lower()
+                    for k, v in (self.call("getdelegationinfo") or {}).items()}
+        except RPCError:
+            return {}
 
     def chain_height(self):
         return int(self.call("getblockchaininfo")["blocks"])

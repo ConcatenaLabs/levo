@@ -62,11 +62,24 @@ def test_binding_statement_names_both_parties(t):
 
 
 class _FakeRPC:
-    def __init__(self, weights):
+    """A node that answers by controller, as an upgraded one does."""
+
+    def __init__(self, weights, delegated=None, supported=True):
         self._w = weights
+        self._d = delegated or {}
+        self._supported = supported
 
     def staker_weights(self):
         return dict(self._w)
+
+    def controller_weights(self):
+        if not self._supported:
+            return ({k: {"weight_atoms": v, "delegated": False, "signer": None}
+                     for k, v in self._w.items()}, False)
+        return ({k: {"weight_atoms": v,
+                     "delegated": k in self._d,
+                     "signer": self._d.get(k)}
+                 for k, v in self._w.items()}, True)
 
 
 def test_standing_sums_only_proven_keys(t):
@@ -236,3 +249,43 @@ def test_the_login_key_counts_without_a_separate_link(t):
     # An account that is not a staker still gets nothing.
     t.eq(T.StakeReader(_FakeRPC({}), T.StakeLinks()).standing(me)["stake_atoms"], 0,
          "a login key with no stake adds nothing")
+
+
+def test_delegated_stake_counts_for_the_person_who_owns_it(t):
+    """Delegation lends block-signing rights, never the coins: only the
+    controller can ever spend them. The chain's default view is keyed by signer,
+    under which a delegator appears to have nothing at all -- so Levo asks by
+    controller instead."""
+    me = "02" + "77" * 32
+    pool = "03" + "88" * 32
+    rpc = _FakeRPC({me: 5 * FLOOR}, delegated={me: pool})
+    st = T.StakeReader(rpc, T.StakeLinks()).standing(me)
+    t.eq(st["stake_atoms"], 5 * FLOOR, "a delegated stake still counts for its owner")
+    t.eq(st["tier"]["name"], "Backer", "and still earns its tier")
+    t.eq(st["keys"][0]["delegated"], True, "the interface can say it is delegated")
+    t.eq(st["keys"][0]["delegated_to"], pool, "and to whom")
+    t.eq(st["counts_delegated_stake"], True, "the node answered by controller")
+
+
+def test_a_pool_is_not_credited_with_its_depositors_stake(t):
+    """Otherwise a tier could be earned with money somebody else put up, by
+    whoever happened to be trusted with the signing."""
+    pool = "03" + "88" * 32
+    depositor = "02" + "77" * 32
+    # By controller, the pool holds only its own stake.
+    rpc = _FakeRPC({pool: FLOOR, depositor: 25 * FLOOR},
+                   delegated={depositor: pool})
+    st = T.StakeReader(rpc, T.StakeLinks()).standing(pool)
+    t.eq(st["stake_atoms"], FLOOR, "the pool counts only what it staked itself")
+    t.eq(st["tier"]["name"], "Contributor", "so its tier is its own")
+
+
+def test_an_old_node_says_so_rather_than_reporting_no_stake(t):
+    """A node that cannot answer by controller reports a delegator as having
+    nothing. Silently showing that as zero would lock them out with no reason
+    given, so the standing carries the explanation."""
+    me = "02" + "77" * 32
+    rpc = _FakeRPC({me: 3 * FLOOR}, supported=False)
+    st = T.StakeReader(rpc, T.StakeLinks()).standing(me)
+    t.eq(st["counts_delegated_stake"], False, "flagged as the signer-keyed view")
+    t.ok("delegated" in st["delegation_note"], "and explains what that costs")

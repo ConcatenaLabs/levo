@@ -23,6 +23,19 @@ nothing. The tier is a claim about committed stake, not about wealth.
 Stake is counted only for staker keys the account has PROVEN it controls, by
 signing a binding statement with each key. An account cannot claim a stranger's
 stake by naming their public key.
+
+DELEGATED STAKE COUNTS, and counts for the person who owns it. Sequentia lets a
+staker lend its block-signing rights to a pool without moving the coins: the
+pool produces blocks with that weight, and only the controller can ever spend
+them. The chain's default view is keyed by SIGNER, because that is what block
+production needs, and under it a delegator appears to have no stake at all
+while their pool appears to have everyone's.
+
+Levo asks a different question -- whose money is this? -- so it reads weight
+keyed by CONTROLLER. A delegator keeps their tier, and a pool operator is
+credited with their own stake rather than with their depositors'. Anything else
+would either shut out the people who delegate or hand a tier to whoever
+happened to be trusted with the signing.
 """
 
 import json
@@ -210,18 +223,21 @@ class StakeReader:
         key you did not sign in with; asking for a second signature under the
         same key would prove nothing the login has not already proved.
         """
-        weights = self.rpc.staker_weights()
+        weights, by_controller = self.rpc.controller_weights()
         detail = []
         total = 0
         keys = list(self.links.keys_for(account_pubkey))
         if account_pubkey in weights and account_pubkey not in keys:
             keys.insert(0, account_pubkey)
         for k in keys:
-            w = weights.get(k, 0)
+            entry = weights.get(k) or {}
+            w = int(entry.get("weight_atoms", 0))
             detail.append({"staker_pubkey": k, "weight_atoms": w,
                            "weight": w / SEQ_ATOMS,
                            "counted": w > 0,
                            "is_login_key": k == account_pubkey,
+                           "delegated": bool(entry.get("delegated")),
+                           "delegated_to": entry.get("signer"),
                            "eligible_blocksigner": w >= POS_MIN_STAKE_ATOMS})
             total += w
         tier = self.policy.for_stake(total)
@@ -234,4 +250,12 @@ class StakeReader:
             "next_tier": nxt.to_json() if nxt else None,
             "to_next_atoms": (nxt.min_stake_atoms - total) if nxt else 0,
             "keys": detail,
+            "counts_delegated_stake": by_controller,
+            "delegation_note": (
+                "Stake delegated to a pool counts for you: delegation lends "
+                "block-signing rights, never the coins."
+                if by_controller else
+                "This node reports stake by signer, so a stake you have "
+                "delegated to a pool will not be counted here. It is not lost; "
+                "the node needs a build that can report weight by controller."),
         }

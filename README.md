@@ -20,8 +20,10 @@ Everything that protects money is real and enforced by consensus:
   being reclaimed by the project after the close date. Nothing else.
 - **Signed-message login.** An account is a public key. Levo issues a challenge,
   a wallet signs it, and Levo recovers the key from the signature.
-- **Tiers from live stake.** Stake weight comes from the node's `getstakerinfo`,
-  counted only for staker keys an account has proven it controls.
+- **Tiers from live stake, delegated or not.** Weight comes from the node,
+  counted only for staker keys an account has proven it controls -- and read by
+  CONTROLLER rather than by signer, so a stake delegated to a pool still counts
+  for the person who owns it. See [doc/delegated-stake.md](doc/delegated-stake.md).
 
 - **Settlement.** Levo builds the transaction that spends the covenant, pays the
   treasury and delivers the tokens. It signs nothing and holds no keys.
