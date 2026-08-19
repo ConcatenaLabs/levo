@@ -45,6 +45,9 @@ class FakeNode:
     def call(self, method, *params):
         if method == "getfeeexchangerates":
             return dict(self.rates)
+        if method == "dumpassetlabels":
+            return {"USDX": "2a515539da5e6a60caa7766ecd65bac0c10d15717ddd2088844ba58f4d04b9de",
+                    "SBTC": "28" * 32}
         if method == "getblockhash":
             return self.GENESIS
         if method == "scantxoutset":
@@ -374,6 +377,19 @@ def main():
           "the treasury is paid at output 0")
     ok.eq(built["outputs"][1]["script_pubkey"], spk,
           "the remainder re-rests at the sale address")
+
+    # A fee in an asset this chain does not accept is refused before signing,
+    # rather than after a relay rejection nobody can read.
+    code, r = _req(base, "POST", "/api/projects/helios/transaction", {
+        "token_atoms": 100 * 100_000_000,
+        "buyer": {
+            "token_script_pubkey": "5120" + "aa" * 32,
+            "change_script_pubkey": "5120" + "bb" * 32,
+            "inputs": [{"txid": "77" * 32, "vout": 0}],
+            "fee_atoms": 1000, "fee_asset": "ee" * 32,
+        }}, token=issuer_tok)
+    ok.eq(code, 400, "a fee in an unaccepted asset is refused")
+    ok.ok("open fee market" in r["error"], "and explains the chain's fee market")
 
     # A confidential input cannot fund a covenant buy.
     node.utxos[("78" * 32, 0)] = {

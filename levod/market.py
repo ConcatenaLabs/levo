@@ -182,7 +182,9 @@ class Platform:
         value = out.get("valueatoms")
         if value is None and out.get("value") is not None:
             value = int(round(float(out["value"]) * 100_000_000))
-        p.sale.confirm_lock(txid, vout, spk, value, asset)
+        blinded = bool(out.get("valuecommitment") or out.get("amountcommitment")
+                       or out.get("assetcommitment"))
+        p.sale.confirm_lock(txid, vout, spk, value, asset, blinded=blinded)
         self.save()
         return p
 
@@ -195,6 +197,10 @@ class Platform:
             "how": "send exactly this asset and amount to this address, then "
                    "confirm the outpoint. Until then the sale is a draft and "
                    "nobody can buy.",
+            "must_be_unblinded": "send from an UNBLINDED output. A covenant "
+                                 "reads the amounts it checks, so tokens locked "
+                                 "into a confidential output could never be sold "
+                                 "or reclaimed.",
             "price_reduced": bool(getattr(project, "price_was_reduced", False)),
             "verify_against": "the terms in this response, not the ones you "
                               "submitted: the price is stored in lowest terms, "
@@ -216,6 +222,8 @@ class Platform:
                                height=self.height())
         buyer = dict(buyer or {})
         buyer["inputs"] = self.verify_buyer_inputs(buyer.get("inputs"))
+        self.check_fee_asset(buyer.get("fee_asset") or p.sale.terms.payment_asset,
+                             buyer.get("fee_atoms"))
         built = TX.build_buy(p.sale, plan, buyer)
         built["token_atoms"] = plan.token_atoms
         built["payment_atoms"] = plan.payment_atoms
@@ -339,6 +347,43 @@ class Platform:
 
     def sale_address(self, sale):
         return ADDR.from_script_pubkey(sale.script_pubkey, self.hrp)
+
+    def check_fee_asset(self, asset, fee_atoms):
+        """Refuse a fee in an asset this chain will not take.
+
+        Sequentia has an open fee market: a fee may be paid in any asset the
+        network accepts, and nothing -- the policy asset included -- is the
+        default. That freedom means a buyer can pick an asset nobody accepts,
+        and the only feedback would be a relay rejection after they signed.
+        """
+        if not fee_atoms or self.rpc is None:
+            return
+        try:
+            rates = self.rpc.call("getfeeexchangerates") or {}
+        except Exception:
+            return                      # cannot tell; let the chain decide
+        if not rates:
+            return
+        # The rate table is keyed by LABEL for assets the node knows and by hex
+        # id for the rest, so an id has to be resolved through the label map
+        # before it can be looked up.
+        accepted = {str(k).lower() for k in rates}
+        a = str(asset).lower()
+        if a in accepted:
+            return
+        try:
+            labels = self.rpc.call("dumpassetlabels") or {}
+        except Exception:
+            return                      # cannot resolve; let the chain decide
+        for label, asset_id in labels.items():
+            if str(asset_id).lower() == a and str(label).lower() in accepted:
+                return
+            if str(asset_id).lower() == a and label in rates:
+                return
+        raise PlatformError(
+            "this chain does not accept fees in %s. It has an open fee market, "
+            "so a fee may be paid in any accepted asset and none is the "
+            "default; the node lists what it takes (getfeeexchangerates)." % asset)
 
     def verify_buyer_inputs(self, inputs):
         """Check the buyer's funding outputs against the chain before building.

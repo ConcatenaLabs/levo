@@ -127,11 +127,14 @@ def verify_signature(message, signature_b64, expect_pubkey):
 class Challenges:
     """Single-use login challenges, held in memory with an expiry."""
 
-    def __init__(self, site="Levo", ttl=CHALLENGE_TTL, now=time.time):
+    MAX_OPEN = 20_000
+
+    def __init__(self, site="Levo", ttl=CHALLENGE_TTL, now=time.time, max_open=None):
         self.site = site
         self.ttl = ttl
         self._now = now
         self._open = {}
+        self.max_open = max_open or self.MAX_OPEN
 
     def issue(self, purpose="Sign in to Levo"):
         nonce = secrets.token_hex(16)
@@ -151,9 +154,20 @@ class Challenges:
         return {"nonce": nonce, "message": text, "expires_at": int(expires)}
 
     def _sweep(self):
+        """Drop expired challenges, and cap what is held.
+
+        Issuing a challenge costs an anonymous caller nothing, so without a
+        ceiling the open set is a memory sink anybody can fill. Over the cap the
+        oldest go first: they are the closest to expiring anyway, and losing one
+        costs its holder a retry rather than anything they hold.
+        """
         now = self._now()
         for n, exp in list(self._open.items()):
             if exp < now:
+                del self._open[n]
+        excess = len(self._open) - self.max_open
+        if excess > 0:
+            for n, _ in sorted(self._open.items(), key=lambda kv: kv[1])[:excess]:
                 del self._open[n]
 
     def redeem(self, message):

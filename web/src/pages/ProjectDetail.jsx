@@ -6,6 +6,7 @@ import { amount, closeLabel, compact, shortHex, toAtoms } from '../lib/format'
 import SignIn from '../components/SignIn'
 import Beam from '../components/Beam'
 import BuyFlow from '../components/BuyFlow'
+import Reclaim from '../components/Reclaim'
 
 function Terms({ sale }) {
   const t = sale.terms
@@ -98,6 +99,7 @@ function BuyPanel({ project, onBought }) {
 
 export default function ProjectDetail() {
   const { slug } = useParams()
+  const { account } = useStore()
   const [project, setProject] = useState(null)
   const [error, setError] = useState(null)
 
@@ -159,6 +161,10 @@ export default function ProjectDetail() {
 
         <div className="sticky">
           <BuyPanel project={project} onBought={load} />
+          {sale && sale.status === 'closed' && sale.locked_atoms > 0 &&
+           account === project.issuer_account && (
+            <Reclaim project={project} />
+          )}
           {sale && sale.terms.total_atoms && (
             <div className="card" style={{ marginTop: '1rem' }}>
               <div className="kv"><span>Sold</span><b>{compact(sale.sold_atoms)}</b></div>

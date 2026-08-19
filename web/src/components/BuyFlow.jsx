@@ -149,6 +149,15 @@ export default function BuyFlow({ project, tier, onSettled }) {
               <div className="kv"><span>You pay</span><b>{amount(plan.payment_atoms)} USDX</b></div>
             )}
             <div className="kv"><span>Left resting after</span><b>{amount(plan.remainder_atoms)}</b></div>
+            <div className="kv">
+              <span>Your cap in this sale</span>
+              <b>{amount(plan.cap.committed_atoms)} of {amount(plan.cap.per_sale_atoms)} used</b>
+            </div>
+            <p className="small dim" style={{ marginTop: '.75rem' }}>
+              The cap is Levo's allocation policy. The covenant enforces the
+              price, the treasury, the token and the minimum lot; it has no
+              per-buyer maximum.
+            </p>
             {plan.quote && plan.quote.steps && (
               <ol className="small dim" style={{ paddingLeft: '1.1rem', marginTop: '.75rem' }}>
                 {plan.quote.steps.map((s, i) => <li key={i}>{s}</li>)}
@@ -164,6 +173,14 @@ export default function BuyFlow({ project, tier, onSettled }) {
             Levo assembles it and signs nothing. The covenant input needs no
             signature; your inputs can only be signed by you.
           </p>
+          {rail === 'btc' && (
+            <div className="notice" style={{ marginBottom: '1rem' }}>
+              <strong>Do step one first.</strong> The covenant is paid in USDX,
+              so this transaction spends USDX, not BTC. Swap the amount quoted
+              above over Lightning, then come back and spend the USDX it gave
+              you.
+            </div>
+          )}
           <form onSubmit={build}>
             {hasProvider() && (
               <button type="button" className="btn btn-sm btn-ghost"

@@ -23,14 +23,41 @@ Everything that protects money is real and enforced by consensus:
 - **Tiers from live stake.** Stake weight comes from the node's `getstakerinfo`,
   counted only for staker keys an account has proven it controls.
 
+- **Settlement.** Levo builds the transaction that spends the covenant, pays the
+  treasury and delivers the tokens. It signs nothing and holds no keys.
+- **The chain decides.** A watcher reconciles every sale against the UTXO set,
+  so a purchase made without Levo still moves the sale, and a lock undone by a
+  Bitcoin-driven reorg stops being investable.
+
 One thing is deliberately **not** consensus, and the code says so everywhere it
 appears: **per-buyer tier caps are Levo's allocation policy, not a chain rule.**
 The sell leaf has a minimum lot but no maximum, and it is permissionless by
 design. See [doc/tiers-are-policy.md](doc/tiers-are-policy.md).
 
-The **BTC rail** is specified but not wired to a Lightning provider in this
-tree; `levod/rails.py` reports it unavailable until one is configured. USDX
-works end to end.
+## Proven on chain
+
+Both covenant paths were exercised on the Sequentia testnet, and the platform
+has run a sale end to end at
+[sequentiatestnet.com/levo](https://sequentiatestnet.com/levo/):
+
+| What | Transaction |
+|---|---|
+| A buy: treasury paid, remainder re-rested at the identical address | `bbed75291600bcd31ef9f6db4b2aaa4466a6a8399d66f8f1f6ec2b20a286ce69` |
+| A reclaim after the close, via the reclaim leaf | `2f97173f4dd60976e5862f0bb572871114c6008607eb16003911f4eff1b843ab` |
+| A buy through the deployed platform, driven by `bin/levo` | `555dfef9b5a783dbb0180ad2c01fd27cd5188a8f5eaea27f997b365330ea4c03` |
+
+## Paying
+
+**USDX** settles inside the covenant: buyer and project exchange in one
+transaction, enforced by consensus.
+
+**BTC** is native Bitcoin on the parent chain, not a token on Sequentia and not
+a pegged claim on one, so a Sequentia covenant cannot read a Bitcoin output. A
+BTC purchase is two atomic steps -- swap to the payment asset over Lightning,
+then fill the covenant -- with the buyer holding the payment asset in between.
+Levo takes custody of neither leg. Quotes come from the chain's own
+`getfeeexchangerates`, the table the network uses to price fees in any asset, so
+Levo cannot quote a rate the chain disagrees with.
 
 ## Layout
 
@@ -38,7 +65,10 @@ works end to end.
 |---|---|
 | `levod/` | The backend. Pure Python, standard library only. Serves the API and the built app from one origin. |
 | `levod/covenant.py` | The sale covenant, checked byte for byte against `levod/vectors.json` on every import. |
-| `levod/secp256k1.py`, `levod/script.py` | Curve and script primitives. Levo carries its own so it needs no node source checkout. |
+| `levod/tx.py` | Builds the transaction that settles a buy, and the one that reclaims what did not sell. |
+| `levod/watcher.py` | Reconciles sales against the UTXO set; the chain is the source of truth. |
+| `levod/secp256k1.py`, `levod/script.py`, `levod/address.py` | Curve, script and address primitives. Levo carries its own so it needs no node source checkout. |
+| `bin/levo` | A CLI that runs the whole flow against your own node. |
 | `web/` | The single-page app: Vite and React, plain CSS. |
 | `doc/` | The design notes worth keeping outside the code. |
 
@@ -53,6 +83,14 @@ python3 levod/demo.py                      # then open http://127.0.0.1:8099
 platform can be clicked through without a chain. Covenant addresses, signature
 recovery and tier arithmetic are the shipped code; only the node is faked.
 
+With a node of your own, `bin/levo` runs the real thing:
+
+```sh
+export LEVO_URL=https://sequentiatestnet.com/levo
+levo sales
+levo buy helios-grid --tokens 40      # picks inputs, builds, signs, broadcasts
+```
+
 Against a real node:
 
 ```sh
@@ -65,10 +103,14 @@ python3 levod/server.py
 ## Tests
 
 ```sh
-python3 levod/tests/run.py        # 106 checks: crypto, covenant, tiers
-python3 levod/tests/test_e2e.py   #  43 checks: the API end to end
+python3 levod/tests/run.py        # 182 checks: crypto, covenant, tiers, transactions, watcher
+python3 levod/tests/test_e2e.py   #  72 checks: the API end to end
 cd web && npm run build           # the frontend gate
 ```
+
+Schnorr signing is checked against the official BIP340 vectors, the transaction
+serialisation against a txid a live node computed, and the address encoder
+against an address a live node printed.
 
 No CI, no framework, no network. Those three commands are the whole gate.
 
@@ -83,6 +125,10 @@ No CI, no framework, no network. Those three commands are the whole gate.
 | `LEVOD_RPC_URL` | `http://127.0.0.1:7041` | Sequentia node JSON-RPC. |
 | `LEVOD_RPC_USER` / `LEVOD_RPC_PASSWORD` / `LEVOD_RPC_COOKIE` | — | Node credentials. |
 | `LEVOD_PAYMENT_ASSET` | USDX on testnet | The asset sales are priced in. |
+| `LEVOD_PAYMENT_LABEL` | `USDX` | Its label in the node's rate table. |
+| `LEVOD_HRP` | `tb` | Address prefix: `tb` testnet, `sq` mainnet, `ert` regtest. |
+| `LEVOD_TIERS` | supply-share defaults | JSON tier table; see `levod/tiers.py`. |
+| `LEVOD_WATCH_SECONDS` | `60` | How often the watcher reconciles. |
 
 ## What levod can and cannot do
 
