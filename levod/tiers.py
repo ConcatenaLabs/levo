@@ -203,15 +203,25 @@ class StakeReader:
         self.policy = policy or TierPolicy()
 
     def standing(self, account_pubkey):
-        """The account's staked total, its tier, and the evidence behind both."""
+        """The account's staked total, its tier, and the evidence behind both.
+
+        If the key you signed in with is ITSELF a registered staker, it counts
+        without a separate linking step. Linking exists to prove control of a
+        key you did not sign in with; asking for a second signature under the
+        same key would prove nothing the login has not already proved.
+        """
         weights = self.rpc.staker_weights()
         detail = []
         total = 0
-        for k in self.links.keys_for(account_pubkey):
+        keys = list(self.links.keys_for(account_pubkey))
+        if account_pubkey in weights and account_pubkey not in keys:
+            keys.insert(0, account_pubkey)
+        for k in keys:
             w = weights.get(k, 0)
             detail.append({"staker_pubkey": k, "weight_atoms": w,
                            "weight": w / SEQ_ATOMS,
-                           "counted": w >= POS_MIN_STAKE_ATOMS or w > 0,
+                           "counted": w > 0,
+                           "is_login_key": k == account_pubkey,
                            "eligible_blocksigner": w >= POS_MIN_STAKE_ATOMS})
             total += w
         tier = self.policy.for_stake(total)
