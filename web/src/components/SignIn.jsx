@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { api, setToken } from '../lib/api'
-import { hasProvider, signMessage, connect } from '../lib/wallet'
+import { hasProvider, signMessage, signStakerMessage, supportsStakerSigning, connect } from '../lib/wallet'
 import { useStore } from '../lib/store'
 
 // The whole login. Ask the backend for a challenge, have the wallet sign it,
@@ -19,7 +19,24 @@ export default function SignIn({ onDone, label = 'Sign in with your wallet' }) {
     try {
       const ch = await api.authChallenge()
       try { await connect() } catch { /* some wallets sign without a connect step */ }
-      const signature = await signMessage(ch.message)
+
+      // Sign in AS the staking key where the wallet can, so a staker's tier is
+      // there on the first screen. Signing with the master key would log the
+      // same person in as a key that holds no stake, and leave them to link it
+      // by hand afterwards for no reason.
+      let signature
+      if (await supportsStakerSigning()) {
+        try {
+          signature = (await signStakerMessage(ch.message)).signature
+        } catch (e) {
+          // A wallet that has no staking key yet is still perfectly able to
+          // browse and to hold an account; fall back rather than refuse.
+          signature = await signMessage(ch.message)
+        }
+      } else {
+        signature = await signMessage(ch.message)
+      }
+
       const r = await api.authVerify(ch.message, signature)
       setToken(r.token)
       await refresh()

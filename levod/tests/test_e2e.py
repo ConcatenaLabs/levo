@@ -28,6 +28,7 @@ class FakeNode:
 
     def __init__(self):
         self.weights = {}
+        self.delegated = {}      # controller -> pool signer
         self.utxos = {}          # (txid, vout) -> output dict
         self.height = 12345
         self.unspents = []
@@ -35,6 +36,12 @@ class FakeNode:
 
     def staker_weights(self):
         return dict(self.weights)
+
+    def controller_weights(self):
+        return ({k: {"weight_atoms": v,
+                     "delegated": k in self.delegated,
+                     "signer": self.delegated.get(k)}
+                 for k, v in self.weights.items()}, True)
 
     def chain_height(self):
         return self.height
@@ -145,6 +152,7 @@ def main():
 
     st = link_stake(issuer_tok, issuer_sec, issuer_stake_sec)
     ok.eq(st["tier"]["name"], "Founder", "issuer reaches the top tier")
+    ok.eq(st["counts_delegated_stake"], True, "stake is read by controller")
     ok.eq(st["tier"]["may_list"], True, "top tier may list")
 
     # A statement whose trailing newline was trimmed in transit must still
@@ -171,8 +179,11 @@ def main():
                     "staker_pubkey": pk2}, token=buyer_tok)
     ok.eq(code, 400, "a statement naming another account is refused")
 
+    # Delegating that same stake to a pool must not cost the buyer their tier.
+    node.delegated[SH.pubkey_of(buyer_stake_sec)] = "03" + "cc" * 32
     st = link_stake(buyer_tok, buyer_sec, buyer_stake_sec)
     ok.eq(st["tier"]["name"], "Contributor", "buyer reaches tier 1")
+    ok.eq(st["keys"][0]["delegated"], True, "with the stake delegated to a pool")
     ok.eq(st["tier"]["may_list"], False, "tier 1 may not list")
 
     # --- listing is gated -------------------------------------------------

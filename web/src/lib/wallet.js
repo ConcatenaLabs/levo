@@ -46,6 +46,31 @@ export async function broadcast(hex) {
   return (r && r.txid) || r
 }
 
+// A signature under the wallet's STAKING key (m/2/0), which is the key a stake
+// is bonded to. `signMessage` signs with the master key, which is a different
+// key and says nothing about a stake -- so signing in with this one is what
+// makes a staker's tier appear without any further step.
+export async function signStakerMessage(message) {
+  const r = await request('signStakerMessage', { message })
+  if (!r || !r.signature) throw new Error('the wallet returned no signature')
+  return r
+}
+
+export async function getStakerPublicKey() {
+  const r = await request('getStakerPublicKey', {})
+  const pk = (r && r.staker_pubkey) || r
+  if (!pk || typeof pk !== 'string') throw new Error('the wallet has no staking key')
+  return pk
+}
+
+export async function supportsStakerSigning() {
+  try {
+    const caps = await request('getCapabilities', {})
+    const list = (caps && (caps.methods || caps)) || []
+    return Array.isArray(list) && list.includes('signStakerMessage')
+  } catch { return false }
+}
+
 export async function signMessage(message) {
   const r = await request('signMessage', { message })
   const sig = typeof r === 'string' ? r : r && r.signature

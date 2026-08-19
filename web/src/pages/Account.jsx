@@ -1,7 +1,7 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { api } from '../lib/api'
 import { useStore } from '../lib/store'
-import { signMessage, hasProvider } from '../lib/wallet'
+import { signMessage, signStakerMessage, supportsStakerSigning, getStakerPublicKey, hasProvider } from '../lib/wallet'
 import { amount, compact, shortHex } from '../lib/format'
 import SignIn from '../components/SignIn'
 import Beam from '../components/Beam'
@@ -11,6 +11,8 @@ import Beam from '../components/Beam'
 // the stake behind that key starts counting.
 
 function LinkKey({ onLinked }) {
+  const [canOneClick, setCanOneClick] = useState(false)
+  useEffect(() => { supportsStakerSigning().then(setCanOneClick) }, [])
   const [pubkey, setPubkey] = useState('')
   const [challenge, setChallenge] = useState(null)
   const [sig, setSig] = useState('')
@@ -45,6 +47,21 @@ function LinkKey({ onLinked }) {
     } finally { setBusy(false) }
   }
 
+  // Ask the wallet which key its stake is bonded to, then have it prove that
+  // key. Two fields the user would have to find become one button.
+  async function oneClick() {
+    setError(null); setBusy(true)
+    try {
+      const pk = await getStakerPublicKey()
+      const ch0 = await api.stakeChallenge(pk)
+      const signed = await signStakerMessage(ch0.message)
+      onLinked(await api.stakeLink(ch0.message, signed.signature,
+                                   signed.staker_pubkey || pk))
+    } catch (e) {
+      setError(e.message || String(e))
+    } finally { setBusy(false) }
+  }
+
   if (!challenge) {
     return (
       <form onSubmit={start}>
@@ -58,9 +75,17 @@ function LinkKey({ onLinked }) {
           </div>
         </div>
         {error && <div className="notice bad" style={{ marginBottom: '1rem' }}>{error}</div>}
-        <button className="btn btn-primary" disabled={busy || !pubkey.trim()}>
-          {busy ? 'Working…' : 'Prove I control this key'}
-        </button>
+        <div style={{ display: 'flex', gap: '.6rem', flexWrap: 'wrap' }}>
+          <button className="btn btn-primary" disabled={busy || !pubkey.trim()}>
+            {busy ? 'Working…' : 'Prove I control this key'}
+          </button>
+          {canOneClick && (
+            <button type="button" className="btn btn-ghost" disabled={busy}
+                    onClick={oneClick}>
+              Use my wallet's staking key
+            </button>
+          )}
+        </div>
       </form>
     )
   }
@@ -148,6 +173,11 @@ export default function Account() {
             counts for one account: proving it here moves it off any account
             that claimed it before.
           </p>
+          {st.counts_delegated_stake === false && (
+            <div className="notice bad" style={{ marginBottom: '1.25rem' }}>
+              {st.delegation_note}
+            </div>
+          )}
           {st.keys.length === 0 && (
             <div className="notice" style={{ marginBottom: '1.25rem' }}>
               No staking keys linked yet, so your stake reads as zero.
@@ -161,6 +191,13 @@ export default function Account() {
                 </span>
                 <span className="num small">{compact(k.weight_atoms)} SEQ</span>
               </div>
+              {k.delegated && (
+                <p className="small dim" style={{ margin: '.5rem 0 0' }}>
+                  Delegated to a pool ({k.delegated_to ? k.delegated_to.slice(0, 16) + '…' : 'a signer'}).
+                  It still counts here: delegation lends block-signing rights,
+                  never the coins.
+                </p>
+              )}
               {!k.eligible_blocksigner && (
                 <p className="small dim" style={{ margin: '.5rem 0 0' }}>
                   Below the chain's 40,000 SEQ blocksigner floor. It still adds

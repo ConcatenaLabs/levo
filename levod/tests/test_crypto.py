@@ -153,3 +153,34 @@ def test_sessions(t):
     tok2 = s2.issue(pk)
     clock[0] += 6
     t.eq(s2.verify(tok2), None, "a session expires")
+
+
+def test_wallet_staking_signature_vector(t):
+    """A signature the WALLET made with its staking key must recover to that key.
+
+    This is one-click login in one assertion. The Sequentia browser wallet signs
+    with the key at m/2/0 -- the key a stake is bonded to -- and Levo recovers
+    exactly that key, so the account it creates is the one the stake belongs to
+    and no linking step is needed.
+
+    The second half matters as much: the SAME wallet signing the SAME text with
+    its master key recovers to a different key entirely. That is why signing in
+    with `signMessage` leaves a staker with no tier, and why the wallet needed a
+    staking-key signer at all.
+
+    Produced by lwk_wasm (Rust) from the BIP39 test mnemonic
+    "abandon abandon ... about", verified here by Levo's own recovery (Python).
+    """
+    challenge = "Levo\n\nSign in to Levo\nNonce: 0123456789abcdef\n"
+    staker_pubkey = "021b9257d07f88afb539909c87657aabebd95a324fb8dd900429bbb9e64ba20f50"
+    staker_sig = ("H7qvxmJssLm46icRR3ZhYpsPU4zdi7A02okhgwuzrWnGIz/fj985MB6hAegV"
+                  "3ato0RRITRgpVV2CmLV7tYK3foQ=")
+    master_sig = ("H3a1cjdHILChPJxR81XExHEa07wa9lf4CF/jPhCrUS/yU1maG1mjwoPEIFEP"
+                  "AvBSbSfSn/heN7PsdZjEqVLT+R8=")
+
+    t.eq(auth.recover_pubkey(challenge, staker_sig), staker_pubkey,
+         "the wallet's staking signature recovers to its staking key")
+    t.ok(auth.recover_pubkey(challenge, master_sig) != staker_pubkey,
+         "and the master key is a different key, which is the whole problem")
+    t.ok(auth.verify_signature(challenge, staker_sig, staker_pubkey),
+         "so a staking key can be linked from a wallet signature alone")

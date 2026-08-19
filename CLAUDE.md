@@ -71,6 +71,11 @@ one is why a compromised levod can mislead but cannot rob.
 - **Anything that has already happened on chain must not be reported as a
   failure.** Recording a purchase is bookkeeping; the money moved before it was
   called.
+- **Read stake by CONTROLLER, never by signer.** `getstakerinfo`'s default view
+  is keyed by signer, under which a delegator has no stake and their pool has
+  everyone's. Levo asks whose money it is, so it uses `bycontroller`. Reverting
+  that silently excludes every delegator and hands pools a tier they did not
+  pay for.
 - **Levo carries its own crypto.** `secp256k1.py` and `script.py` exist so the
   backend needs no node source checkout. They are verified against the node's
   own `signmessage` vector and the frozen covenant vectors. If you change them,
