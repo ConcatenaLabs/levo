@@ -167,3 +167,51 @@ def test_reorged_funding_takes_the_sale_down(t):
         t.ok(False, "a ghost sale must not sell")
     except S.SaleError:
         t.ok(True, "a ghost sale cannot be bought")
+
+
+def test_tiers_are_operator_configurable(t):
+    """A deployment whose stakers all sit near the protocol floor needs
+    different thresholds from mainnet defaults, and that is an operator's
+    decision rather than a code change. Whatever is configured is also what the
+    interface tells users, because the tier table comes from here."""
+    import json
+    spec = json.dumps([
+        {"name": "Visitor", "min_stake": 0, "cap": 0, "may_list": False},
+        {"name": "Backer", "min_stake": 45000, "cap": 500, "may_list": False},
+        {"name": "Founder", "min_stake": 50000, "cap": 5000, "may_list": True},
+    ])
+    tiers = T.tiers_from_env({"LEVOD_TIERS": spec})
+    p = T.TierPolicy(tiers)
+    t.eq(p.for_stake(0).name, "Visitor", "configured floor tier")
+    t.eq(p.for_stake(45000 * SEQ).name, "Backer", "configured middle tier")
+    t.eq(p.for_stake(50000 * SEQ).may_list, True, "configured top tier may list")
+    t.eq(p.for_stake(50000 * SEQ).cap_atoms, 5000 * 10**8, "caps convert to atoms")
+    t.eq(T.tiers_from_env({}), None, "no configuration means the defaults")
+
+
+def test_bad_tier_configuration_is_refused(t):
+    """Silently accepting a broken tier table would either lock everybody out of
+    listing or leave a staker with no tier at all."""
+    import json
+    for label, spec in [
+        ("nobody can list", [{"name": "A", "min_stake": 0, "cap": 1}]),
+        ("no zero-stake tier", [{"name": "A", "min_stake": 10, "cap": 1,
+                                 "may_list": True}]),
+        ("empty", []),
+    ]:
+        try:
+            T.tiers_from_env({"LEVOD_TIERS": json.dumps(spec)})
+            t.ok(False, "should refuse: %s" % label)
+        except ValueError:
+            t.ok(True, "refuses a tier table where %s" % label)
+
+
+def test_default_tiers_are_shares_of_supply(t):
+    """Not round numbers picked to feel right: 40,000 SEQ is 0.01% of the
+    400,000,000 supply, which is where the protocol's own floor comes from."""
+    supply = 400_000_000 * SEQ
+    p = T.TierPolicy()
+    shares = {x.name: x.min_stake_atoms / supply for x in p.tiers}
+    t.eq(round(shares["Contributor"] * 100, 4), 0.01, "Contributor is 0.01%")
+    t.eq(round(shares["Backer"] * 100, 4), 0.05, "Backer is 0.05%")
+    t.eq(round(shares["Founder"] * 100, 4), 0.25, "Founder is 0.25%")

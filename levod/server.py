@@ -53,7 +53,7 @@ class App:
     def __init__(self, node=None):
         self.node = node or RPC.NodeRPC()
         self.links = T.StakeLinks()
-        self.policy = T.TierPolicy()
+        self.policy = T.TierPolicy(T.tiers_from_env())
         self.reader = T.StakeReader(self.node, self.links, self.policy)
         self.store = ST.Store()
         payment_asset = os.environ.get(
