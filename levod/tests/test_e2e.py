@@ -276,14 +276,20 @@ def main():
     ok.eq(code, 401, "buying requires a signed-in wallet")
 
     # --- settling ---------------------------------------------------------
-    # The covenant output is spent by the buyer's transaction.
+    # The covenant output is spent by the buyer's transaction, and the treasury
+    # credit it created sits at output 0.
     del node.utxos[("ff" * 32, 0)]
+    treasury_spk = "5120" + "11" * 32
+    node.utxos[("ab" * 32, 0)] = {"scriptPubKey": {"hex": treasury_spk},
+                                  "asset": usdx, "valueatoms": 250 * 100_000_000}
     code, r = _req(base, "POST", "/api/projects/helios/confirm",
                    {"txid": "ab" * 32, "token_atoms": 1_000 * 100_000_000,
                     "payment_atoms": 250 * 100_000_000}, token=buyer_tok)
     ok.eq(code, 200, "purchase recorded")
-    ok.eq(r["status"], "partial", "a partial buy leaves the sale resting")
-    ok.eq(r["remaining_atoms"], total - 1_000 * 100_000_000, "remainder tracked")
+    ok.eq(r["recorded"], True, "the allocation ledger took it")
+    ok.eq(r["treasury_payment_verified"], True,
+          "and checked that the transaction really paid this sale's treasury")
+    ok.eq(r["committed_atoms"], 250 * 100_000_000, "the account's commitment")
 
     # The cap is cumulative across purchases, not per purchase.
     code, r = _req(base, "POST", "/api/projects/helios/buy",
@@ -293,6 +299,25 @@ def main():
     code, r = _req(base, "POST", "/api/projects/helios/buy",
                    {"payment_atoms": 750 * 100_000_000}, token=buyer_tok)
     ok.eq(code, 200, "the rest of the allowance is still spendable")
+
+    # A transaction that pays somebody else is not a purchase of this sale, and
+    # must not quietly consume an allocation.
+    node.utxos[("cc" * 32, 0)] = {"scriptPubKey": {"hex": "5120" + "99" * 32},
+                                  "asset": usdx, "valueatoms": 1}
+    code, r = _req(base, "POST", "/api/projects/helios/confirm",
+                   {"txid": "cc" * 32, "token_atoms": 1,
+                    "payment_atoms": 1}, token=buyer_tok)
+    ok.eq(code, 400, "a transaction paying another treasury is refused")
+
+    # A purchase whose treasury output has already been spent cannot be checked,
+    # and must still be recorded: it has happened, and refusing only costs the
+    # buyer their own headroom.
+    code, r = _req(base, "POST", "/api/projects/helios/confirm",
+                   {"txid": "e1" * 32, "token_atoms": 1,
+                    "payment_atoms": 1}, token=buyer_tok)
+    ok.eq(code, 200, "an unverifiable purchase is still recorded")
+    ok.eq(r["treasury_payment_verified"], None, "and says it could not be checked")
+
 
     # --- persistence ------------------------------------------------------
     code, r = _req(base, "GET", "/api/projects/helios")

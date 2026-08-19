@@ -269,32 +269,55 @@ class Platform:
         return out
 
     def record_purchase(self, account, slug, txid, token_atoms, payment_atoms):
-        """Record a purchase that has landed on chain.
+        """Record a purchase against the account's allocation for this sale.
 
-        Levo verifies the covenant output moved as claimed before it writes the
-        allocation ledger, so a buyer cannot inflate their recorded commitment
-        (or a rival's) by reporting a purchase that never happened.
+        This writes the ALLOCATION LEDGER and nothing else. The watcher owns
+        what the sale is -- how much is left, where it rests, whether it is
+        finished -- because the chain is the only thing that actually knows,
+        and purchases happen that never pass through here at all.
+
+        It is also deliberately forgiving. By the time a buyer calls this their
+        transaction is already broadcast and irreversible; refusing the record
+        would report an error for a purchase that plainly happened, and would
+        only ever cost the buyer their own cap headroom. The one thing worth
+        checking is that the claimed transaction really did pay this sale's
+        treasury, so a mistyped txid does not quietly consume an allocation.
         """
         p = self._project(slug)
         sale = p.sale
-        if sale is None or not sale.funding:
-            raise PlatformError("this sale is not funded")
-        if self.rpc is not None:
-            still_there = self.rpc.txout(sale.funding["txid"], sale.funding["vout"])
-            if still_there is not None:
-                raise PlatformError(
-                    "the sale's covenant output is still unspent, so this "
-                    "purchase has not happened yet")
-        status = sale.record_purchase(account, payment_atoms, token_atoms)
-        if sale.locked_atoms > 0:
-            # A partial buy re-rests the remainder at the identical address, in
-            # the buyer's transaction. Track the new outpoint so the next buyer
-            # spends the right one.
-            sale.funding = {"txid": txid, "vout": 1, "atoms": sale.locked_atoms}
-        else:
-            sale.funding = None
+        if sale is None:
+            raise PlatformError("this project has no sale")
+
+        verified = None
+        if self.rpc is not None and txid:
+            try:
+                out = self.rpc.txout(txid, 0)
+                if out is not None:
+                    spk = (out.get("scriptPubKey") or {}).get("hex", "")
+                    want = TX.v1_script_pubkey(sale.terms.treasury_prog).hex()
+                    verified = (spk.lower() == want)
+                    if verified is False:
+                        raise PlatformError(
+                            "transaction %s does not pay this sale's treasury at "
+                            "output 0, so it is not a purchase of this sale" % txid)
+            except PlatformError:
+                raise
+            except Exception:
+                verified = None          # cannot tell; the record still stands
+
+        sale.allocations[account] = (sale.allocations.get(account, 0)
+                                     + int(payment_atoms))
         self.save()
-        return {"status": status, "remaining_atoms": sale.locked_atoms}
+        standing = self.stake.standing(account)
+        tier = self.stake.policy.for_stake(standing["stake_atoms"])
+        return {
+            "recorded": True,
+            "treasury_payment_verified": verified,
+            "committed_atoms": sale.allocations[account],
+            "allowance_remaining_atoms": sale.allocation_remaining(account, tier),
+            "sale_status": "the watcher reads this from the chain; a purchase "
+                           "moves it whether or not it was recorded here",
+        }
 
     # --- reads --------------------------------------------------------------
 

@@ -125,6 +125,9 @@ class Sale:
             return height is not None and height >= lt
         return (now or time.time()) >= lt
 
+    def allocation_remaining(self, account, tier):
+        return self.allowance_for(account, tier)
+
     def allowance_for(self, account, tier):
         """Payment atoms this account may still commit to THIS sale."""
         if not tier.cap_atoms:
