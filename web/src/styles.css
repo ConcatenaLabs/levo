@@ -1,0 +1,341 @@
+/* Levo — a precision-instrument palette.
+   Brass is the working metal of balances and weights; verdigris is what forms
+   on brass over time, so it carries "proven on chain" rather than merely
+   "success". The ground is a deep indigo rather than black so brass reads warm
+   against it instead of glaring. */
+
+:root {
+  --ground: #0e1119;
+  --surface: #161a26;
+  --surface-2: #1d2231;
+  --line: #2a3143;
+  --line-soft: #202638;
+  --ink: #eceae4;
+  --ink-dim: #b9bccb;
+  --muted: #868ea3;
+  --brass: #c9a227;
+  --brass-bright: #e8c250;
+  --brass-dim: #6d5a1c;
+  --verdigris: #4ea89b;
+  --verdigris-dim: #26443f;
+  --alarm: #d4674a;
+
+  --display: 'Syne', system-ui, sans-serif;
+  --body: 'IBM Plex Sans', system-ui, sans-serif;
+  --mono: 'IBM Plex Mono', ui-monospace, monospace;
+
+  --gutter: clamp(1.25rem, 4vw, 3.5rem);
+  --measure: 1180px;
+  --radius: 3px;
+}
+
+* { box-sizing: border-box; }
+
+html { -webkit-text-size-adjust: 100%; }
+
+body {
+  margin: 0;
+  background: var(--ground);
+  color: var(--ink);
+  font-family: var(--body);
+  font-size: 16px;
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* A faint engraved grid, like the bed of a measuring instrument. Decorative,
+   but it is the only decoration on the page. */
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+  background-image:
+    linear-gradient(var(--line-soft) 1px, transparent 1px),
+    linear-gradient(90deg, var(--line-soft) 1px, transparent 1px);
+  background-size: 96px 96px;
+  opacity: .38;
+  mask-image: radial-gradient(ellipse 90% 60% at 50% 0%, #000 20%, transparent 78%);
+}
+
+#root { position: relative; z-index: 1; }
+
+a { color: inherit; }
+
+h1, h2, h3 {
+  font-family: var(--display);
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  line-height: 1.05;
+  margin: 0;
+}
+
+h1 { font-size: clamp(2.6rem, 6.2vw, 4.6rem); font-weight: 800; }
+h2 { font-size: clamp(1.6rem, 3vw, 2.3rem); }
+h3 { font-size: 1.12rem; letter-spacing: -0.01em; }
+
+p { margin: 0 0 1rem; }
+
+.wrap { width: 100%; max-width: var(--measure); margin: 0 auto; padding: 0 var(--gutter); }
+
+/* Numbers, hashes and addresses are things people compare character by
+   character, so every one of them is set in mono. */
+.mono { font-family: var(--mono); font-variant-ligatures: none; }
+.num { font-family: var(--mono); font-feature-settings: 'tnum' 1; }
+
+.eyebrow {
+  font-family: var(--mono);
+  font-size: .72rem;
+  letter-spacing: .16em;
+  text-transform: uppercase;
+  color: var(--brass);
+  margin: 0 0 1rem;
+}
+
+.dim { color: var(--muted); }
+.small { font-size: .875rem; }
+
+/* ---------- chrome ---------- */
+
+.nav {
+  position: sticky; top: 0; z-index: 40;
+  background: color-mix(in srgb, var(--ground) 88%, transparent);
+  backdrop-filter: blur(10px);
+  border-bottom: 1px solid var(--line);
+}
+.nav-in { display: flex; align-items: center; gap: 1.5rem; height: 66px; }
+.nav-links { display: flex; gap: 1.4rem; margin-left: auto; align-items: center; }
+.nav a {
+  text-decoration: none; color: var(--ink-dim); font-size: .92rem;
+  padding: .35rem 0; border-bottom: 1px solid transparent;
+}
+.nav a:hover { color: var(--ink); }
+.nav a.active { color: var(--ink); border-bottom-color: var(--brass); }
+
+.brand { display: flex; align-items: center; gap: .6rem; text-decoration: none; }
+.brand-mark { width: 26px; height: 26px; flex: none; }
+.brand-word {
+  font-family: var(--display); font-weight: 800; font-size: 1.32rem;
+  letter-spacing: .01em;
+}
+
+.footer {
+  border-top: 1px solid var(--line);
+  margin-top: 6rem; padding: 2.5rem 0 4rem;
+  color: var(--muted); font-size: .875rem;
+}
+.footer-in { display: flex; flex-wrap: wrap; gap: 1.5rem 2.5rem; align-items: baseline; }
+
+/* ---------- buttons ---------- */
+
+.btn {
+  font: 500 .95rem/1 var(--body);
+  padding: .78rem 1.3rem;
+  border-radius: var(--radius);
+  border: 1px solid var(--line);
+  background: var(--surface-2);
+  color: var(--ink);
+  cursor: pointer;
+  text-decoration: none;
+  display: inline-flex; align-items: center; gap: .55rem;
+  transition: background .15s, border-color .15s, color .15s;
+}
+.btn:hover:not(:disabled) { border-color: var(--brass-dim); background: #232838; }
+.btn:disabled { opacity: .45; cursor: not-allowed; }
+.btn-primary {
+  background: var(--brass); border-color: var(--brass); color: #16130a; font-weight: 600;
+}
+.btn-primary:hover:not(:disabled) { background: var(--brass-bright); border-color: var(--brass-bright); }
+.btn-ghost { background: transparent; }
+.btn-sm { padding: .5rem .85rem; font-size: .85rem; }
+
+:where(a, button, input, select, textarea):focus-visible {
+  outline: 2px solid var(--brass-bright);
+  outline-offset: 2px;
+}
+
+/* ---------- surfaces ---------- */
+
+.card {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 1.5rem;
+}
+
+.pill {
+  display: inline-flex; align-items: center; gap: .4rem;
+  font-family: var(--mono); font-size: .72rem; letter-spacing: .08em;
+  text-transform: uppercase;
+  padding: .25rem .6rem; border-radius: 100px;
+  border: 1px solid var(--line); color: var(--muted);
+}
+.pill-live { color: var(--verdigris); border-color: var(--verdigris-dim); background: #12241f; }
+.pill-draft { color: var(--muted); }
+.pill-closed, .pill-sold_out { color: var(--brass); border-color: var(--brass-dim); }
+.pill-ghost { color: var(--alarm); border-color: #4a2820; background: #241512; }
+.dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+
+/* ---------- the beam: Levo's signature ---------- */
+/* A balance beam ticked at the tier thresholds. The marker is where your stake
+   sits, so the same drawing answers "what tier am I" and "how far to the next".
+   It is piecewise-linear — each tier gets equal width — because the thresholds
+   are orders of magnitude apart and a true linear scale would hide the lower
+   two entirely. */
+
+.beam { --pos: 0%; padding: 1.75rem 0 .5rem; }
+.beam-track {
+  position: relative; height: 2px; background: var(--line);
+  margin: 0 0 0;
+}
+.beam-fill {
+  position: absolute; left: 0; top: 0; height: 2px;
+  width: var(--pos);
+  background: linear-gradient(90deg, var(--brass-dim), var(--brass));
+  transition: width .5s cubic-bezier(.2,.7,.3,1);
+}
+.beam-tick { position: absolute; top: -5px; width: 1px; height: 12px; background: var(--line); }
+.beam-tick.reached { background: var(--brass); }
+.beam-label {
+  position: absolute; top: 14px; transform: translateX(-50%);
+  font-family: var(--mono); font-size: .68rem; letter-spacing: .06em;
+  color: var(--muted); white-space: nowrap; text-align: center;
+}
+.beam-label.reached { color: var(--ink-dim); }
+.beam-label b { display: block; font-weight: 500; color: inherit; }
+.beam-label span { color: var(--muted); }
+
+/* The fulcrum sits under the marker: the pivot your weight acts through. */
+.beam-marker {
+  position: absolute; top: -13px; left: var(--pos);
+  transform: translateX(-50%);
+  transition: left .5s cubic-bezier(.2,.7,.3,1);
+  display: flex; flex-direction: column; align-items: center;
+}
+.beam-weight {
+  width: 15px; height: 11px; background: var(--verdigris);
+  clip-path: polygon(18% 0, 82% 0, 100% 100%, 0 100%);
+}
+.beam-fulcrum {
+  width: 0; height: 0; margin-top: 3px;
+  border-left: 7px solid transparent; border-right: 7px solid transparent;
+  border-top: 10px solid var(--verdigris);
+}
+.beam-you {
+  font-family: var(--mono); font-size: .68rem; color: var(--verdigris);
+  margin-top: .35rem; letter-spacing: .06em; white-space: nowrap;
+}
+.beam-scale { position: relative; height: 46px; }
+
+.beam.compact { padding: .9rem 0 .25rem; }
+.beam.compact .beam-scale { height: 30px; }
+.beam.compact .beam-label { font-size: .62rem; }
+
+/* ---------- hero ---------- */
+
+.hero { padding: clamp(3.5rem, 9vw, 7rem) 0 3rem; }
+.hero h1 { max-width: 15ch; }
+.hero-lede {
+  max-width: 52ch; margin-top: 1.5rem; font-size: clamp(1.02rem, 1.6vw, 1.18rem);
+  color: var(--ink-dim);
+}
+.hero-actions { display: flex; flex-wrap: wrap; gap: .75rem; margin-top: 2rem; }
+
+.hero-beam {
+  margin-top: clamp(3rem, 7vw, 5rem);
+  border-top: 1px solid var(--line);
+  padding-top: 1.25rem;
+}
+.hero-beam-head {
+  display: flex; flex-wrap: wrap; gap: .5rem 1.5rem;
+  align-items: baseline; justify-content: space-between;
+}
+
+/* ---------- generic layout helpers ---------- */
+
+.section { padding: clamp(2.5rem, 6vw, 4.5rem) 0; }
+.section-head { margin-bottom: 2rem; max-width: 62ch; }
+.section-head p { color: var(--muted); margin-top: .75rem; }
+
+.grid-2 { display: grid; gap: 1.25rem; grid-template-columns: repeat(auto-fit, minmax(270px, 1fr)); }
+.grid-3 { display: grid; gap: 1.25rem; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); }
+
+.split { display: grid; gap: clamp(1.5rem, 4vw, 3rem); grid-template-columns: minmax(0, 1.55fr) minmax(300px, .95fr); align-items: start; }
+@media (max-width: 900px) { .split { grid-template-columns: 1fr; } }
+
+.sticky { position: sticky; top: 90px; }
+@media (max-width: 900px) { .sticky { position: static; } }
+
+/* ---------- data tables ---------- */
+
+.terms { width: 100%; border-collapse: collapse; font-size: .9rem; }
+.terms th, .terms td { text-align: left; padding: .6rem 0; border-bottom: 1px solid var(--line-soft); vertical-align: top; }
+.terms th { color: var(--muted); font-weight: 400; width: 42%; }
+.terms td { font-family: var(--mono); word-break: break-all; }
+.terms tr:last-child th, .terms tr:last-child td { border-bottom: 0; }
+
+/* ---------- project rows ---------- */
+
+.rows { border-top: 1px solid var(--line); }
+.row {
+  display: grid; gap: 1rem 1.5rem; align-items: center;
+  grid-template-columns: minmax(0, 2fr) minmax(120px, 1fr) minmax(150px, 1.3fr) auto;
+  padding: 1.35rem 0; border-bottom: 1px solid var(--line);
+  text-decoration: none; color: inherit;
+}
+.row:hover { background: #131722; }
+.row-name { font-family: var(--display); font-weight: 700; font-size: 1.1rem; }
+.row-sum { color: var(--muted); font-size: .875rem; margin-top: .2rem; }
+.row-ticker {
+  font-family: var(--mono); font-size: .7rem; color: var(--brass);
+  border: 1px solid var(--brass-dim); border-radius: 2px; padding: .1rem .35rem;
+  margin-left: .5rem; vertical-align: middle; letter-spacing: .06em;
+}
+@media (max-width: 760px) {
+  .row { grid-template-columns: 1fr auto; }
+  .row-hide { display: none; }
+}
+
+.meter { height: 4px; background: var(--line); border-radius: 2px; overflow: hidden; }
+.meter i { display: block; height: 100%; background: var(--verdigris); }
+
+/* ---------- forms ---------- */
+
+.field { margin-bottom: 1.1rem; }
+.field label { display: block; font-size: .85rem; color: var(--ink-dim); margin-bottom: .4rem; }
+.field .hint { font-size: .8rem; color: var(--muted); margin-top: .35rem; }
+input, select, textarea {
+  width: 100%; padding: .68rem .75rem;
+  background: var(--ground); color: var(--ink);
+  border: 1px solid var(--line); border-radius: var(--radius);
+  font: 400 .95rem/1.4 var(--body);
+}
+input.mono, textarea.mono { font-family: var(--mono); font-size: .875rem; }
+textarea { min-height: 110px; resize: vertical; }
+input:focus, select:focus, textarea:focus { border-color: var(--brass-dim); }
+
+.notice {
+  border: 1px solid var(--line); border-left: 2px solid var(--brass);
+  background: var(--surface); padding: .9rem 1.1rem; border-radius: var(--radius);
+  font-size: .9rem; color: var(--ink-dim);
+}
+.notice.bad { border-left-color: var(--alarm); }
+.notice.good { border-left-color: var(--verdigris); }
+.notice strong { color: var(--ink); }
+
+.stat { border-left: 2px solid var(--line); padding-left: .9rem; }
+.stat b { display: block; font-family: var(--mono); font-size: 1.4rem; font-weight: 500; }
+.stat span { font-size: .78rem; color: var(--muted); letter-spacing: .04em; text-transform: uppercase; font-family: var(--mono); }
+
+.kv { display: flex; justify-content: space-between; gap: 1rem; padding: .45rem 0; font-size: .9rem; border-bottom: 1px solid var(--line-soft); }
+.kv:last-child { border-bottom: 0; }
+.kv span { color: var(--muted); }
+.kv b { font-family: var(--mono); font-weight: 500; }
+
+.copyable { cursor: pointer; }
+.copyable:hover { color: var(--brass); }
+
+@media (prefers-reduced-motion: reduce) {
+  * { animation-duration: .01ms !important; transition-duration: .01ms !important; }
+}
