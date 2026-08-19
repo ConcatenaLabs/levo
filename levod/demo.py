@@ -30,12 +30,24 @@ USDX = "2a515539da5e6a60caa7766ecd65bac0c10d15717ddd2088844ba58f4d04b9de"
 class StubNode:
     def __init__(self):
         self.weights = {}
+        self.delegated = {}      # controller -> pool signer
         self.utxos = {}
         self.unspents = []
         self.height = 94_200
 
     def staker_weights(self):
         return dict(self.weights)
+
+    def controller_weights(self):
+        # An upgraded node's answer: weight keyed by the controller that owns
+        # it, with the pool it is delegated to where that applies.
+        return ({k: {"weight_atoms": v,
+                     "delegated": k in self.delegated,
+                     "signer": self.delegated.get(k)}
+                 for k, v in self.weights.items()}, True)
+
+    def delegations(self):
+        return dict(self.delegated)
 
     def chain_height(self):
         return self.height
@@ -66,6 +78,9 @@ def build(app, node):
     issuer = SH.pubkey_of(issuer_sec)
     stake_key = SH.pubkey_of(0x51ee0000000000000000000000000000000000000000000000000000000000a2)
     node.weights[stake_key] = 30 * FLOOR
+    # This stake is delegated to a pool. It still counts for the key that owns
+    # it, which is the whole point: the signer view would show nothing here.
+    node.delegated[stake_key] = "03" + "ab" * 32
     app.links.link(issuer, stake_key)
 
     listings = [
