@@ -77,7 +77,13 @@ def api(method, path, body=None, token=None):
 
 
 def sign_in():
-    """Log in the way the web app does: sign levod's challenge with the node."""
+    """Log in the way the web app does: sign levod's challenge with the node.
+
+    Set LEVO_SIGN_WIF to sign with a specific key instead of a wallet address.
+    A staker who signs in with their STAKING key is recognised immediately --
+    the login has already proved control of it, so there is nothing left to
+    link.
+    """
     token_file = Path(os.path.expanduser("~/.levo-session"))
     if token_file.is_file():
         tok = token_file.read_text().strip()
@@ -87,8 +93,12 @@ def sign_in():
         except Fail:
             pass
     ch = api("POST", "/api/auth/challenge")
-    addr = node("getnewaddress", "levo-login")
-    sig = node("signmessage", addr, ch["message"])
+    wif = os.environ.get("LEVO_SIGN_WIF")
+    if wif:
+        sig = node("signmessagewithprivkey", wif, ch["message"])
+    else:
+        addr = node("getnewaddress", "levo-login")
+        sig = node("signmessage", addr, ch["message"])
     r = api("POST", "/api/auth/verify", {"message": ch["message"], "signature": sig})
     token_file.write_text(r["token"])
     try:

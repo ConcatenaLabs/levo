@@ -215,3 +215,24 @@ def test_default_tiers_are_shares_of_supply(t):
     t.eq(round(shares["Contributor"] * 100, 4), 0.01, "Contributor is 0.01%")
     t.eq(round(shares["Backer"] * 100, 4), 0.05, "Backer is 0.05%")
     t.eq(round(shares["Founder"] * 100, 4), 0.25, "Founder is 0.25%")
+
+
+def test_the_login_key_counts_without_a_separate_link(t):
+    """Linking proves control of a key you did NOT sign in with. If the key you
+    signed in with is itself a staker, the login already proved it."""
+    me = "02" + "55" * 32
+    reader = T.StakeReader(_FakeRPC({me: 3 * FLOOR}), T.StakeLinks())
+    st = reader.standing(me)
+    t.eq(st["stake_atoms"], 3 * FLOOR, "the login key's own stake counts")
+    t.eq(st["keys"][0]["is_login_key"], True, "and is marked as such")
+
+    # It must not be double counted if it is also linked explicitly.
+    links = T.StakeLinks()
+    links.link(me, me)
+    reader2 = T.StakeReader(_FakeRPC({me: 3 * FLOOR}), links)
+    t.eq(reader2.standing(me)["stake_atoms"], 3 * FLOOR,
+         "and is never counted twice")
+
+    # An account that is not a staker still gets nothing.
+    t.eq(T.StakeReader(_FakeRPC({}), T.StakeLinks()).standing(me)["stake_atoms"], 0,
+         "a login key with no stake adds nothing")
