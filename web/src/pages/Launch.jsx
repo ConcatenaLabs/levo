@@ -118,7 +118,9 @@ export default function Launch() {
             </p>
             <div className="notice" style={{ marginBottom: '1.5rem' }}>
               <strong>Sale address</strong>
-              <div className="mono small" style={{ wordBreak: 'break-all', marginTop: '.5rem' }}>{spk}</div>
+              <div className="mono small" style={{ wordBreak: 'break-all', marginTop: '.5rem' }}>
+                {created.lock && created.lock.address ? created.lock.address : spk}
+              </div>
               <p className="small dim" style={{ margin: '.75rem 0 0' }}>
                 This address is derived from your terms. It has no key path, so
                 once funded you cannot reprice, redirect or withdraw the sale

@@ -31,6 +31,7 @@ class StubNode:
     def __init__(self):
         self.weights = {}
         self.utxos = {}
+        self.unspents = []
         self.height = 94_200
 
     def staker_weights(self):
@@ -41,6 +42,17 @@ class StubNode:
 
     def txout(self, txid, vout, include_mempool=True):
         return self.utxos.get((txid, int(vout)))
+
+    def call(self, method, *params):
+        if method == "getfeeexchangerates":
+            return {"SBTC": 6400000000000, "USDX": 100000000}
+        if method == "getblockhash":
+            return "ddd11d54c87a2bd94400fd31ce05d8e1110bb4b78e7103f738342086fc4ea92e"
+        if method == "scantxoutset":
+            return {"success": True, "unspents": list(self.unspents)}
+        if method == "getblockchaininfo":
+            return {"blocks": self.height}
+        raise RuntimeError("unexpected call %s" % method)
 
 
 def build(app, node):
@@ -119,11 +131,8 @@ def main():
 
     import server
 
-    app = server.App()
     node = StubNode()
-    app.node = node
-    app.reader.rpc = node
-    app.market.rpc = node
+    app = server.App(node=node)
     server.Handler.app = app
 
     issuer = build(app, node)

@@ -339,3 +339,30 @@ input:focus, select:focus, textarea:focus { border-color: var(--brass-dim); }
 @media (prefers-reduced-motion: reduce) {
   * { animation-duration: .01ms !important; transition-duration: .01ms !important; }
 }
+
+/* ---------- buy flow ---------- */
+/* Numbered because a purchase genuinely is a sequence the buyer walks: price
+   it, build it, sign it. The numbers carry order that the reader needs. */
+
+.step { display: grid; grid-template-columns: 26px 1fr; gap: .85rem; padding: 1.1rem 0; border-top: 1px solid var(--line-soft); }
+.step:first-of-type { border-top: 0; padding-top: .4rem; }
+.step-n {
+  width: 26px; height: 26px; border-radius: 50%;
+  border: 1px solid var(--line); color: var(--muted);
+  display: grid; place-items: center;
+  font-family: var(--mono); font-size: .78rem;
+}
+.step-n.done { border-color: var(--verdigris); color: var(--verdigris); }
+.step-body h4 { margin: .15rem 0 .6rem; font-family: var(--display); font-size: 1rem; font-weight: 700; }
+.step-body form { margin: 0; }
+
+.rail-pick { display: grid; grid-template-columns: 1fr 1fr; gap: .6rem; margin-bottom: 1.25rem; }
+.rail {
+  text-align: left; padding: .7rem .8rem; border-radius: var(--radius);
+  border: 1px solid var(--line); background: var(--ground); color: var(--ink);
+  cursor: pointer; font: inherit;
+}
+.rail b { display: block; font-family: var(--display); font-size: .95rem; }
+.rail span { display: block; font-size: .75rem; color: var(--muted); margin-top: .15rem; }
+.rail.on { border-color: var(--brass); background: #1b1a13; }
+.rail:disabled { opacity: .45; cursor: not-allowed; }

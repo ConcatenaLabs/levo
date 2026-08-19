@@ -33,12 +33,17 @@ def test_golden_vectors(t):
     """
     vectors = json.loads((HERE.parent / "vectors.json").read_text())
     for v in vectors["cases"]:
-        cov = C.derive(C.SaleTerms(v["token"], v["payment"], v["rate_num"],
-                                   v["rate_den"], v["treasury_prog"], v["min_lot"],
-                                   v["close_locktime"], v["reclaim_x"]))
-        t.eq(cov.sell_leaf.hex(), v["expect"]["sell_leaf"], "%s sell leaf" % v["name"])
-        t.eq(cov.reclaim_leaf.hex(), v["expect"]["reclaim_leaf"], "%s reclaim leaf" % v["name"])
-        t.eq(cov.spk_hex, v["expect"]["spk"], "%s address" % v["name"])
+        # The raw builders, which take WIRE-order asset ids. SaleTerms sits a
+        # layer above and reverses display-form ids into these; that conversion
+        # has its own test in test_tx.py.
+        sell = C.build_sell_leaf(bytes.fromhex(v["token"]), bytes.fromhex(v["payment"]),
+                                 v["rate_num"], v["rate_den"],
+                                 bytes.fromhex(v["treasury_prog"]), v["min_lot"])
+        reclaim = C.build_reclaim_leaf(v["close_locktime"], bytes.fromhex(v["reclaim_x"]))
+        tap = K.Taptree(C.NUMS, [("sell", sell), ("reclaim", reclaim)])
+        t.eq(sell.hex(), v["expect"]["sell_leaf"], "%s sell leaf" % v["name"])
+        t.eq(reclaim.hex(), v["expect"]["reclaim_leaf"], "%s reclaim leaf" % v["name"])
+        t.eq(tap.script_pubkey.hex(), v["expect"]["spk"], "%s address" % v["name"])
 
 
 def test_address_is_a_function_of_the_terms(t):
