@@ -17,11 +17,15 @@ export class ApiError extends Error {
   }
 }
 
+// Served from the site root in development and from /levo/ in production, so
+// every request is built off the base the bundle was compiled with.
+const API = (import.meta.env.BASE_URL || '/').replace(/\/$/, '') + '/api'
+
 async function call(method, path, body) {
   const headers = { 'Content-Type': 'application/json' }
   const token = getToken()
   if (token) headers.Authorization = 'Bearer ' + token
-  const res = await fetch('/api' + path, {
+  const res = await fetch(API + path, {
     method,
     headers,
     body: body === undefined ? undefined : JSON.stringify(body),
@@ -53,4 +57,7 @@ export const api = {
   lock: (slug, txid, vout) => call('POST', '/projects/' + slug + '/lock', { txid, vout }),
   buy: (slug, payload) => call('POST', '/projects/' + slug + '/buy', payload),
   confirm: (slug, payload) => call('POST', '/projects/' + slug + '/confirm', payload),
+  transaction: (slug, payload) => call('POST', '/projects/' + slug + '/transaction', payload),
+  reclaim: (slug, payload) => call('POST', '/projects/' + slug + '/reclaim', payload),
+  watcher: () => call('GET', '/watcher'),
 }

@@ -48,6 +48,25 @@ class CovenantDrift(RuntimeError):
     """This module no longer produces the bytes Levo was verified against."""
 
 
+def asset_to_wire(display_hex):
+    """Convert an asset id from the form people read to the form chains use.
+
+    Asset ids, like txids, are DISPLAYED in the reverse of their wire byte
+    order. `dumpassetlabels`, the explorer, the registry and every wallet quote
+    USDX as 2a515539...b9de; the bytes that appear in a transaction output, and
+    that OP_INSPECTOUTPUTASSET pushes onto the stack, are that reversed.
+
+    Levo takes and shows the display form everywhere, because that is what a
+    user can compare against an explorer, and reverses exactly here. Skipping
+    this does not fail loudly: it builds a covenant priced in a DIFFERENT asset
+    that nobody holds, and a sale that can never be filled.
+    """
+    b = bytes.fromhex(display_hex) if isinstance(display_hex, str) else bytes(display_hex)
+    if len(b) != 32:
+        raise ValueError("asset id must be 32 bytes")
+    return b[::-1]
+
+
 def canonical_price(num, den):
     """Reduce a price to lowest terms.
 
@@ -264,7 +283,7 @@ class SaleCovenant:
                 "the sale out from under its buyers.")
         self.terms = terms
         self.sell_leaf = build_sell_leaf(
-            bytes.fromhex(terms.token_asset), bytes.fromhex(terms.payment_asset),
+            asset_to_wire(terms.token_asset), asset_to_wire(terms.payment_asset),
             terms.price_num, terms.price_den,
             bytes.fromhex(terms.treasury_prog), terms.min_lot)
         self.reclaim_leaf = build_reclaim_leaf(
@@ -315,13 +334,18 @@ def _check_vectors():
         return
     vectors = json.loads(VECTORS_PATH.read_text())
     for v in vectors["cases"]:
-        terms = SaleTerms(v["token"], v["payment"], v["rate_num"], v["rate_den"],
-                          v["treasury_prog"], v["min_lot"], v["close_locktime"],
-                          v["reclaim_x"])
-        cov = SaleCovenant(terms)
-        got = {"sell_leaf": cov.sell_leaf.hex(),
-               "reclaim_leaf": cov.reclaim_leaf.hex(),
-               "spk": cov.spk_hex}
+        # Deliberately the raw builders, not SaleTerms: these vectors pin the
+        # BYTES the leaves are made of, given wire-order inputs. The display-to-
+        # wire convention is a separate layer with its own tests.
+        sell = build_sell_leaf(bytes.fromhex(v["token"]), bytes.fromhex(v["payment"]),
+                               v["rate_num"], v["rate_den"],
+                               bytes.fromhex(v["treasury_prog"]), v["min_lot"])
+        reclaim = build_reclaim_leaf(v["close_locktime"],
+                                     bytes.fromhex(v["reclaim_x"]))
+        tap = K.Taptree(NUMS, [("sell", sell), ("reclaim", reclaim)])
+        got = {"sell_leaf": sell.hex(),
+               "reclaim_leaf": reclaim.hex(),
+               "spk": tap.script_pubkey.hex()}
         for k, want in v["expect"].items():
             if got[k] != want:
                 raise CovenantDrift(

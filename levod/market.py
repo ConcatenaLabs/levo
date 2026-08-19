@@ -17,8 +17,10 @@ which promises survive Levo going away.
 import re
 import time
 
+import address as ADDR
 import covenant as C
 import sale as S
+import tx as TX
 
 
 class PlatformError(ValueError):
@@ -69,11 +71,12 @@ class Project:
 
 
 class Platform:
-    def __init__(self, store, stake_reader, rails=None, rpc=None):
+    def __init__(self, store, stake_reader, rails=None, rpc=None, hrp="tb"):
         self.store = store
         self.stake = stake_reader
         self.rails = rails
         self.rpc = rpc
+        self.hrp = hrp
         self.projects = {}
         self._load()
 
@@ -183,7 +186,65 @@ class Platform:
         self.save()
         return p
 
+    def lock_instructions(self, project):
+        return {
+            "address": self.sale_address(project.sale),
+            "script_pubkey": project.sale.script_pubkey,
+            "asset": project.sale.terms.token_asset,
+            "atoms": project.sale.terms.total_atoms,
+            "how": "send exactly this asset and amount to this address, then "
+                   "confirm the outpoint. Until then the sale is a draft and "
+                   "nobody can buy.",
+            "price_reduced": bool(getattr(project, "price_was_reduced", False)),
+            "verify_against": "the terms in this response, not the ones you "
+                              "submitted: the price is stored in lowest terms, "
+                              "and the address is derived from the stored values.",
+        }
+
     # --- buying -------------------------------------------------------------
+
+    def build_buy(self, account, slug, plan_json, buyer):
+        """Turn a plan into the transaction that settles it."""
+        p = self._project(slug)
+        if p.sale is None or not p.sale.funding:
+            raise PlatformError("this sale is not funded")
+        standing = self.stake.standing(account)
+        tier = self.stake.policy.for_stake(standing["stake_atoms"])
+        plan = p.sale.plan_buy(account, tier,
+                               token_atoms=plan_json.get("token_atoms"),
+                               payment_atoms=plan_json.get("payment_atoms"),
+                               height=self.height())
+        buyer = dict(buyer or {})
+        buyer["inputs"] = self.verify_buyer_inputs(buyer.get("inputs"))
+        built = TX.build_buy(p.sale, plan, buyer)
+        built["token_atoms"] = plan.token_atoms
+        built["payment_atoms"] = plan.payment_atoms
+        built["remainder_atoms"] = plan.remainder_atoms
+        return built
+
+    def build_reclaim(self, account, slug, body):
+        """Sweep unsold tokens after the close. Only the project may ask."""
+        p = self._project(slug)
+        if p.issuer_account != account:
+            raise NotAuthorised("only the project's issuer can reclaim its sale")
+        if p.sale is None or not p.sale.funding:
+            raise PlatformError("this sale holds nothing to reclaim")
+        if not p.sale.has_closed(height=self.height()):
+            raise PlatformError(
+                "this sale has not closed yet; the covenant will reject a "
+                "reclaim before its close locktime")
+        if self.rpc is None:
+            raise PlatformError("no node connection; cannot build a reclaim")
+        genesis = self.rpc.call("getblockhash", 0)
+        fee_inputs = self.verify_buyer_inputs(body.get("fee_inputs"))
+        return TX.build_reclaim(
+            p.sale,
+            destination_spk=body.get("destination_script_pubkey"),
+            fee_inputs=fee_inputs,
+            fee_atoms=int(body.get("fee_atoms") or 0),
+            fee_asset=(body.get("fee_asset") or p.sale.terms.payment_asset),
+            genesis_hash=genesis,
+            locktime=body.get("locktime"))
 
     def plan_buy(self, account, slug, token_atoms=None, payment_atoms=None):
         p = self._project(slug)
@@ -196,6 +257,7 @@ class Platform:
         out = plan.to_json()
         out["tier"] = tier.to_json()
         out["allowance_after_atoms"] = p.sale.allowance_for(account, tier) - plan.payment_atoms
+        out["sale_address"] = self.sale_address(p.sale)
         out["cap"] = {
             "per_sale_atoms": tier.cap_atoms,
             "committed_atoms": p.sale.allocations.get(account, 0),
@@ -244,13 +306,53 @@ class Platform:
 
     def public_projects(self):
         h = self.height()
-        return [p.to_json(height=h) for p in
-                sorted(self.projects.values(), key=lambda x: -x.created_at)]
+        out = []
+        for p in sorted(self.projects.values(), key=lambda x: -x.created_at):
+            d = p.to_json(height=h)
+            if p.sale:
+                d["address"] = self.sale_address(p.sale)
+            out.append(d)
+        return out
+
+    def sale_address(self, sale):
+        return ADDR.from_script_pubkey(sale.script_pubkey, self.hrp)
+
+    def verify_buyer_inputs(self, inputs):
+        """Check the buyer's funding outputs against the chain before building.
+
+        The buyer says what they are spending; the chain says what is actually
+        there. Trusting the claim produces a transaction that fails at relay
+        with a message about sums that explains nothing, so each input is
+        looked up and its asset, value and confidentiality taken from the node.
+        """
+        if self.rpc is None:
+            return list(inputs or [])
+        checked = []
+        for i in list(inputs or []):
+            out = self.rpc.txout(i["txid"], int(i["vout"]))
+            if out is None:
+                raise PlatformError(
+                    "input %s:%s is not an unspent output -- it does not exist, "
+                    "or it has already been spent" % (i["txid"], i["vout"]))
+            blinded = bool(out.get("valuecommitment") or out.get("amountcommitment")
+                           or out.get("assetcommitment"))
+            asset = (out.get("asset") or "").lower()
+            value = out.get("valueatoms")
+            if value is None and out.get("value") is not None:
+                value = int(round(float(out["value"]) * 100_000_000))
+            spk = (out.get("scriptPubKey") or {}).get("hex")
+            checked.append({"txid": i["txid"], "vout": int(i["vout"]),
+                            "asset": asset or str(i.get("asset", "")).lower(),
+                            "value_atoms": int(value or 0),
+                            "script_pubkey": spk,
+                            "blinded": blinded})
+        return checked
 
     def project_detail(self, slug):
         p = self._project(slug)
         d = p.to_json(height=self.height())
         if p.sale:
+            d["address"] = self.sale_address(p.sale)
             d["verify"] = {
                 "how": "rebuild the sale address from these terms and compare it "
                        "to the funded scriptPubKey; they are the same fact twice",
