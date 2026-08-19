@@ -54,7 +54,23 @@ one is why a compromised levod can mislead but cannot rob.
   published terms, not the ones they submitted.
 - **A reorged lock is not a lost confirmation.** Sequentia follows its Bitcoin
   anchor, so funding can be un-made after a sale showed as live. That is `GHOST`:
-  the sale is not funded and must stop being investable.
+  the sale is not funded and must stop being investable. Detect it by the BLOCK
+  going missing, never by the transaction being unfindable -- a node without
+  `-txindex` cannot find a fully spent transaction either, and treating that as
+  a reorg reports a sold-out sale as one that was never funded.
+- **Asset ids reverse onto the wire.** Levo carries the display form (what an
+  explorer shows) and reverses at two boundaries only: covenant leaf constants
+  and transaction output commitments. Getting it wrong builds a sale priced in
+  an asset nobody holds, silently.
+- **Everything a covenant touches must be explicit.** Confidential inputs cannot
+  fill a sale, and tokens locked into a confidential output can never be sold or
+  reclaimed. Both are refused with reasons; do not soften either.
+- **`scantxoutset` sees only CONFIRMED outputs.** Ask about a known outpoint with
+  `gettxout` first, and never end a sale on one silent reading -- a mempool
+  remainder is invisible to the scan.
+- **Anything that has already happened on chain must not be reported as a
+  failure.** Recording a purchase is bookkeeping; the money moved before it was
+  called.
 - **Levo carries its own crypto.** `secp256k1.py` and `script.py` exist so the
   backend needs no node source checkout. They are verified against the node's
   own `signmessage` vector and the frozen covenant vectors. If you change them,

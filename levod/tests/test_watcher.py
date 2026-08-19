@@ -25,10 +25,14 @@ class FakeRPC:
     def __init__(self):
         self.unspents = []
         self.txouts = {}
+        self.blocks = {}          # height -> hash currently at that height
+        self.height = 100
 
     def call(self, method, *params):
         if method == "scantxoutset":
             return {"success": True, "unspents": list(self.unspents)}
+        if method == "getblockhash":
+            return self.blocks.get(int(params[0]))
         if method == "getrawtransaction":
             return None
         raise RuntimeError("unexpected call %s" % method)
@@ -37,7 +41,7 @@ class FakeRPC:
         return self.txouts.get((txid, int(vout)))
 
     def chain_height(self):
-        return 100
+        return self.height
 
 
 class FakeMarket:
@@ -109,13 +113,46 @@ def test_a_partial_buy_is_picked_up_without_being_told(t):
 
 
 def test_selling_out_is_recognised(t):
+    """The sale was mined in a block that is still in the chain, and now holds
+    nothing: it sold out."""
     s = _sale()
     rpc = FakeRPC()
-    rpc.unspents = []
-    rpc.txouts[("ab" * 32, 1)] = {"value": 1.0}      # funding tx still on chain
+    rpc.blocks[95] = "block-95"
+    rpc.txouts[("ab" * 32, 0)] = {"value": TOTAL / 1e8, "confirmations": 6}
+    _watch(s, rpc).poll()                     # observe it confirmed
+    t.eq(s.funding["block"], "block-95", "the watcher notes where it was mined")
+    del rpc.txouts[("ab" * 32, 0)]            # spent
     _settle(s, rpc)
-    t.eq(s.status, S.SOLD_OUT, "nothing left resting, funding intact: sold out")
+    t.eq(s.status, S.SOLD_OUT, "nothing left resting, block intact: sold out")
     t.eq(s.locked_atoms, 0, "and it holds nothing")
+
+
+def test_a_sold_out_sale_is_never_called_a_reorg(t):
+    """A node without -txindex cannot find a fully spent transaction, so
+    treating 'not found' as proof of a reorg would tell buyers a sold-out sale
+    was never funded. Only the block going missing is evidence."""
+    s = _sale()
+    rpc = FakeRPC()
+    rpc.blocks[95] = "block-95"
+    rpc.txouts[("ab" * 32, 0)] = {"value": TOTAL / 1e8, "confirmations": 6}
+    _watch(s, rpc).poll()
+    del rpc.txouts[("ab" * 32, 0)]
+    _settle(s, rpc)
+    t.eq(s.status, S.SOLD_OUT, "still sold out, however unfindable the tx is")
+
+
+def test_a_reorg_is_detected_by_the_block_going_missing(t):
+    """Sequentia follows its Bitcoin anchor, so the block a funding was mined
+    into can stop being the block at that height. That is the evidence."""
+    s = _sale()
+    rpc = FakeRPC()
+    rpc.blocks[95] = "block-95"
+    rpc.txouts[("ab" * 32, 0)] = {"value": TOTAL / 1e8, "confirmations": 6}
+    _watch(s, rpc).poll()
+    del rpc.txouts[("ab" * 32, 0)]
+    rpc.blocks[95] = "a-different-block"      # reorged
+    _settle(s, rpc)
+    t.eq(s.status, S.GHOST, "a replaced block means the funding went with it")
 
 
 def test_a_reorged_lock_becomes_a_ghost_not_a_sellout(t):
@@ -125,10 +162,9 @@ def test_a_reorged_lock_becomes_a_ghost_not_a_sellout(t):
     showing as complete."""
     s = _sale()
     rpc = FakeRPC()
-    rpc.unspents = []                 # nothing resting
-    # and nothing of the funding transaction survives anywhere
+    rpc.unspents = []                 # nothing resting, never seen confirmed
     _settle(s, rpc)
-    t.eq(s.status, S.GHOST, "a vanished funding transaction is a ghost")
+    t.eq(s.status, S.GHOST, "funding never seen confirmed and now absent")
     t.eq(s.funding, None, "a ghost has no outpoint")
     t.eq(s.locked_atoms, 0, "and holds nothing")
 
@@ -198,8 +234,11 @@ def test_one_blind_reading_is_not_enough_to_end_a_sale(t):
     cannot see it either. One silent poll means look again."""
     s = _sale()
     rpc = FakeRPC()
-    rpc.txouts[("ab" * 32, 1)] = {"value": 1.0}
+    rpc.blocks[95] = "block-95"
+    rpc.txouts[("ab" * 32, 0)] = {"value": TOTAL / 1e8, "confirmations": 6}
     w = _watch(s, rpc)
+    w.poll()                                   # seen, confirmed, block noted
+    del rpc.txouts[("ab" * 32, 0)]             # now spent
     w.poll()
     t.eq(s.status, S.LIVE, "still live after a single silent poll")
     w.poll()

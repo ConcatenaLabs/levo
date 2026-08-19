@@ -128,6 +128,7 @@ class Watcher:
                 return False                      # cannot tell: change nothing
             if out is not None:
                 atoms = _out_atoms(out)
+                self._remember_block(sale, out)
                 before = (sale.status, sale.locked_atoms)
                 total = sale.terms.total_atoms or atoms
                 sale.locked_atoms = atoms
@@ -165,9 +166,14 @@ class Watcher:
         if misses < self.confirm_misses:
             return False
         was = sale.status
-        if sale.funding and not self._funding_exists(sale.funding["txid"]):
-            # The funding transaction itself is gone from the chain: this is a
-            # reorg, not a completed sale.
+        reorged = self._was_reorged(sale)
+        if reorged is True:
+            # The block the funding was mined into is no longer the block at
+            # that height, so the funding went with it. Not a completed sale.
+            sale.mark_ghost()
+        elif reorged is None and sale.funding and not sale.funding.get("block"):
+            # Never observed confirmed, and now not there at all. It was
+            # probably never mined; treat it as unfunded rather than sold.
             sale.mark_ghost()
         else:
             sale.locked_atoms = 0
@@ -176,27 +182,47 @@ class Watcher:
             sale.status = S.SOLD_OUT
         return was != sale.status
 
-    def _funding_exists(self, txid):
-        """Is the funding transaction still part of the chain?
+    def _remember_block(self, sale, out):
+        """Note which block the sale's funding is in, so a reorg is detectable.
 
-        Asked without -txindex, so this checks whether ANY of its outputs is
-        still known. A transaction that has been fully spent looks the same as
-        one that never existed, which is why a sale is only called a ghost when
-        its own covenant output is gone AND nothing else of the funding
-        transaction survives -- and why `mark_ghost` is reversible by simply
-        locking again.
+        `gettxout` reports how deep an output is, not where it sits, so the
+        height is derived from the depth and the block hash at that height is
+        recorded. It is the only thing that later distinguishes a sale that sold
+        out from one whose funding was undone.
         """
-        for vout in range(0, 8):
-            try:
-                if self.rpc.txout(txid, vout) is not None:
-                    return True
-            except Exception:
-                return True          # cannot tell: assume it is there
         try:
-            tx = self.rpc.call("getrawtransaction", txid, True)
-            return bool(tx)
+            conf = int(out.get("confirmations") or 0)
+            if conf < 1:
+                return
+            tip = self.rpc.chain_height()
+            height = tip - conf + 1
+            if sale.funding.get("height") == height and sale.funding.get("block"):
+                return
+            sale.funding["height"] = height
+            sale.funding["block"] = self.rpc.call("getblockhash", height)
         except Exception:
-            return False
+            pass                       # best effort; absence just means we ask later
+
+    def _was_reorged(self, sale):
+        """Positive evidence that the funding was undone, or None if unknown.
+
+        This is deliberately not 'we could not find the transaction'. A node
+        without -txindex cannot find a fully spent transaction either, so
+        treating absence as proof reports a sold-out sale as a reorg -- which
+        tells buyers it was never funded, the opposite of the truth.
+
+        The block the funding was mined into is the evidence. If the chain no
+        longer has that block at that height, the funding is gone with it;
+        Sequentia follows its Bitcoin anchor, so that genuinely happens.
+        """
+        f = sale.funding or {}
+        height, block = f.get("height"), f.get("block")
+        if not block or height is None:
+            return None                # never seen it confirmed: cannot say
+        try:
+            return self.rpc.call("getblockhash", height) != block
+        except Exception:
+            return None
 
 
 def _out_atoms(out):

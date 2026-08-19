@@ -81,7 +81,8 @@ class Sale:
 
     # --- lock ---------------------------------------------------------------
 
-    def confirm_lock(self, txid, vout, spk_hex, value_atoms, asset_hex):
+    def confirm_lock(self, txid, vout, spk_hex, value_atoms, asset_hex,
+                     blinded=False):
         """Accept an on-chain output as this sale's lock, or refuse it.
 
         Every one of these checks has a way to lose money if skipped, so none of
@@ -91,6 +92,18 @@ class Sale:
         sale cannot deliver the allocation it published.
         """
         self.verify_funding_spk(spk_hex)
+        if blinded or asset_hex is None or value_atoms is None:
+            # A confidential output states nothing; it commits. The sell leaf
+            # reads the value it is spending and refuses anything it cannot
+            # read, so tokens locked into a blinded output are locked FOREVER --
+            # no buy can ever spend them and no reclaim can either. Refusing
+            # loudly here is the only chance to stop that.
+            raise SaleError(
+                "that output is confidential, and a sale covenant can only hold "
+                "an explicit one: the sell leaf reads the amount it is spending, "
+                "so tokens locked into a blinded output could never be sold OR "
+                "reclaimed. Send the tokens to the sale address from an "
+                "unblinded output and confirm that instead.")
         if str(asset_hex).lower() != self.terms.token_asset:
             raise SaleError("locked output holds asset %s, but the sale sells %s"
                             % (asset_hex, self.terms.token_asset))
