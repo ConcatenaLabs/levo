@@ -214,3 +214,53 @@ def ecdsa_recover(z, r, s, recid):
     if Q is None:
         raise ValueError("recovered the point at infinity")
     return Q
+
+
+# --- Schnorr (BIP340) --------------------------------------------------------
+# Used for one thing only: the project's signature on the reclaim leaf, which is
+# the single place in Levo where anybody signs a covenant spend at all.
+
+def _lift_even(secret):
+    P = affine(mul(G, secret))
+    if P is None:
+        raise ValueError("secret key out of range")
+    # BIP340 keys are x-only, so the secret is negated when the point has odd y.
+    return (P, secret if P[1] % 2 == 0 else N - secret)
+
+
+def xonly_pubkey(secret):
+    P, _ = _lift_even(secret % N)
+    return P[0].to_bytes(32, "big")
+
+
+def schnorr_sign(msg32, secret, aux=b"\x00" * 32):
+    if len(msg32) != 32:
+        raise ValueError("BIP340 signs a 32-byte message")
+    d0 = secret % N
+    if d0 == 0:
+        raise ValueError("secret key out of range")
+    P, d = _lift_even(d0)
+    px = P[0].to_bytes(32, "big")
+    t = (d ^ int.from_bytes(tagged_hash("BIP0340/aux", aux), "big")).to_bytes(32, "big")
+    k0 = int.from_bytes(tagged_hash("BIP0340/nonce", t, px, msg32), "big") % N
+    if k0 == 0:
+        raise ValueError("nonce is zero; retry with different aux")
+    R, k = _lift_even(k0)
+    rx = R[0].to_bytes(32, "big")
+    e = int.from_bytes(tagged_hash("BIP0340/challenge", rx, px, msg32), "big") % N
+    return rx + ((k + e * d) % N).to_bytes(32, "big")
+
+
+def schnorr_verify(msg32, sig, xonly):
+    if len(sig) != 64 or len(xonly) != 32 or len(msg32) != 32:
+        return False
+    r = int.from_bytes(sig[:32], "big")
+    s = int.from_bytes(sig[32:], "big")
+    if r >= P or s >= N:
+        return False
+    Pp = lift_x(int.from_bytes(xonly, "big"))
+    if Pp is None:
+        return False
+    e = int.from_bytes(tagged_hash("BIP0340/challenge", sig[:32], xonly, msg32), "big") % N
+    R = affine(mul_add([(G, s), (Pp, N - e)]))
+    return R is not None and R[1] % 2 == 0 and R[0] == r
