@@ -22,12 +22,16 @@ import signhelper as SH  # noqa: E402
 
 
 class FakeNode:
-    """Just enough node to answer Levo's three questions."""
+    """Just enough node to answer everything Levo asks."""
+
+    GENESIS = "ddd11d54c87a2bd94400fd31ce05d8e1110bb4b78e7103f738342086fc4ea92e"
 
     def __init__(self):
         self.weights = {}
         self.utxos = {}          # (txid, vout) -> output dict
         self.height = 12345
+        self.unspents = []
+        self.rates = {"SBTC": 6400000000000, "USDX": 100000000}
 
     def staker_weights(self):
         return dict(self.weights)
@@ -37,6 +41,17 @@ class FakeNode:
 
     def txout(self, txid, vout, include_mempool=True):
         return self.utxos.get((txid, int(vout)))
+
+    def call(self, method, *params):
+        if method == "getfeeexchangerates":
+            return dict(self.rates)
+        if method == "getblockhash":
+            return self.GENESIS
+        if method == "scantxoutset":
+            return {"success": True, "unspents": list(self.unspents)}
+        if method == "getblockchaininfo":
+            return {"blocks": self.height}
+        raise RuntimeError("unexpected call %s" % method)
 
 
 def _req(base, method, path, body=None, token=None):
@@ -63,11 +78,8 @@ def main():
 
     import server  # noqa: E402
 
-    app = server.App()
     node = FakeNode()
-    app.node = node
-    app.reader.rpc = node
-    app.market.rpc = node
+    app = server.App(node=node)
     server.Handler.app = app
 
     from http.server import ThreadingHTTPServer
@@ -263,6 +275,91 @@ def main():
     ok.eq(code, 200, "project detail is public")
     ok.eq(r["verify"]["script_pubkey"], spk, "detail publishes the address to verify")
 
+    # --- rails ------------------------------------------------------------
+    code, r = _req(base, "GET", "/api/rails")
+    ok.eq(code, 200, "rails listed")
+    rails = {x["id"]: x for x in r["rails"]}
+    ok.eq(rails["usdx"]["available"], True, "the USDX rail is available")
+    ok.eq(rails["usdx"]["steps"], 1, "and settles in one step")
+    ok.eq(rails["btc"]["available"], True, "the BTC rail is available")
+    ok.eq(rails["btc"]["steps"], 2, "and settles in two")
+
+    code, plan = _req(base, "POST", "/api/projects/helios/buy",
+                      {"token_atoms": 100 * 100_000_000, "rail": "btc"},
+                      token=issuer_tok)
+    ok.eq(code, 200, "a BTC-priced quote")
+    ok.eq(plan["quote"]["rail"], "btc", "quoted on the BTC rail")
+    ok.eq(plan["quote"]["send_sats"], 39063,
+          "25 USDX at 64,000 USDX/BTC is 39062.5 sats, rounded up so the "
+          "purchase is never left short")
+    ok.eq(plan["quote"]["delivers_atoms"], plan["payment_atoms"],
+          "and it delivers exactly what the covenant needs")
+
+    # --- building the transaction that settles it -------------------------
+    code, built = _req(base, "POST", "/api/projects/helios/transaction", {
+        "token_atoms": 100 * 100_000_000,
+        "buyer": {
+            "token_script_pubkey": "5120" + "aa" * 32,
+            "change_script_pubkey": "5120" + "bb" * 32,
+            "inputs": [{"txid": "77" * 32, "vout": 0}],
+            "fee_atoms": 1000,
+        }}, token=issuer_tok)
+    ok.eq(code, 400, "an input that is not on chain is refused")
+
+    node.utxos[("77" * 32, 0)] = {
+        "scriptPubKey": {"hex": "0014" + "cc" * 20},
+        "asset": usdx, "valueatoms": 10_000 * 100_000_000}
+    code, built = _req(base, "POST", "/api/projects/helios/transaction", {
+        "token_atoms": 100 * 100_000_000,
+        "buyer": {
+            "token_script_pubkey": "5120" + "aa" * 32,
+            "change_script_pubkey": "5120" + "bb" * 32,
+            "inputs": [{"txid": "77" * 32, "vout": 0}],
+            "fee_atoms": 1000,
+        }}, token=issuer_tok)
+    ok.eq(code, 200, "a funded purchase builds a transaction")
+    ok.ok(len(built["unsigned_tx_hex"]) > 200, "which is a real transaction")
+    ok.eq(built["inputs"][0]["role"], "the sale covenant", "covenant is input 0")
+    ok.ok("none" in built["inputs"][0]["signing"], "and needs no signature")
+    ok.eq(built["outputs"][0]["role"], "treasury credit, checked by the covenant",
+          "the treasury is paid at output 0")
+    ok.eq(built["outputs"][1]["script_pubkey"], spk,
+          "the remainder re-rests at the sale address")
+
+    # A confidential input cannot fund a covenant buy.
+    node.utxos[("78" * 32, 0)] = {
+        "scriptPubKey": {"hex": "0014" + "cc" * 20},
+        "asset": usdx, "valueatoms": 10_000 * 100_000_000,
+        "valuecommitment": "08" + "ab" * 32}
+    code, r = _req(base, "POST", "/api/projects/helios/transaction", {
+        "token_atoms": 100 * 100_000_000,
+        "buyer": {
+            "token_script_pubkey": "5120" + "aa" * 32,
+            "change_script_pubkey": "5120" + "bb" * 32,
+            "inputs": [{"txid": "78" * 32, "vout": 0}],
+            "fee_atoms": 1000,
+        }}, token=issuer_tok)
+    ok.eq(code, 400, "a confidential input is refused")
+    ok.ok("confidential" in r["error"], "and says why")
+
+    # --- reclaim ----------------------------------------------------------
+    code, r = _req(base, "POST", "/api/projects/helios/reclaim", {},
+                   token=buyer_tok)
+    ok.eq(code, 403, "only the issuer may reclaim")
+    code, r = _req(base, "POST", "/api/projects/helios/reclaim", {},
+                   token=issuer_tok)
+    ok.eq(code, 400, "a reclaim before the close is refused")
+    ok.ok("closed" in r["error"], "and explains that the covenant would reject it")
+
+    # --- the watcher ------------------------------------------------------
+    code, r = _req(base, "GET", "/api/watcher")
+    ok.eq(code, 200, "the watcher reports itself")
+
+    # --- addresses --------------------------------------------------------
+    code, r = _req(base, "GET", "/api/projects/helios")
+    ok.ok(r["address"].startswith("tb1p"),
+          "a sale publishes a bech32m address, not just a scriptPubKey")
+
     srv.shutdown()
     if state.exists():
         state.unlink()
@@ -273,6 +370,12 @@ class Checker:
     def __init__(self):
         self.passed = 0
         self.failed = []
+
+    def ok(self, cond, what, detail=""):
+        if cond:
+            self.passed += 1
+        else:
+            self.failed.append("%s%s" % (what, (" (%s)" % detail) if detail else ""))
 
     def eq(self, got, want, what):
         if got == want:

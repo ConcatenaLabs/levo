@@ -30,6 +30,7 @@ from urllib.parse import urlparse, parse_qs
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+import address as ADDR    # noqa: E402
 import auth as A          # noqa: E402
 import covenant as C      # noqa: E402
 import market as M        # noqa: E402
@@ -38,13 +39,19 @@ import rpc as RPC         # noqa: E402
 import sale as S          # noqa: E402
 import store as ST        # noqa: E402
 import tiers as T         # noqa: E402
+import watcher as W       # noqa: E402
 
 
 class App:
-    """Everything the request handlers need, assembled once."""
+    """Everything the request handlers need, assembled once.
 
-    def __init__(self):
-        self.node = RPC.NodeRPC()
+    `node` is injectable so the demo and the test drill can supply a stub. It is
+    taken once and shared by every part that needs the chain, so there is no way
+    to end up with half the process talking to one node and half to another.
+    """
+
+    def __init__(self, node=None):
+        self.node = node or RPC.NodeRPC()
         self.links = T.StakeLinks()
         self.policy = T.TierPolicy()
         self.reader = T.StakeReader(self.node, self.links, self.policy)
@@ -52,8 +59,16 @@ class App:
         payment_asset = os.environ.get(
             "LEVOD_PAYMENT_ASSET",
             "2a515539da5e6a60caa7766ecd65bac0c10d15717ddd2088844ba58f4d04b9de")
-        self.rails = R.Rails(payment_asset, rate_source=None)
-        self.market = M.Platform(self.store, self.reader, self.rails, self.node)
+        payment_label = os.environ.get("LEVOD_PAYMENT_LABEL", "USDX")
+        self.hrp = os.environ.get("LEVOD_HRP", "tb")
+        self.rails = R.Rails(payment_asset, payment_label,
+                             R.NodeRateSource(self.node))
+        self.market = M.Platform(self.store, self.reader, self.rails, self.node,
+                                 hrp=self.hrp)
+        self.watcher = W.Watcher(
+            self.market, self.node,
+            interval=int(os.environ.get("LEVOD_WATCH_SECONDS", "60")),
+            hrp=self.hrp, log=lambda m: sys.stderr.write("levod %s\n" % m))
         self.challenges = A.Challenges(site="Levo")
         self.stake_challenges = A.Challenges(site="Levo")
         self.sessions = A.Sessions()
@@ -158,6 +173,18 @@ class Handler(BaseHTTPRequestHandler):
         if method == "GET" and parts == ["rails"]:
             return self._json(200, {"rails": app.rails.available()})
 
+        if method == "GET" and parts == ["watcher"]:
+            w = app.watcher
+            return self._json(200, {
+                "running": bool(w._thread and w._thread.is_alive()),
+                "interval_seconds": w.interval,
+                "last_run": w.last_run,
+                "last_error": w.last_error,
+                "what_it_does": "reconciles every sale against the UTXO set, so "
+                                "a purchase made without Levo still moves the "
+                                "sale and a reorged lock stops being investable",
+            })
+
         # -- auth -------------------------------------------------------------
         if method == "POST" and parts == ["auth", "challenge"]:
             return self._json(200, app.challenges.issue("Sign in to Levo"))
@@ -225,22 +252,8 @@ class Handler(BaseHTTPRequestHandler):
             b = self._body()
             p = app.market.list_project(acct, b.get("project") or {},
                                         b.get("terms") or {})
-            return self._json(201, {
-                "project": p.to_json(),
-                "lock": {
-                    "script_pubkey": p.sale.script_pubkey,
-                    "asset": p.sale.terms.token_asset,
-                    "atoms": p.sale.terms.total_atoms,
-                    "how": "send exactly this asset and amount to this "
-                           "scriptPubKey, then confirm the outpoint. Until then "
-                           "the sale is a draft and is not investable.",
-                    "price_reduced": bool(getattr(p, "price_was_reduced", False)),
-                    "verify_against": "the terms in this response, not the ones "
-                                      "you submitted: the price is stored in "
-                                      "lowest terms, and the address is derived "
-                                      "from the stored values.",
-                },
-            })
+            return self._json(201, {"project": p.to_json(),
+                                    "lock": app.market.lock_instructions(p)})
 
         if method == "POST" and len(parts) == 3 and parts[0] == "projects" \
                 and parts[2] == "lock":
@@ -259,6 +272,18 @@ class Handler(BaseHTTPRequestHandler):
             rail = b.get("rail") or R.USDX
             plan["quote"] = app.rails.quote(rail, plan["payment_atoms"])
             return self._json(200, plan)
+
+        if method == "POST" and len(parts) == 3 and parts[0] == "projects" \
+                and parts[2] == "transaction":
+            acct = self._require_account()
+            b = self._body()
+            built = app.market.build_buy(acct, parts[1], b, b.get("buyer") or {})
+            return self._json(200, built)
+
+        if method == "POST" and len(parts) == 3 and parts[0] == "projects" \
+                and parts[2] == "reclaim":
+            acct = self._require_account()
+            return self._json(200, app.market.build_reclaim(acct, parts[1], self._body()))
 
         if method == "POST" and len(parts) == 3 and parts[0] == "projects" \
                 and parts[2] == "confirm":
@@ -328,8 +353,10 @@ def main():
     port = int(os.environ.get("LEVOD_PORT", "8099"))
     Handler.app = App()
     srv = ThreadingHTTPServer((host, port), Handler)
+    Handler.app.watcher.start()
     sys.stderr.write("levod listening on http://%s:%d\n" % (host, port))
     sys.stderr.write("  webroot %s\n" % Handler.app.webroot)
+    sys.stderr.write("  watching the chain every %ds\n" % Handler.app.watcher.interval)
     try:
         srv.serve_forever()
     except KeyboardInterrupt:
