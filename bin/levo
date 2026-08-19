@@ -230,11 +230,40 @@ def cmd_reclaim(args):
         "destination_script_pubkey": dest_spk,
         "fee_inputs": ins, "fee_atoms": fee_atoms,
         "fee_asset": sale["terms"]["payment_asset"]}, tok)
-    print("sighash %s" % r["sighash"])
-    print("sign it with the reclaim key (%s), add [sig, leaf, control block] to "
-          "input 0, then sign your fee inputs and broadcast." % r["signs_with"])
-    print(json.dumps({k: r[k] for k in ("leaf", "control_block", "locktime",
-                                        "unsigned_tx_hex", "txid")}, indent=2))
+
+    key = args.reclaim_key or os.environ.get("LEVO_RECLAIM_KEY")
+    if not key:
+        print("sighash %s" % r["sighash"])
+        print("sign it with the reclaim key (%s), put [signature, leaf, control "
+              "block] in input 0, sign your fee inputs and broadcast."
+              % r["signs_with"])
+        print(json.dumps({k: r[k] for k in ("leaf", "control_block", "locktime",
+                                            "unsigned_tx_hex", "txid")}, indent=2))
+        print("\nOr pass --reclaim-key <32-byte hex> to finish it here.")
+        return
+
+    # Sign the covenant input locally. The key never leaves this machine, and
+    # levod is never asked for it -- it could not use one if it had it.
+    import secp256k1 as S  # noqa: E402
+    import tx as TXMOD  # noqa: E402
+    sec = int(key, 16)
+    sig = S.schnorr_sign(bytes.fromhex(r["sighash"]), sec)
+    if not S.schnorr_verify(bytes.fromhex(r["sighash"]), sig,
+                            bytes.fromhex(r["signs_with"])):
+        raise Fail("that key is not this sale's reclaim key (%s); the covenant "
+                   "would reject the spend" % r["signs_with"])
+    witness = [sig.hex(), r["leaf"], r["control_block"]]
+    signed = node("signrawtransactionwithwallet", r["unsigned_tx_hex"])
+    hexed = signed.get("hex") or r["unsigned_tx_hex"]
+    hexed = TXMOD.set_witness(hexed, 0, [bytes.fromhex(w) for w in witness])
+    check = node("testmempoolaccept", json.dumps([hexed]))
+    if not check or not check[0].get("allowed"):
+        raise Fail("the chain would reject this reclaim: %s"
+                   % (check[0].get("reject-reason") if check else "unknown"))
+    if args.dry_run:
+        print("would broadcast %s (accepted by testmempoolaccept)" % check[0]["txid"])
+        return
+    print("reclaimed. %s" % node("sendrawtransaction", hexed))
 
 
 def main():
@@ -263,6 +292,8 @@ def main():
     rc = sub.add_parser("reclaim")
     rc.add_argument("slug"); rc.add_argument("--to")
     rc.add_argument("--fee", type=int, default=100000)
+    rc.add_argument("--reclaim-key", help="32-byte hex; signs the covenant here")
+    rc.add_argument("--dry-run", action="store_true")
     rc.set_defaults(fn=cmd_reclaim)
 
     args = ap.parse_args()

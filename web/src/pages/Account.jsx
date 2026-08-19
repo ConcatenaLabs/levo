@@ -167,10 +167,17 @@ export default function Account() {
                   to your total here.
                 </p>
               )}
-              <button className="btn btn-sm btn-ghost" style={{ marginTop: '.75rem' }}
-                      onClick={async () => setStanding(await api.stakeUnlink(k.staker_pubkey))}>
-                Unlink
-              </button>
+              {k.is_login_key ? (
+                <p className="small dim" style={{ margin: '.6rem 0 0' }}>
+                  This is the key you signed in with, so it counts on its own.
+                  Signing out is what stops it counting.
+                </p>
+              ) : (
+                <button className="btn btn-sm btn-ghost" style={{ marginTop: '.75rem' }}
+                        onClick={async () => setStanding(await api.stakeUnlink(k.staker_pubkey))}>
+                  Unlink
+                </button>
+              )}
             </div>
           ))}
         </div>

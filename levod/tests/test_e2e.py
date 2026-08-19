@@ -194,6 +194,19 @@ def main():
                    {"project": meta, "terms": terms}, token=buyer_tok)
     ok.eq(code, 403, "tier 1 cannot list a project")
 
+    # A sale that has already closed can only ever be reclaimed, so listing one
+    # is always a mistake -- with a height-based close as much as a dated one.
+    past_height = dict(terms, close_locktime=node.height - 1)
+    code, r = _req(base, "POST", "/api/projects",
+                   {"project": dict(meta, slug="already-closed"),
+                    "terms": past_height}, token=issuer_tok)
+    ok.eq(code, 400, "a sale closing at a past block is refused")
+    past_time = dict(terms, close_locktime=1_000_000_000)
+    code, r = _req(base, "POST", "/api/projects",
+                   {"project": dict(meta, slug="already-closed-2"),
+                    "terms": past_time}, token=issuer_tok)
+    ok.eq(code, 400, "a sale closing at a past date is refused")
+
     code, r = _req(base, "POST", "/api/projects",
                    {"project": meta, "terms": terms}, token=issuer_tok)
     ok.eq(code, 201, "top tier can list")
