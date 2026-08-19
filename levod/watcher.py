@@ -39,6 +39,8 @@ class Watcher:
         self.interval = interval
         self.hrp = hrp
         self.log = log or (lambda m: None)
+        self._misses = {}
+        self.confirm_misses = 2
         self._stop = threading.Event()
         self._thread = None
         self.last_run = None
@@ -112,6 +114,29 @@ class Watcher:
     def _reconcile(self, project, found):
         sale = project.sale
         spk = sale.script_pubkey.lower()
+
+        # Ask about the outpoint we already know FIRST, and with the mempool
+        # included. `scantxoutset` walks the CONFIRMED UTXO set only, so a sale
+        # funded a moment ago is invisible to it -- and concluding from that
+        # silence that the sale is over would take a freshly locked sale off the
+        # board within a minute of it opening. That happened on the live
+        # deployment the first time a sale was listed.
+        if sale.funding:
+            try:
+                out = self.rpc.txout(sale.funding["txid"], sale.funding["vout"])
+            except Exception:
+                return False                      # cannot tell: change nothing
+            if out is not None:
+                atoms = _out_atoms(out)
+                before = (sale.status, sale.locked_atoms)
+                total = sale.terms.total_atoms or atoms
+                sale.locked_atoms = atoms
+                sale.funding["atoms"] = atoms
+                sale.sold_atoms = max(0, total - atoms)
+                sale.status = S.LIVE if atoms >= total else S.PARTIAL
+                self._misses.pop(project.slug, None)
+                return before != (sale.status, sale.locked_atoms)
+
         resting = [u for u in found.get(spk, [])
                    if u["asset"] == sale.terms.token_asset]
 
@@ -126,10 +151,18 @@ class Watcher:
             total = sale.terms.total_atoms or u["atoms"]
             sale.sold_atoms = max(0, total - u["atoms"])
             sale.status = S.LIVE if u["atoms"] >= total else S.PARTIAL
+            self._misses.pop(project.slug, None)
             return before != (sale.status, sale.locked_atoms, u["txid"])
 
-        # Nothing resting. Sold out, reclaimed, or never really funded.
+        # Nothing resting anywhere we can see. Before concluding that, wait for
+        # a second look: a buy's remainder sits in the mempool for a block or
+        # two, and the confirmed-set scan cannot see it either. Declaring a sale
+        # finished on one blind reading would flap it in and out of existence.
         if sale.status == S.DRAFT:
+            return False
+        misses = self._misses.get(project.slug, 0) + 1
+        self._misses[project.slug] = misses
+        if misses < self.confirm_misses:
             return False
         was = sale.status
         if sale.funding and not self._funding_exists(sale.funding["txid"]):
@@ -164,6 +197,15 @@ class Watcher:
             return bool(tx)
         except Exception:
             return False
+
+
+def _out_atoms(out):
+    """Atoms held by a `gettxout` result."""
+    if out.get("valueatoms") is not None:
+        return int(out["valueatoms"])
+    if out.get("amountatoms") is not None:
+        return int(out["amountatoms"])
+    return int(round(float(out.get("value", 0)) * 100_000_000))
 
 
 def _atoms(u):

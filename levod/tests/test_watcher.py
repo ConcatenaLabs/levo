@@ -63,7 +63,22 @@ def _sale():
 
 
 def _watch(sale, rpc):
-    return W.Watcher(FakeMarket({"t": P(sale)}), rpc, interval=1)
+    w = W.Watcher(FakeMarket({"t": P(sale)}), rpc, interval=1)
+    w.market.projects["t"].slug = "t"
+    return w
+
+
+def _settle(sale, rpc):
+    """Poll until the watcher is willing to call a sale finished.
+
+    It deliberately will not do so on a single blind reading: the confirmed-set
+    scan cannot see a mempool remainder, so one silent poll means "look again",
+    not "the sale is over".
+    """
+    w = _watch(sale, rpc)
+    w.poll()
+    w.poll()
+    return w
 
 
 def test_unchanged_sale_stays_live(t):
@@ -98,7 +113,7 @@ def test_selling_out_is_recognised(t):
     rpc = FakeRPC()
     rpc.unspents = []
     rpc.txouts[("ab" * 32, 1)] = {"value": 1.0}      # funding tx still on chain
-    _watch(s, rpc).poll()
+    _settle(s, rpc)
     t.eq(s.status, S.SOLD_OUT, "nothing left resting, funding intact: sold out")
     t.eq(s.locked_atoms, 0, "and it holds nothing")
 
@@ -112,7 +127,7 @@ def test_a_reorged_lock_becomes_a_ghost_not_a_sellout(t):
     rpc = FakeRPC()
     rpc.unspents = []                 # nothing resting
     # and nothing of the funding transaction survives anywhere
-    _watch(s, rpc).poll()
+    _settle(s, rpc)
     t.eq(s.status, S.GHOST, "a vanished funding transaction is a ghost")
     t.eq(s.funding, None, "a ghost has no outpoint")
     t.eq(s.locked_atoms, 0, "and holds nothing")
@@ -121,7 +136,7 @@ def test_a_reorged_lock_becomes_a_ghost_not_a_sellout(t):
 def test_a_ghost_recovers_when_it_is_funded_again(t):
     s = _sale()
     rpc = FakeRPC()
-    _watch(s, rpc).poll()
+    _settle(s, rpc)
     t.eq(s.status, S.GHOST, "ghosted first")
     rpc.unspents = [{"txid": "ef" * 32, "vout": 0, "scriptPubKey": s.script_pubkey,
                      "amount": TOTAL / 1e8, "asset": GOLD}]
@@ -150,7 +165,7 @@ def test_a_different_asset_at_the_address_is_ignored(t):
     rpc = FakeRPC()
     rpc.unspents = [{"txid": "22" * 32, "vout": 0, "scriptPubKey": s.script_pubkey,
                      "amount": 5.0, "asset": USDX}]
-    _watch(s, rpc).poll()
+    _settle(s, rpc)
     t.eq(s.status, S.GHOST, "an unrelated asset is not the sale token")
 
 
@@ -159,5 +174,46 @@ def test_drafts_are_left_alone(t):
                         "22" * 32, TOTAL)
     s = S.Sale("t", terms, "issuer")
     rpc = FakeRPC()
-    _watch(s, rpc).poll()
+    _settle(s, rpc)
     t.eq(s.status, S.DRAFT, "an unfunded draft is not a ghost")
+
+
+def test_a_freshly_locked_sale_is_not_read_as_sold_out(t):
+    """`scantxoutset` walks the CONFIRMED set only, so a sale funded a moment
+    ago is invisible to it. Concluding from that silence that the sale is over
+    would take a live sale off the board within a minute of it opening -- which
+    is exactly what happened the first time a sale was listed on the deployed
+    platform."""
+    s = _sale()
+    rpc = FakeRPC()
+    rpc.unspents = []                                  # not yet confirmed
+    rpc.txouts[("ab" * 32, 0)] = {"value": TOTAL / 1e8}   # but live in the mempool
+    _settle(s, rpc)
+    t.eq(s.status, S.LIVE, "an unconfirmed lock still reads as a live sale")
+    t.eq(s.locked_atoms, TOTAL, "holding everything it was funded with")
+
+
+def test_one_blind_reading_is_not_enough_to_end_a_sale(t):
+    """A buy's remainder sits in the mempool for a block or two, where the scan
+    cannot see it either. One silent poll means look again."""
+    s = _sale()
+    rpc = FakeRPC()
+    rpc.txouts[("ab" * 32, 1)] = {"value": 1.0}
+    w = _watch(s, rpc)
+    w.poll()
+    t.eq(s.status, S.LIVE, "still live after a single silent poll")
+    w.poll()
+    t.eq(s.status, S.SOLD_OUT, "and finished once it reads the same way twice")
+
+
+def test_the_recorded_outpoint_is_authoritative_over_the_scan(t):
+    """Asking about the outpoint we already know is both cheaper and sees the
+    mempool, so it decides; the scan is what finds a sale that MOVED."""
+    s = _sale()
+    rpc = FakeRPC()
+    rpc.txouts[("ab" * 32, 0)] = {"value": 700.0}
+    rpc.unspents = [{"txid": "zz", "vout": 9, "scriptPubKey": s.script_pubkey,
+                     "amount": 1.0, "asset": GOLD}]
+    _watch(s, rpc).poll()
+    t.eq(s.locked_atoms, 700 * 10**8, "the known outpoint decides")
+    t.eq(s.funding["txid"], "ab" * 32, "and the sale stays where it is")
