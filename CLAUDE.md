@@ -1,0 +1,77 @@
+# Levo
+
+A launchpad on Sequentia: stake sets your allocation ceiling, and a covenant
+holds the project's tokens from lock to delivery.
+
+`README.md`'s "What is real" section is the most important thing in the repo.
+The sale covenant, the signed-message login and the stake tiers are real and
+enforced by consensus. Per-buyer tier caps are Levo's policy and are not.
+Never blur that line, in code or in copy.
+
+Node and consensus conventions live in the
+[`Sequentia`](https://github.com/GracedEternalKingCabbageMan/Sequentia) repo.
+Levo is a separate project and shares no code with any other platform in the
+ecosystem.
+
+## Two halves
+
+| Path | What |
+|---|---|
+| `levod/` | The backend. Pure Python, standard library only, no dependencies. Serves the API and the built SPA from one origin, so one proxy route covers both. |
+| `web/` | Vite + React + plain CSS. No component library and no Tailwind: the visual identity is the point. |
+
+```sh
+python3 levod/tests/run.py        # unit checks
+python3 levod/tests/test_e2e.py   # the API end to end, against a stub node
+python3 levod/demo.py             # the whole platform, no chain needed
+cd web && npm install && npm run build
+```
+
+There is no CI. Those commands are the whole gate.
+
+## The custody line
+
+levod holds no keys, builds no transactions and signs nothing. It reads the
+chain over JSON-RPC and writes a JSON file of listings. Do not add a route that
+accepts key material, and do not add a wallet call to `rpc.py` — the absence of
+one is why a compromised levod can mislead but cannot rob.
+
+## Traps
+
+- **`levod/vectors.json` is frozen.** `covenant.py` compares itself to it on
+  every import. If that check fails, sale addresses have MOVED, and tokens
+  locked under the old bytes are not at the address the new bytes derive. Never
+  regenerate the vectors to make a failing check pass; that is a migration, and
+  existing sales must be closed out under the old bytes first.
+- **The internal key must be NUMS.** Any other internal key gives the project a
+  taproot key path, and therefore a way to spend a live sale out from under its
+  buyers. `SaleCovenant` refuses to build one; keep it that way.
+- **Reduce prices before deriving an address.** `ceil(n*num/den)` is unchanged
+  by reducing the fraction, but the leaf's 64-bit arithmetic aborts on overflow
+  and forms `filled * num`, so `25000000/100000000` overflows a sale a quarter
+  the size that `1/4` handles. `market.list_project` canonicalises. Note that
+  the two forms derive DIFFERENT addresses, so clients must verify against the
+  published terms, not the ones they submitted.
+- **A reorged lock is not a lost confirmation.** Sequentia follows its Bitcoin
+  anchor, so funding can be un-made after a sale showed as live. That is `GHOST`:
+  the sale is not funded and must stop being investable.
+- **Levo carries its own crypto.** `secp256k1.py` and `script.py` exist so the
+  backend needs no node source checkout. They are verified against the node's
+  own `signmessage` vector and the frozen covenant vectors. If you change them,
+  those tests are the only thing standing between a subtle bug and a wrong
+  address.
+
+## Secrets
+
+The repository is public. Never commit keys, seeds, `wallet.dat`, RPC
+credentials, `.env` files or tokens. `LEVOD_SECRET` and node credentials are
+supplied through the environment on the server, never through the repo.
+
+## Working in this repo
+
+- **Commit author:**
+  `GracedEternalKingCabbageMan <151803062+GracedEternalKingCabbageMan@users.noreply.github.com>`
+- **Always open a pull request, then merge it yourself immediately.** The PR
+  records the change and its reasoning; nobody is waiting to review it.
+- Deployment is pull-only: the server pulls from GitHub and builds there. Never
+  edit source on the server and never copy binaries onto it.

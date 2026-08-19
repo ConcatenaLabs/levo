@@ -1,0 +1,17 @@
+# Build output and dependencies
+web/node_modules/
+web/dist/
+
+# Runtime state: listings and the allocation ledger, not source
+levo-state.json
+levod/levo-state.json
+levod/tests/_e2e-state.json
+
+# Secrets never belong in this repository
+*.env
+.env*
+!.env.example
+
+__pycache__/
+*.pyc
+.DS_Store
