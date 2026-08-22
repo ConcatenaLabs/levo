@@ -92,6 +92,6 @@ def from_script_pubkey(spk, hrp="tb"):
 
 
 def hrp_for(chain):
-    return {"sequentia": "sq", "main": "bc", "test": "tb",
+    return {"sequentia": "bc", "main": "bc", "test": "tb",
             "testnet": "tb", "regtest": "ert",
             "elementsregtest": "ert"}.get(str(chain).lower(), "tb")

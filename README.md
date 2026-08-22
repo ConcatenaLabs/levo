@@ -157,7 +157,7 @@ serves them from one origin.
 | `LEVOD_WEBROOT` | `web/dist` | The built app. |
 | `LEVOD_STATE` | `levo-state.json` | Listings and the allocation ledger. |
 | `LEVOD_SECRET` | random per start | Session-token key. Set it, or every restart signs everyone out. |
-| `LEVOD_RPC_URL` | `http://127.0.0.1:7041` | Sequentia node JSON-RPC. The built-in default is an operator-specific port; the testnet's default RPC port is `18776`. |
+| `LEVOD_RPC_URL` | `http://127.0.0.1:18776` | Sequentia node JSON-RPC. The default is the node's RPC port on chain `test`; the testnet box points it at its own follower node. |
 | `LEVOD_RPC_USER` / `LEVOD_RPC_PASSWORD` / `LEVOD_RPC_COOKIE` | — | Node credentials. |
 | `LEVOD_PAYMENT_ASSET` | USDX on testnet | The asset sales are priced in. |
 | `LEVOD_PAYMENT_LABEL` | `USDX` | Its label in the node's rate table. |
