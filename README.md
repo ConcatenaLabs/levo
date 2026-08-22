@@ -66,10 +66,17 @@ Levo cannot quote a rate the chain disagrees with.
 | Path | What |
 |---|---|
 | `levod/` | The backend. Pure Python, standard library only. Serves the API and the built app from one origin. |
+| `levod/server.py` | The service: the API under `/api/` and the built app, one origin. `levod/demo.py` is the same server over a stub node. |
 | `levod/covenant.py` | The sale covenant, checked byte for byte against `levod/vectors.json` on every import. |
+| `levod/sale.py`, `levod/market.py` | The sale lifecycle (lock, sell, reclaim) and the marketplace rules: listing, the settlement plan, the per-buyer caps. |
+| `levod/tiers.py` | The tier policy, and the `LEVOD_TIERS` table it reads. |
+| `levod/rails.py` | The USDX and BTC payment rails and their quotes, priced from `getfeeexchangerates`. |
+| `levod/auth.py` | Login: a challenge, a signature, and the key recovered from it. |
+| `levod/store.py` | The state file: listings and the allocation ledger, written atomically. |
 | `levod/tx.py` | Builds the transaction that settles a buy, and the one that reclaims what did not sell. |
 | `levod/watcher.py` | Reconciles sales against the UTXO set; the chain is the source of truth. |
 | `levod/secp256k1.py`, `levod/script.py`, `levod/address.py` | Curve, script and address primitives. Levo carries its own so it needs no node source checkout. |
+| `tools/gen_vectors.py` | Regenerates `levod/vectors.json`. Running it is a migration, not a refresh; see `CLAUDE.md`. |
 | `bin/levo` | A CLI that runs the whole flow against your own node. |
 | `web/` | The single-page app: Vite and React, plain CSS. |
 | `doc/` | The design notes worth keeping outside the code. |
@@ -81,7 +88,7 @@ cd web && npm install && npm run build     # build the app once
 python3 levod/demo.py                      # then open http://127.0.0.1:8099
 ```
 
-The app builds with **Node 22.12 or newer**. On an older Node the native
+The app builds with **Node 20.19+ or 22.12+** (Vite's engine range). On an older Node the native
 bundler binding is skipped as an unmet engine and the build fails on a missing
 module rather than on the version, which is a confusing way to find out.
 
@@ -104,8 +111,8 @@ levo buy helios-grid --tokens 40      # picks inputs, builds, signs, broadcasts
 Against a real node:
 
 ```sh
-export LEVOD_RPC_URL=http://127.0.0.1:7041
-export LEVOD_RPC_COOKIE=~/.sequentia/testnet/.cookie   # or LEVOD_RPC_USER/PASSWORD
+export LEVOD_RPC_URL=http://127.0.0.1:18776            # the testnet's RPC port
+export LEVOD_RPC_COOKIE=~/.elements/testnet3/.cookie    # or LEVOD_RPC_USER/PASSWORD
 export LEVOD_SECRET=$(head -c32 /dev/urandom | xxd -p -c64)
 python3 levod/server.py
 ```
@@ -113,8 +120,8 @@ python3 levod/server.py
 ## Tests
 
 ```sh
-python3 levod/tests/run.py        # 182 checks: crypto, covenant, tiers, transactions, watcher
-python3 levod/tests/test_e2e.py   #  72 checks: the API end to end
+python3 levod/tests/run.py        # 199 checks: crypto, covenant, tiers, transactions, watcher
+python3 levod/tests/test_e2e.py   #  78 checks: the API end to end
 cd web && npm run build           # the frontend gate
 ```
 
@@ -124,6 +131,24 @@ against an address a live node printed.
 
 No CI, no framework, no network. Those three commands are the whole gate.
 
+## Deployment
+
+The platform is live at [sequentiatestnet.com/levo/](https://sequentiatestnet.com/levo/).
+The box pulls this repo from GitHub and runs `levod/server.py` under systemd;
+`LEVOD_SECRET` and the node credentials are supplied through a systemd drop-in,
+never through the repo. The app is built with
+`LEVO_BASE=/levo/ npm run build`, and Caddy routes the sub-path to levod's
+default port, stripping the prefix:
+
+```
+handle_path /levo/* {
+    reverse_proxy 127.0.0.1:8099
+}
+```
+
+One route covers both the API (`/levo/api/...`) and the app, because levod
+serves them from one origin.
+
 ## Configuration
 
 | Variable | Default | Meaning |
@@ -132,18 +157,19 @@ No CI, no framework, no network. Those three commands are the whole gate.
 | `LEVOD_WEBROOT` | `web/dist` | The built app. |
 | `LEVOD_STATE` | `levo-state.json` | Listings and the allocation ledger. |
 | `LEVOD_SECRET` | random per start | Session-token key. Set it, or every restart signs everyone out. |
-| `LEVOD_RPC_URL` | `http://127.0.0.1:7041` | Sequentia node JSON-RPC. |
+| `LEVOD_RPC_URL` | `http://127.0.0.1:7041` | Sequentia node JSON-RPC. The built-in default is an operator-specific port; the testnet's default RPC port is `18776`. |
 | `LEVOD_RPC_USER` / `LEVOD_RPC_PASSWORD` / `LEVOD_RPC_COOKIE` | — | Node credentials. |
 | `LEVOD_PAYMENT_ASSET` | USDX on testnet | The asset sales are priced in. |
 | `LEVOD_PAYMENT_LABEL` | `USDX` | Its label in the node's rate table. |
-| `LEVOD_HRP` | `tb` | Address prefix: `tb` testnet, `sq` mainnet, `ert` regtest. |
+| `LEVOD_HRP` | `tb` | Address prefix: `tb` testnet, `bc` mainnet (Sequentia's unblinded addresses use Bitcoin's own HRPs), `ert` on `elementsregtest`. |
 | `LEVOD_TIERS` | supply-share defaults | JSON tier table; see `levod/tiers.py`. |
 | `LEVOD_WATCH_SECONDS` | `60` | How often the watcher reconciles. |
 
 ## What levod can and cannot do
 
-It **cannot move funds**. It holds no keys, builds no transactions and signs
-nothing. Sale tokens sit in a covenant whose leaves do not mention Levo.
+It **cannot move funds**. It holds no keys and signs nothing; the transactions
+it builds are unsigned, and only the buyer's (or the project's) wallet can
+complete them. Sale tokens sit in a covenant whose leaves do not mention Levo.
 
 It **can mislead**. A hostile or broken levod could show a sale that is not
 funded, quote a price that is not the covenant's, or hide a listing. That is why
