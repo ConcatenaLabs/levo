@@ -37,8 +37,9 @@ USDX = "usdx"
 BTC = "btc"
 
 # The chain prices assets against a reference unit of 1e-8 of a US dollar, so a
-# rate of 1e8 is one dollar. SBTC is the chain's pegged bitcoin and tracks BTC
-# one for one, which makes its fee rate the network's own view of the BTC price.
+# rate of 1e8 is one dollar. SBTC is the opt-in bridged bitcoin asset
+# (sbtc-bridge) and tracks BTC one for one, which makes its fee-rate row the
+# network's own view of the BTC price.
 BTC_RATE_LABEL = "SBTC"
 
 
