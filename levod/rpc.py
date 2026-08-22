@@ -22,7 +22,7 @@ class RPCError(RuntimeError):
 
 class NodeRPC:
     def __init__(self, url=None, user=None, password=None, cookie=None, timeout=20):
-        self.url = url or os.environ.get("LEVOD_RPC_URL", "http://127.0.0.1:7041")
+        self.url = url or os.environ.get("LEVOD_RPC_URL", "http://127.0.0.1:18776")
         self.timeout = timeout
         user = user or os.environ.get("LEVOD_RPC_USER")
         password = password or os.environ.get("LEVOD_RPC_PASSWORD")
