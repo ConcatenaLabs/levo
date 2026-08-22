@@ -31,7 +31,8 @@ There is no CI. Those commands are the whole gate.
 
 ## The custody line
 
-levod holds no keys, builds no transactions and signs nothing. It reads the
+levod holds no keys and signs nothing; the transactions it builds are unsigned,
+and only the buyer's (or the project's) wallet can complete them. It reads the
 chain over JSON-RPC and writes a JSON file of listings. Do not add a route that
 accepts key material, and do not add a wallet call to `rpc.py` — the absence of
 one is why a compromised levod can mislead but cannot rob.
