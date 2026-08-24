@@ -1,6 +1,6 @@
 # Levo
 
-A launchpad on [Sequentia](https://github.com/GracedEternalKingCabbageMan/Sequentia).
+A launchpad on [Sequentia](https://github.com/ConcatenaLabs/Sequentia).
 
 Levo allocates by commitment. Stake Sequence and you can take a position in a
 sale; stake enough and you can run one. Everything in between is settled by a

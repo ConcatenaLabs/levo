@@ -9,7 +9,7 @@ enforced by consensus. Per-buyer tier caps are Levo's policy and are not.
 Never blur that line, in code or in copy.
 
 Node and consensus conventions live in the
-[`Sequentia`](https://github.com/GracedEternalKingCabbageMan/Sequentia) repo.
+[`Sequentia`](https://github.com/ConcatenaLabs/Sequentia) repo.
 Levo is a separate project and shares no code with any other platform in the
 ecosystem.
 
