@@ -38,15 +38,13 @@ design. See [doc/tiers-are-policy.md](doc/tiers-are-policy.md).
 
 ## Proven on chain
 
-Both covenant paths were exercised on the Sequentia testnet, and the platform
-has run a sale end to end at
-[sequentiatestnet.com/levo](https://sequentiatestnet.com/levo/):
-
-| What | Transaction |
-|---|---|
-| A buy: treasury paid, remainder re-rested at the identical address | `bbed75291600bcd31ef9f6db4b2aaa4466a6a8399d66f8f1f6ec2b20a286ce69` |
-| A reclaim after the close, via the reclaim leaf | `2f97173f4dd60976e5862f0bb572871114c6008607eb16003911f4eff1b843ab` |
-| A buy through the deployed platform, driven by `bin/levo` | `555dfef9b5a783dbb0180ad2c01fd27cd5188a8f5eaea27f997b365330ea4c03` |
+Both covenant paths -- a buy that pays the treasury and re-rests the remainder
+at the identical address, and a reclaim through the reclaim leaf after the
+close -- are exercised on the Sequentia testnet, and the platform runs sales
+end to end at [sequentiatestnet.com/levo](https://sequentiatestnet.com/levo/).
+You do not have to take that on trust: every sale publishes the terms its
+address was derived from, so rebuild the address and compare it to the funded
+output.
 
 ## Paying
 
@@ -120,8 +118,8 @@ python3 levod/server.py
 ## Tests
 
 ```sh
-python3 levod/tests/run.py        # 199 checks: crypto, covenant, tiers, transactions, watcher
-python3 levod/tests/test_e2e.py   #  78 checks: the API end to end
+python3 levod/tests/run.py        # crypto, covenant, tiers, transactions, watcher
+python3 levod/tests/test_e2e.py   # the API end to end
 cd web && npm run build           # the frontend gate
 ```
 
