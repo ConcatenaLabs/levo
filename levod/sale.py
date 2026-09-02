@@ -245,10 +245,18 @@ class Sale:
 
         allowance = self.allowance_for(account, tier)
         if cost > allowance:
-            raise CapExceeded(
-                "this purchase costs %s, but your %s tier can still put %s into "
-                "this sale" % (self.payment(cost), tier.name, self.payment(allowance)),
-                allowance)
+            why = ("this purchase costs %s, but your %s tier can still put %s into "
+                   "this sale" % (self.payment(cost), tier.name, self.payment(allowance)))
+            if account == self.issuer_account:
+                # The cap is Levo's allocation policy and it applies to whoever
+                # is asking, the project included. Saying only that would be
+                # misleading, though: the covenant has no per-buyer maximum,
+                # and the project of all people can spend it directly.
+                why += (". The cap is Levo's allocation policy, not the "
+                        "covenant's: as this sale's project you can still buy "
+                        "from it directly at the published price, in a "
+                        "transaction Levo has no part in")
+            raise CapExceeded(why, allowance)
 
         # The covenant is input 0 in every transaction Levo builds.
         return BuyPlan(sale=self, account=account, token_atoms=token_atoms,
@@ -394,7 +402,7 @@ class BuyPlan:
             "role": "treasury payment",
             "asset": t.payment_asset,
             "min_atoms": self.payment_atoms,
-            "script_pubkey_witness_v1_program": t.treasury_prog,
+            "script_pubkey": t.treasury_spk.hex(),
             "why": "the sell leaf checks this output pays the project at least "
                    "the ceiling price for what you take",
         }]

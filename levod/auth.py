@@ -242,7 +242,18 @@ def key_matches_address(pubkey_hex, address):
     Raises ValueError when the address is not one that names a key hash.
     """
     pub = bytes.fromhex(pubkey_hex)
-    want = hash160(pub)
+    # A key hash is the hash of a SERIALISATION, and there are two. Every
+    # bech32 address uses the compressed one, but a legacy address made before
+    # that was settled may hash the uncompressed form, and the signature says
+    # nothing about which -- recovery yields the point either way. Both are
+    # accepted so that an old address is not called a mismatch.
+    wanted = [hash160(pub)]
+    try:
+        x, y = S.affine(S.decompress(pub))
+        wanted.append(hash160(b"\x04" + x.to_bytes(32, "big") + y.to_bytes(32, "big")))
+    except Exception:
+        pass
+    want = wanted[0]
     a = str(address or "").strip()
     if not a:
         raise ValueError("no address given")
@@ -258,8 +269,10 @@ def key_matches_address(pubkey_hex, address):
                              "(a legacy or a tb1q... address)" % address)
         # Legacy payloads are <version><20-byte hash>; confidential legacy
         # forms carry a blinding key first, and the hash is still the tail.
-        return hmac.compare_digest(body[-20:], want)
+        return any(hmac.compare_digest(body[-20:], w) for w in wanted)
     if ver == 0 and len(prog) == 20:
+        # A version-0 program is always the compressed key's hash: an
+        # uncompressed key cannot be spent from a witness output at all.
         return hmac.compare_digest(bytes(prog), want)
     if ver == 1:
         raise ValueError("%s is a taproot address, which carries a tweaked key that "
@@ -291,14 +304,23 @@ class Challenges:
         self._open = {}                 # nonce -> (expires, issued text)
         self.max_open = max_open or self.MAX_OPEN
 
-    def issue(self, purpose="Sign in to Levo", extra_lines=()):
+    def issue(self, purpose="Sign in to Levo", extra_lines=(), origin=None):
         """A fresh statement to sign. It ends without a newline, so the bytes a
         text box holds and the bytes a shell's `$(cat file)` yields are the
-        same bytes, and the signature matches either way."""
+        same bytes, and the signature matches either way.
+
+        The statement names the site it signs in to. A wallet shows the text
+        it is asked to sign, so naming the origin is what lets the person
+        holding the key see WHICH Levo they are signing in to -- and notice
+        when the page asking is not that one at all.
+        """
         nonce = secrets.token_hex(16)
         issued = self._now()
         expires = issued + self.ttl
-        lines = [self.site, "", purpose,
+        head = [self.site]
+        if origin:
+            head.append("Site: %s" % str(origin)[:120])
+        lines = head + ["", purpose,
                  "This signature proves you control this wallet. It authorises "
                  "no payment and moves no funds.", ""]
         lines += list(extra_lines)

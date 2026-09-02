@@ -41,8 +41,19 @@ class NotFound(PlatformError):
 
 SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9-]{1,38}[a-z0-9]$")
 TXID_RE = re.compile(r"^[0-9a-f]{64}$")
+ASSET_RE = re.compile(r"^[0-9a-fA-F]{64}$")
 MAX_LINKS = 8
 MAX_INPUTS = 32                  # more than any wallet needs for one purchase
+# Measured against the builder's own vsize for a buy (one covenant input, the
+# treasury credit, the remainder, the buyer's tokens, change and the fee) and
+# for a reclaim, rounded up so an advised fee is never under the relay floor.
+BUY_BASE_VSIZE = 490
+RECLAIM_BASE_VSIZE = 300
+PER_INPUT_VSIZE = 70
+
+SALE_FILTERS = ("all", "open", "draft", "finished")
+MAX_PAGE = 200                   # listings one request will return
+MAX_PURCHASES_PER_ACCOUNT = 64   # ledger entries one account keeps per sale
 MAX_DRAFTS = 3                   # unfunded listings one account may hold at once
 DEFAULT_PAYMENT_ASSET = "2a515539da5e6a60caa7766ecd65bac0c10d15717ddd2088844ba58f4d04b9de"
 
@@ -121,6 +132,13 @@ class Project:
         self.decimals = _decimals(decimals)
         self.created_at = created_at or int(time.time())
         self.sale = None
+        # Set by whoever runs this Levo, never by the project. A listing that
+        # turns out to be a fraud has to be able to stop being advertised
+        # without anybody editing a state file by hand -- and the sale itself
+        # carries on regardless, because it is a covenant on a public chain
+        # and Levo has no power over it.
+        self.hidden = False
+        self.notice = None
 
     def update(self, meta):
         """Change what a project says about itself. The terms and the page
@@ -154,6 +172,8 @@ class Project:
             "links": dict(self.links),
             "decimals": self.decimals,
             "created_at": self.created_at,
+            "hidden": self.hidden,
+            "notice": self.notice,
             "sale": self.sale.to_json(height=height, now=now) if self.sale else None,
         }
 
@@ -161,7 +181,7 @@ class Project:
 class Platform:
     def __init__(self, store, stake_reader, rails=None, rpc=None, hrp="tb",
                  payment_asset=None, payment_label=None, stake_label="SEQ",
-                 on_stale=None):
+                 on_stale=None, operators=()):
         self.store = store
         self.stake = stake_reader
         self.rails = rails
@@ -171,6 +191,10 @@ class Platform:
                               or DEFAULT_PAYMENT_ASSET).lower()
         self.payment_label = payment_label or (rails.payment_label if rails else None) or "USDX"
         self.stake_label = stake_label
+        # Accounts that may flag or hide a listing on this Levo. Empty by
+        # default: nobody has that power unless the operator grants it to a
+        # named key.
+        self.operators = {str(a).lower() for a in (operators or ()) if a}
         # Called when a purchase or lock changes what the chain holds, so the
         # watcher can look now rather than at its next interval.
         self.on_stale = on_stale or (lambda: None)
@@ -194,6 +218,8 @@ class Platform:
             p = Project(d["slug"], d["name"], d["ticker"], d.get("summary"),
                         d.get("description"), d["issuer_account"],
                         d.get("links"), d.get("created_at"), d.get("decimals", 8))
+            p.hidden = bool(d.get("hidden"))
+            p.notice = d.get("notice")
             sd = d.get("sale")
             if sd:
                 terms = C.SaleTerms.from_json(sd["terms"])
@@ -206,6 +232,7 @@ class Platform:
                 sl.purchases = {k: list(v) for k, v in (sd.get("purchases") or {}).items()}
                 sl.candidates = list(sd.get("candidates") or [])
                 sl.reclaim_txids = list(sd.get("reclaim_txids") or [])
+                sl.strays = list(sd.get("strays") or [])
                 p.sale = sl
             self.projects[slug] = p
         self.stake.links.load(self.store.data.get("stake_links"))
@@ -220,6 +247,7 @@ class Platform:
                     d["sale"]["allocations"] = dict(p.sale.allocations)
                     d["sale"]["purchases"] = {k: list(v) for k, v in p.sale.purchases.items()}
                     d["sale"]["candidates"] = list(p.sale.candidates)
+                    d["sale"]["strays"] = list(p.sale.strays)
                     d["sale"]["created_at"] = p.sale.created_at
                     # `status` is recomputed on read for closure; persist the raw one.
                     d["sale"]["status"] = p.sale.status
@@ -293,15 +321,19 @@ class Platform:
                 raise PlatformError("the terms are missing %s" % k)
         if terms_json.get("treasury_prog") is None and not terms_json.get("treasury_address"):
             raise PlatformError("the terms are missing the treasury: give "
-                                "treasury_address (a taproot address) or treasury_prog")
-        # The treasury may be given as the taproot address a wallet shows
-        # rather than as the 32-byte program the leaf pins.
+                                "treasury_address (the address payments should "
+                                "land at) or treasury_prog")
+        # The treasury is normally given as the address a wallet shows rather
+        # than as the witness program the leaf pins. Either version is taken:
+        # taproot, or the version-0 address most wallets hand out.
         if terms_json.get("treasury_address"):
             try:
-                terms_json["treasury_prog"] = ADDR.taproot_program(
+                ver, prog = ADDR.witness_program(
                     terms_json["treasury_address"], self.hrp)
             except ValueError as e:
                 raise PlatformError("treasury address: %s" % e)
+            terms_json["treasury_prog"] = prog
+            terms_json["treasury_ver"] = ver
         # Every sale on this Levo is priced in the one asset it quotes and
         # checks fees in. A sale in another asset would be listed, then fail
         # to be quoted, paid or capped correctly.
@@ -339,7 +371,20 @@ class Platform:
                     "the sale closes at block %d and the chain is already at "
                     "%d, so it would be closed the moment it was listed"
                     % (terms.close_locktime, h))
-        p.sale = self._make_sale(p, terms)
+        sale = self._make_sale(p, terms)
+        # Identical terms derive an identical covenant address, and the address
+        # is the whole of what a lock is proven against. Two listings sharing
+        # one would let the second adopt the first's locked outpoint and show
+        # tokens it does not have, so the second is refused instead.
+        clash = next((q for q in self.projects.values()
+                      if q.sale and q.sale.script_pubkey == sale.script_pubkey), None)
+        if clash is not None:
+            raise PlatformError(
+                "these terms derive the same sale address as the listing %r, so "
+                "the two sales could not be told apart on chain. Change something "
+                "the address is made of -- the price, the amount, the minimum "
+                "lot, the close, the treasury or the reclaim key" % clash.slug)
+        p.sale = sale
         p.price_was_reduced = (submitted[0], submitted[1]) != (terms.price_num, terms.price_den)
         self.projects[slug] = p
         self.save()
@@ -406,10 +451,49 @@ class Platform:
         value = _value_atoms(out)
         blinded = bool(out.get("valuecommitment") or out.get("amountcommitment")
                        or out.get("assetcommitment"))
+        taken = next((q for q in self.projects.values()
+                      if q is not p and q.sale and q.sale.funding
+                      and q.sale.funding.get("txid") == txid
+                      and q.sale.funding.get("vout") == vout), None)
+        if taken is not None:
+            raise PlatformError(
+                "that outpoint is already the lock of the sale %r; one output "
+                "funds one sale" % taken.slug)
         p.sale.confirm_lock(txid, vout, spk, value, asset, blinded=blinded)
+        self._date_funding(p.sale, out)
         self.save()
         self.on_stale()
         return p
+
+    def _date_funding(self, sale, out):
+        """Note which block the lock was mined in, or the height at which it
+        was first seen unmined.
+
+        The watcher calls a sale a ghost only when the chain says its funding
+        is gone, and it can only say that about a funding it can place in time.
+        Dating the lock the moment it is accepted is what keeps a sale that
+        sells out between the lock and the first poll from being read as one
+        that was never funded at all.
+        """
+        if sale.funding is None:
+            return
+        try:
+            conf = int(out.get("confirmations") or 0)
+            tip = int(self.rpc.chain_height())
+        except Exception:
+            return
+        if conf < 1:
+            sale.funding["seen_height"] = tip
+            return
+        try:
+            height = tip - conf + 1
+            block = self.rpc.call("getblockhash", height)
+            if not block:
+                raise PlatformError("no block at %s" % height)
+            sale.funding["height"] = height
+            sale.funding["block"] = block
+        except Exception:
+            sale.funding["mined"] = True     # mined, but the node did not say where
 
     def _find_lock(self, sale):
         """The outpoint resting at the sale address with the published amount,
@@ -492,16 +576,27 @@ class Platform:
         out["fee"] = self.fee_advice(p.sale, n_inputs=2)
         return out
 
-    def fee_advice(self, sale, n_inputs=2, fee_asset=None):
-        """What a buy's fee should be, from the node's own relay floor.
+    def fee_advice(self, sale, n_inputs=2, fee_asset=None, vsize=None, kind="buy"):
+        """What a fee should be, from the node's own relay floor.
 
-        The floor is in reference units per kvB; the fee is paid in the sale's
-        payment asset, so it is converted through the node's rate for that
-        asset. The suggestion carries a margin over the floor because a fee
-        exactly at the floor is the first thing dropped when the pool is busy.
+        The floor is in reference units per kvB; the fee is paid in an asset
+        of the payer's choosing, so it is converted through the node's rate
+        for that asset. The suggestion carries a margin over the floor because
+        a fee exactly at the floor is the first thing dropped when the pool is
+        busy.
+
+        Sizing has to be honest in one direction: a figure BELOW the real size
+        produces a "minimum" the node then rejects, and the buyer finds out
+        only after signing. The constants below are measured against the
+        builder's own estimate for the two transaction shapes Levo makes, and
+        round up. Once a transaction actually exists its measured size is
+        passed in and these are not used at all.
         """
         asset = (fee_asset or sale.terms.payment_asset).lower()
-        vsize = 380 + 70 * max(1, int(n_inputs))     # a buy with this many inputs
+        if vsize is None:
+            base = RECLAIM_BASE_VSIZE if kind == "reclaim" else BUY_BASE_VSIZE
+            vsize = base + PER_INPUT_VSIZE * max(1, int(n_inputs))
+        vsize = int(vsize)
         out = {"asset": asset, "vsize_estimate": vsize,
                "min_atoms": None, "suggested_atoms": None, "rate_atoms_per_kvb": None}
         if self.rpc is None:
@@ -564,15 +659,26 @@ class Platform:
         if buyer.get("change_address") or buyer.get("change_script_pubkey"):
             buyer["change_script_pubkey"] = self._spk(buyer, "change_script_pubkey",
                                                       "change_address", "where your change goes")
+        else:
+            # A buyer who names only where the tokens go means the same wallet
+            # for the change. Refusing instead would be a refusal over a field
+            # whose answer was already given, and change with nowhere to go is
+            # burned value.
+            buyer["change_script_pubkey"] = buyer["token_script_pubkey"]
         buyer["inputs"] = self.verify_buyer_inputs(buyer.get("inputs"))
-        fee_asset = str(buyer.get("fee_asset") or p.sale.terms.payment_asset).lower()
+        fee_asset = self.resolve_asset(buyer.get("fee_asset") or p.sale.terms.payment_asset)
         buyer["fee_asset"] = fee_asset
         self.check_fee_asset(fee_asset, buyer.get("fee_atoms"))
+        self.check_fee_atoms(p.sale, buyer.get("fee_atoms"),
+                             n_inputs=len(buyer["inputs"]), fee_asset=fee_asset)
         built = TX.build_buy(p.sale, plan, buyer)
         built["token_atoms"] = plan.token_atoms
         built["payment_atoms"] = plan.payment_atoms
         built["remainder_atoms"] = plan.remainder_atoms
-        built["fee"] = self.fee_advice(p.sale, n_inputs=len(buyer["inputs"]), fee_asset=fee_asset)
+        built["fee"] = self.fee_advice(p.sale, n_inputs=len(buyer["inputs"]),
+                                       fee_asset=fee_asset,
+                                       vsize=built.get("vsize_estimate"))
+        built["fee"]["paying_atoms"] = int(buyer["fee_atoms"])
         return built
 
     def _spk(self, body, spk_key, addr_key, what):
@@ -588,7 +694,10 @@ class Platform:
                                 % (what, addr_key, spk_key))
         if not isinstance(spk, str) or len(spk) % 2 or any(c not in "0123456789abcdefABCDEF" for c in spk):
             raise PlatformError("%s: %s must be a scriptPubKey in hex" % (what, spk_key))
-        return spk.lower()
+        try:
+            return ADDR.check_script_pubkey(spk, what)
+        except ValueError as e:
+            raise PlatformError(str(e))
 
     def build_reclaim(self, account, slug, body):
         """Sweep unsold tokens after the close. Only the project may ask."""
@@ -629,11 +738,11 @@ class Platform:
         dest = self._spk(body, "destination_script_pubkey", "destination_address",
                          "where the reclaimed tokens go")
         fee_inputs = self.verify_buyer_inputs(body.get("fee_inputs"))
-        fee_asset = str(body.get("fee_asset") or sale.terms.payment_asset).lower()
-        fee_atoms = body.get("fee_atoms") or 0
-        if isinstance(fee_atoms, bool) or not isinstance(fee_atoms, int) or fee_atoms < 0:
-            raise PlatformError("fee_atoms must be a whole number of atoms, 0 or more")
+        fee_asset = self.resolve_asset(body.get("fee_asset") or sale.terms.payment_asset)
+        fee_atoms = body.get("fee_atoms")
         self.check_fee_asset(fee_asset, fee_atoms)
+        self.check_fee_atoms(sale, fee_atoms, n_inputs=len(fee_inputs),
+                             fee_asset=fee_asset, kind="reclaim")
         built = TX.build_reclaim(
             sale,
             destination_spk=dest,
@@ -645,6 +754,11 @@ class Platform:
         # The transaction id is fixed before any signature is added, so the
         # watcher can recognise this reclaim on chain by its output 0 and call
         # the sale reclaimed rather than merely empty.
+        built["fee"] = self.fee_advice(sale, n_inputs=len(fee_inputs),
+                                       fee_asset=fee_asset,
+                                       vsize=built.get("vsize_estimate"),
+                                       kind="reclaim")
+        built["fee"]["paying_atoms"] = int(fee_atoms)
         sale.note_reclaim(built["txid"])
         self.save()
         return built
@@ -685,24 +799,51 @@ class Platform:
             raise PlatformError(str(e))
         if token_atoms <= 0 or payment_atoms <= 0:
             raise PlatformError("a purchase has a positive token amount and a positive payment")
+        standing = self.stake.standing(account)
+        tier = self.stake.policy.for_stake(standing["stake_atoms"])
+        if not tier.cap_atoms:
+            raise NotAuthorised(
+                "the ledger records a purchase against your allocation, and "
+                "your tier has none. Stake to a tier that may buy, then record "
+                "it -- the purchase itself is on chain either way, and the "
+                "watcher reads the sale from there")
+        elsewhere = any(e.get("txid") == txid
+                        for acct, entries in sale.purchases.items()
+                        if acct != account
+                        for e in entries)
+        if elsewhere:
+            raise PlatformError(
+                "that transaction is already recorded against another account. "
+                "A purchase counts once, for whoever recorded it first")
         already = next((e for e in sale.purchases.get(account, []) if e.get("txid") == txid), None)
         if already is not None:
             # The same purchase, recorded again: it counted once and counts
             # once. Answer as the first call did rather than double the ledger.
-            standing = self.stake.standing(account)
-            tier = self.stake.policy.for_stake(standing["stake_atoms"])
             return {"recorded": True, "purchase": already, "already_recorded": True,
                     "treasury_payment_verified": already.get("verified"),
                     "committed_atoms": sale.allocations.get(account, 0),
                     "allowance_remaining_atoms": sale.allocation_remaining(account, tier),
                     "sale_status": "the watcher reads this from the chain; a purchase "
                                    "moves it whether or not it was recorded here"}
-        if token_atoms <= 0 or payment_atoms <= 0:
-            raise PlatformError("a purchase has a positive token amount and a positive payment")
-        if token_atoms >= sale.terms.min_lot:
-            # The covenant charged at least this much; a lower figure would be
-            # a way to consume less headroom than the purchase used.
-            payment_atoms = max(payment_atoms, sale.terms.cost_for(token_atoms))
+        if len(sale.purchases.get(account, [])) >= MAX_PURCHASES_PER_ACCOUNT:
+            raise PlatformError(
+                "this account has already recorded %d purchases of this sale, "
+                "which is as many as the ledger keeps. The allocation ledger is "
+                "Levo's cap bookkeeping; the purchases themselves are on chain"
+                % MAX_PURCHASES_PER_ACCOUNT)
+        if token_atoms > sale.terms.total_atoms:
+            raise PlatformError(
+                "that is more of the token than the sale ever held (%s), so no "
+                "such purchase was made"
+                % sale.tokens(sale.terms.total_atoms))
+        if token_atoms < sale.terms.min_lot:
+            raise PlatformError(
+                "the covenant refuses a purchase below its minimum lot of %s, "
+                "so no purchase of %s can have been made from this sale"
+                % (sale.tokens(sale.terms.min_lot), sale.tokens(token_atoms)))
+        # The covenant charged at least this much; a lower figure would be a
+        # way to consume less headroom than the purchase used.
+        payment_atoms = max(payment_atoms, sale.terms.cost_for(token_atoms))
 
         verified = None
         if self.rpc is not None:
@@ -712,8 +853,15 @@ class Platform:
                 out = None
             if out is not None:
                 spk = ((out.get("scriptPubKey") or {}).get("hex") or "").lower()
-                want = TX.v1_script_pubkey(sale.terms.treasury_prog).hex()
+                want = TX.treasury_script_pubkey(sale.terms).hex()
                 verified = (spk == want)
+                if verified:
+                    # The treasury credit IS the payment. Reading it from the
+                    # chain rather than from the caller keeps the ledger, and
+                    # every cap measured against it, equal to what was paid.
+                    paid = _value_atoms(out)
+                    if paid and (out.get("asset") or "").lower() == sale.terms.payment_asset:
+                        payment_atoms = max(payment_atoms, paid)
                 if not verified:
                     raise PlatformError(
                         "transaction %s does not pay this sale's treasury at "
@@ -727,8 +875,6 @@ class Platform:
         sale.expect_remainder_at(txid, 1)
         self.save()
         self.on_stale()
-        standing = self.stake.standing(account)
-        tier = self.stake.policy.for_stake(standing["stake_atoms"])
         return {
             "recorded": True,
             "purchase": entry,
@@ -741,24 +887,114 @@ class Platform:
 
     # --- reads --------------------------------------------------------------
 
+    def project(self, slug):
+        """One listing by its page name, or NotFound."""
+        return self._project(slug)
+
     def _project(self, slug):
         p = self.projects.get(slug)
         if p is None:
             raise NotFound("no such project")
         return p
 
-    def public_projects(self):
-        """The list: everything but the long description, which the detail
-        page carries. The list is what every visitor downloads first."""
+    def public_projects(self, status=None, q=None, sort="new", limit=None, offset=0):
+        """The board: everything but the long description, which the detail
+        page carries.
+
+        This is what every visitor downloads first, so it answers in pages and
+        takes the question the reader is actually asking -- what can I buy now,
+        what closes soonest, where is the one I am looking for -- rather than
+        handing over every listing ever made and leaving the sorting to the
+        browser.
+        """
         h = self.height()
+        now = self.median_time()
+        wanted = (status or "all").lower()
+        if wanted not in SALE_FILTERS:
+            raise PlatformError("status must be one of: %s" % ", ".join(sorted(SALE_FILTERS)))
+        needle = str(q or "").strip().lower()[:80]
+        items = []
+        for p in self.projects.values():
+            if p.hidden:
+                continue
+            if not self._matches(p, wanted, h, now):
+                continue
+            if needle and needle not in " ".join(
+                    filter(None, [p.slug, p.name, p.ticker, p.summary])).lower():
+                continue
+            items.append(p)
+        items.sort(key=self._order(sort, h, now))
+        total = len(items)
+        offset = max(0, int(offset or 0))
+        if limit is not None:
+            limit = max(1, min(int(limit), MAX_PAGE))
+            items = items[offset:offset + limit]
+        elif offset:
+            items = items[offset:]
         out = []
-        for p in sorted(self.projects.values(), key=lambda x: -x.created_at):
-            d = p.to_json(height=h)
+        for p in items:
+            d = p.to_json(height=h, now=now)
             d.pop("description", None)
             if p.sale:
                 d["address"] = self.sale_address(p.sale)
             out.append(d)
-        return out
+        return {"projects": out, "total": total, "offset": offset,
+                "limit": limit, "status": wanted, "sort": sort or "new",
+                "query": needle or None}
+
+    def _matches(self, p, wanted, height, now):
+        if wanted == "all":
+            return True
+        sale = p.sale
+        shown = sale.shown_status(height=height, now=now) if sale else None
+        if wanted == "open":
+            return shown in (S.LIVE, S.PARTIAL)
+        if wanted == "draft":
+            return sale is None or shown in (S.DRAFT, S.GHOST)
+        if wanted == "finished":
+            return shown in (S.SOLD_OUT, S.CLOSED, S.RECLAIMED)
+        return True
+
+    def _order(self, sort, height, now):
+        """How the board is sorted. Newest first by default; a sale that is
+        about to close is the one a reader can still act on, so that is the
+        other order worth having."""
+        if sort == "closing":
+            far = float("inf")
+
+            def key(p):
+                sale = p.sale
+                if not sale or sale.shown_status(height=height, now=now) not in (S.LIVE, S.PARTIAL):
+                    return (1, far, -p.created_at)
+                return (0, sale.terms.close_locktime, -p.created_at)
+            return key
+        if sort == "progress":
+            def key(p):
+                sale = p.sale
+                total = sale.terms.total_atoms if sale and sale.terms.total_atoms else 0
+                share = (sale.sold_atoms / total) if (sale and total) else -1
+                return (-share, -p.created_at)
+            return key
+        return lambda p: -p.created_at
+
+    def set_visibility(self, account, slug, hidden=None, notice=None):
+        """An operator's control over what this Levo advertises.
+
+        It reaches exactly as far as the page: hiding a listing does not touch
+        the covenant, which anyone can still buy from with the terms alone.
+        Saying so plainly is the point -- an operator who could stop a sale
+        would be a party to it.
+        """
+        if account not in self.operators:
+            raise NotAuthorised("only an operator of this Levo can flag a listing")
+        with self.lock:
+            p = self._project(slug)
+            if hidden is not None:
+                p.hidden = bool(hidden)
+            if notice is not None:
+                p.notice = _text(notice, "notice", 400) or None
+            self.save()
+            return p
 
     def projects_of(self, account):
         h = self.height()
@@ -799,6 +1035,53 @@ class Platform:
 
     def sale_address(self, sale):
         return ADDR.from_script_pubkey(sale.script_pubkey, self.hrp)
+
+    def resolve_asset(self, asset, what="fee_asset"):
+        """A 64-hex asset id from what the caller wrote.
+
+        Wallets and the node show assets by label, so a caller naturally sends
+        "USDX" where an id is meant. Taking the label here turns a transaction
+        that would be built against the label as if it were an id -- and fail
+        with a message about an asset nobody has -- into the asset they meant.
+        """
+        text = str(asset or "").strip()
+        if ASSET_RE.match(text):
+            return text.lower()
+        # `dumpassetlabels` answers label -> asset id.
+        for label, aid in (self._labels() or {}).items():
+            if str(label).lower() == text.lower() and ASSET_RE.match(str(aid) or ""):
+                return str(aid).lower()
+        raise PlatformError(
+            "%s: %r is neither a 64-character asset id nor a label this node "
+            "knows. The node lists the labels it has (dumpassetlabels)."
+            % (what, text))
+
+    def check_fee_atoms(self, sale, fee_atoms, n_inputs, fee_asset, vsize=None,
+                        kind="buy"):
+        """A fee has to be a whole number of atoms, and it has to be one the
+        network will actually take.
+
+        A transaction below the node's relay floor is not rejected by Levo, it
+        is rejected by every node it is offered to -- after the payer has
+        signed it and gone looking for why nothing happened.
+        """
+        if fee_atoms is None or isinstance(fee_atoms, bool) or not isinstance(fee_atoms, int):
+            raise PlatformError(
+                "fee_atoms must be a whole number of atoms of the fee asset")
+        if fee_atoms <= 0:
+            raise PlatformError(
+                "a transaction pays a fee: fee_atoms must be more than 0. Ask "
+                "for the current figure and use its suggested_atoms")
+        advice = self.fee_advice(sale, n_inputs=n_inputs, fee_asset=fee_asset,
+                                 vsize=vsize, kind=kind)
+        floor = advice.get("min_atoms")
+        if floor and fee_atoms < floor:
+            raise PlatformError(
+                "a fee of %d atoms is below what this node will relay for a "
+                "transaction of %d vB, which is %d atoms; the suggested fee is "
+                "%d" % (fee_atoms, advice["vsize_estimate"], floor,
+                        advice.get("suggested_atoms") or floor))
+        return advice
 
     def check_fee_asset(self, asset, fee_atoms):
         """Refuse a fee in an asset this node will not take.
@@ -881,7 +1164,6 @@ class Platform:
         d = p.to_json(height=self.height())
         if p.sale:
             d["address"] = self.sale_address(p.sale)
-            d["strays"] = list(p.sale.strays)
             d["verify"] = {
                 "how": "rebuild the sale address from these terms and compare it "
                        "to the scriptPubKey of the funded output; they must be "

@@ -222,3 +222,33 @@ def test_close_locktime_and_total_are_bounded(t):
         t.ok(False, "missing terms are named")
     except ValueError as e:
         t.ok("payment_asset" in str(e), "missing terms are named", str(e))
+
+
+GOLD = "3a0f9192219db59f8d7f87d93ac6311095dfe1255d149727b87baaa7d2cc71a1"
+
+
+def test_a_version_0_treasury_is_pinned_as_such(t):
+    """Most wallets hand out a version-0 address and no taproot one, so a
+    treasury may be either. The leaf pins the version beside the program, and
+    the two versions derive different sales even from the same program."""
+    prog20 = "aa" * 20
+    v0 = C.SaleTerms(GOLD, USDX, 1, 4, prog20, 10 ** 8, 900_000, "22" * 32,
+                     1000 * 10 ** 8, treasury_ver=0)
+    t.eq(v0.treasury_spk.hex(), "0014" + prog20, "a version-0 treasury pays a v0 script")
+    t.eq(C.SaleTerms.from_json(v0.to_json()).treasury_ver, 0,
+         "and the version survives the round trip through the terms")
+    same_prog = C.SaleTerms(GOLD, USDX, 1, 4, "aa" * 32, 10 ** 8, 900_000, "22" * 32,
+                            1000 * 10 ** 8, treasury_ver=0)
+    taproot = C.SaleTerms(GOLD, USDX, 1, 4, "aa" * 32, 10 ** 8, 900_000, "22" * 32,
+                          1000 * 10 ** 8)
+    t.ok(C.derive(same_prog).spk_hex != C.derive(taproot).spk_hex,
+         "the same program at a different version is a different sale")
+    for ver, prog, why in ((1, "aa" * 20, "a taproot treasury is 32 bytes"),
+                           (0, "aa" * 19, "a version-0 program is 20 or 32"),
+                           (2, "aa" * 32, "and there is no version 2 treasury")):
+        try:
+            C.SaleTerms(GOLD, USDX, 1, 4, prog, 10 ** 8, 900_000, "22" * 32,
+                        1000 * 10 ** 8, treasury_ver=ver)
+            t.ok(False, why)
+        except ValueError:
+            t.ok(True, why)

@@ -151,12 +151,22 @@ class Transaction:
 # --- witness programs --------------------------------------------------------
 
 def v1_script_pubkey(program_hex):
-    """OP_1 <32-byte program>: the shape both the treasury credit and the sale
-    address take."""
+    """OP_1 <32-byte program>: the shape a taproot output takes, which is what
+    a sale address always is."""
     p = bytes.fromhex(program_hex) if isinstance(program_hex, str) else bytes(program_hex)
     if len(p) != 32:
         raise ValueError("a v1 witness program is 32 bytes")
     return bytes([K.OP_1, 0x20]) + p
+
+
+def treasury_script_pubkey(terms):
+    """The scriptPubKey a sale's treasury credit must pay.
+
+    A treasury may be a taproot output or a version-0 one, and which it is is
+    part of the terms the covenant was compiled from. Reading it from the
+    terms is what keeps this in step with the leaf.
+    """
+    return terms.treasury_spk
 
 
 class BuildError(ValueError):
@@ -263,15 +273,19 @@ def build_buy(sale, plan, buyer):
             change[asset] = left
     if change and not change_spk:
         raise BuildError(
-            "this purchase leaves change (%s) but no change_script_pubkey was "
-            "given; without one that value would be burned"
-            % ", ".join("%d atoms of %s" % (v, a) for a, v in sorted(change.items())))
+            "the outputs you are spending are worth more than this purchase "
+            "costs, and the difference (%s) has nowhere to go. Say where your "
+            "change goes -- change_address, or change_script_pubkey -- or spend "
+            "outputs that add up to less"
+            % ", ".join(sale.payment(v) if a == terms.payment_asset
+                        else "%d atoms of %s" % (v, a)
+                        for a, v in sorted(change.items())))
 
     fee_out = TxOut(fee_asset, fee_atoms, b"") if fee_atoms else None
 
     # Output 2k: the treasury credit the covenant checks.
     tx.vout.append(TxOut(terms.payment_asset, plan.payment_atoms,
-                         v1_script_pubkey(terms.treasury_prog)))
+                         treasury_script_pubkey(terms)))
 
     # Output 2k+1: the remainder, or -- on a full buy -- something the covenant
     # will not mistake for one. If the token asset sat here on a full buy, the
@@ -560,6 +574,12 @@ def build_reclaim(sale, destination_spk, fee_inputs, fee_atoms, fee_asset,
     result["fee_inputs_still_to_sign"] = [
         {"index": n + 1, "outpoint": "%s:%d" % (i["txid"], i["vout"])}
         for n, i in enumerate(fee_inputs or [])]
+    # The covenant's own witness goes in after the project signs, so its weight
+    # is added here rather than measured: a fee sized against the unsigned
+    # transaction would be short of the relay floor by about a tenth.
+    witness = 1 + (1 + 64) + (1 + len(sale.cov.reclaim_leaf)) \
+        + (1 + len(sale.cov.tap.control_block("reclaim")))
+    result["vsize_estimate"] = _vsize(tx, fee_inputs or []) + (witness + 3) // 4
     return result
 
 
