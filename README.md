@@ -180,7 +180,8 @@ bin/levo buy helios-grid --tokens 40                 # picks unblinded inputs, b
 | `LEVO_RECLAIM_KEY` | The 32-byte hex reclaim secret, for `levo reclaim` (or pass `--reclaim-key`). |
 
 `levo --help` lists every command: `sales`, `show`, `verify`, `whoami`,
-`link`, `keygen`, `create`, `lock`, `buy`, `reclaim`, `withdraw`. Fees are
+`link`, `keygen`, `create`, `lock`, `buy`, `reclaim`, `withdraw`, and `flag`
+for an operator. Fees are
 never defaulted to the policy asset: `lock`, `buy` and `reclaim` pay them in the
 sale's payment asset unless told otherwise, and their size comes from the
 node's own relay floor rather than a figure typed in.

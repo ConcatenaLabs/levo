@@ -44,7 +44,11 @@ function Terms({ project, sale }) {
             {Number(t.treasury_ver ?? 1) === 1 ? 'taproot' : 'version-0'} witness program{' '}
             {shortHex(t.treasury_prog, 10, 6)}
           </div></td></tr>
-        <tr><th>Reclaim key</th><td><Hex value={t.reclaim_xonly} /></td></tr>
+        <tr><th>Reclaim key</th><td><Hex value={t.reclaim_xonly} />
+          <div className="dim small prose">
+            the project signs with this to take back what did not sell, from the
+            close on. Levo never holds it
+          </div></td></tr>
       </tbody>
     </table>
   )
@@ -151,7 +155,7 @@ function EditPanel({ project, onSaved }) {
   return (
     <form onSubmit={save} className="card" style={{ marginTop: '1rem' }}>
       <h3>Edit the listing</h3>
-      <p className="small dim">The name, summary, description and links. The terms and the page name are the sale, and the sale is the address.</p>
+      <p className="small dim">The name, summary, description and links. Not the terms: those are compiled into the sale address, and changing one would be a different sale. Not the page name either, which every link to this sale is made of.</p>
       <div className="field"><label htmlFor="en">Name</label><input id="en" value={form.name} required onChange={(e) => setForm({ ...form, name: e.target.value })} /></div>
       <div className="field"><label htmlFor="es">One line</label><input id="es" value={form.summary} onChange={(e) => setForm({ ...form, summary: e.target.value })} /></div>
       <div className="field"><label htmlFor="ed">Description</label><textarea id="ed" value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} /></div>
@@ -226,7 +230,7 @@ function FlagPanel({ project, onFlagged }) {
 
 export default function ProjectDetail() {
   const { slug } = useParams()
-  const { account, explorer, chainHeight, payment, standing } = useStore()
+  const { account, explorer, chainHeight, payment, standing, stake } = useStore()
   const [project, setProject] = useState(null)
   const [error, setError] = useState(null)
   const [notFound, setNotFound] = useState(false)
@@ -310,6 +314,16 @@ export default function ProjectDetail() {
       <p className="eyebrow">{project.ticker} <span className="dim">·</span> <Status sale={sale} /></p>
       <h1 style={{ fontSize: 'clamp(2rem, 4.5vw, 3.2rem)' }}>{project.name}</h1>
       <p className="hero-lede" style={{ marginTop: '1rem' }}>{project.summary}</p>
+      {project.issuer && (
+        <p className="small dim" style={{ marginTop: '.75rem' }}>
+          Listed by <span className="mono">{shortHex(project.issuer.account, 8, 6)}</span>
+          {project.issuer.tier ? <>, {project.issuer.tier}</> : null}
+          {project.issuer.stake_atoms
+            ? <>, with {compact(project.issuer.stake_atoms)} {stake.label} staked</>
+            : null}. Staking is what the tiers are made of, and it is the only
+          thing Levo knows about a project that the project did not write itself.
+        </p>
+      )}
       {project.notice && (
         <Notice kind="bad" style={{ marginTop: '1rem' }}>
           <strong>From the operator of this Levo:</strong> {project.notice}

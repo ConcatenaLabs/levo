@@ -70,9 +70,10 @@ query, node_reachable}`.
 | `q` | matches a listing's page name, name, ticker or summary |
 | `limit`, `offset` | a page; a size is always applied, and `total` says how many there are |
 
-**`GET /api/projects/<slug>`** → the listing, its sale, its address, and
-`verify`: the leaves and the internal key, so a client can rebuild the address
-from the terms and compare. That comparison is the only thing that has to be
+**`GET /api/projects/<slug>`** → the listing, its sale, its address, `issuer`
+(the listing account, its tier and what the chain says it has staked), and
+`verify`: the leaves, the internal key, and which terms the address is made of,
+so a client can rebuild it and compare. That comparison is the only thing that has to be
 trusted, and it does not have to be trusted to levod.
 
 **`GET /api/projects/<slug>/fee`** `?kind=buy|reclaim&inputs=<n>&asset=<id>` →
@@ -90,8 +91,13 @@ floor: `{asset, vsize_estimate, min_atoms, suggested_atoms, rate_atoms_per_kvb}`
 `treasury_address` or `treasury_prog` (+ `treasury_ver`). The price is stored
 in lowest terms, so the response is what the address was derived from.
 
-**`PATCH /api/projects/<slug>`** (session, the issuer) edits the copy.
-**`DELETE /api/projects/<slug>`** withdraws a listing that was never funded.
+**`PATCH /api/projects/<slug>`** (session, the issuer) edits the copy: the
+name, the summary, the description and the links, and nothing the address is
+made of. **`DELETE /api/projects/<slug>`**, or **`POST
+/api/projects/<slug>/withdraw`** for a client that cannot send DELETE,
+withdraws a listing that was never funded. Withdrawing deletes the terms, and
+the sale address is derived from them, so anything already sent to that address
+can only be recovered with the reclaim key after the close.
 
 **`POST /api/projects/<slug>/lock`** `{txid?, vout?}` (session, the issuer) →
 the sale page's own shape. Without an outpoint levod scans the confirmed set

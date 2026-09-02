@@ -38,7 +38,7 @@ export default function Launch() {
       const typed = String(form.decimals ?? '').trim()
       const decimals = Number(typed)
       if (!/^\d+$/.test(typed) || !Number.isInteger(decimals) || decimals < 0 || decimals > 8) {
-        throw bad('decimals', 'Decimals is a whole number from 0 to 8. It is how many places the token divides into, and it cannot be changed after the lock.')
+        throw bad('decimals', 'Decimals is a whole number from 0 to 8. It is how many places the token divides into, and it is fixed the moment this listing is made: every amount below is read through it.')
       }
       const total = toAtoms(form.total, decimals)
       const minLot = toAtoms(form.min_lot, decimals)
@@ -233,7 +233,7 @@ export default function Launch() {
           <div className="hint">
             Where buyers' {payment.label} is paid: any address your wallet gives you,
             <span className="mono"> {config.hrp}1q…</span> or <span className="mono">{config.hrp}1p…</span>.
-            It is compiled into the covenant, so it cannot be changed after the lock.
+            It is compiled into the covenant, so it is fixed from the moment you list.
             The covenant checks every payment lands here. Because this is your own key,
             you can always buy your own sale out at the published price.
           </div>

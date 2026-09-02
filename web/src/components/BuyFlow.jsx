@@ -164,18 +164,21 @@ export default function BuyFlow({ project, tier, onSettled }) {
       // stating one, and the sell leaf reads the value it spends. The wallet's
       // own record does not distinguish them, so guessing here is how a buyer
       // gets told their ordinary funds are confidential.
-      const checked = await api.checkOutputs(right.slice(0, 32).map((x) => ({ txid: x.txid, vout: x.vout })))
+      // Largest first, so the ones most likely to cover the purchase are the
+      // ones the node is asked about. Only what was asked about can be
+      // reported as refused.
+      const sorted = [...right].sort((a, b) => (big(b.value) > big(a.value) ? 1 : big(b.value) < big(a.value) ? -1 : 0))
+      const asked = sorted.slice(0, 32)
+      const checked = await api.checkOutputs(asked.map((x) => ({ txid: x.txid, vout: x.vout })))
       const ok = new Map(checked.outputs.filter((x) => x.spendable).map((x) => [x.txid + ':' + x.vout, x]))
-      const usable = right.filter((x) => ok.has(x.txid + ':' + x.vout))
-      const hidden = right.length - usable.length
+      const usable = asked.filter((x) => ok.has(x.txid + ':' + x.vout))
+      const hidden = asked.length - usable.length
       if (!usable.length) {
         const why = (checked.outputs.find((x) => x.why) || {}).why
         throw new Error('None of your ' + label + ' outputs can fund a covenant purchase' +
           (why ? ': ' + why + '.' : '.') +
           ' Send the balance to one of your own ' + hrp + '1… addresses first, then come back.')
       }
-      // Largest first, until the purchase and the fee are covered.
-      usable.sort((a, b) => (big(b.value) > big(a.value) ? 1 : big(b.value) < big(a.value) ? -1 : 0))
       const picked = []
       let total = 0n
       for (const u of usable) {

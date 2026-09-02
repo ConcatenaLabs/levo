@@ -28,6 +28,10 @@ from pathlib import Path
 # is one round trip rather than three.
 CHAIN_INFO_TTL = 2.0
 
+# How long the staker table is reused. Stake moves at the speed of blocks and a
+# tier boundary is a large amount of it, so seconds cost nothing.
+STAKER_TTL = 5.0
+
 
 class RPCError(RuntimeError):
     pass
@@ -61,6 +65,11 @@ class NodeRPC:
         self._id = 0
         self._chain_info = None
         self._chain_info_at = 0.0
+        # The whole staker table, which is one answer for every account that
+        # asks. Drawing a sale page reads it for the visitor and again for the
+        # issuer; a board with a tier on every row would read it once a row.
+        self._stakers = None
+        self._stakers_at = 0.0
         # How long the tip may be reused. Shorter than a block on any chain
         # Levo runs against; set it to 0 where blocks arrive faster than that,
         # which is every regtest.
@@ -123,6 +132,15 @@ class NodeRPC:
         return {str(k).lower(): int(v) for k, v in (self.call("getstakerinfo") or {}).items()}
 
     def controller_weights(self):
+        """Held briefly: see `_stakers`."""
+        now = time.time()
+        if self._stakers and now - self._stakers_at < STAKER_TTL:
+            return self._stakers
+        answer = self._controller_weights()
+        self._stakers, self._stakers_at = answer, now
+        return answer
+
+    def _controller_weights(self):
         """{controller public key hex: {weight_atoms, delegated, signer}}.
 
         Weight keyed by the key that OWNS the stake, which is the question Levo
