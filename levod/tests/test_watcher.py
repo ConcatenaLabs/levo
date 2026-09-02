@@ -69,11 +69,21 @@ class P:
         self.sale = sale
 
 
-def _sale():
+def _sale(seen_at=100):
+    """A funded sale, dated the way the platform dates a lock it accepts.
+
+    `market.confirm_lock` records where a lock was mined, or the height it was
+    first seen at when it is still in the mempool. Every sale this Levo funds
+    therefore carries a date, and the watcher's evidence rules rest on it.
+    Pass seen_at=None for the one case that has none: state written before
+    dating existed, or restored from a backup taken then.
+    """
     terms = C.SaleTerms(GOLD, USDX, 1, 4, "11" * 32, 10 * 10**8, 2_000_000_000,
                         "22" * 32, TOTAL)
     s = S.Sale("t", terms, "issuer")
     s.confirm_lock("ab" * 32, 0, s.script_pubkey, TOTAL, GOLD)
+    if seen_at is not None:
+        s.funding["seen_height"] = seen_at
     return s
 
 
@@ -739,3 +749,54 @@ def test_the_known_outpoint_is_read_without_a_scan(t):
         w.poll()
     t.eq(CountingRPC.scans, 0, "no scan while the sale is where it was")
     t.eq(s.status, S.LIVE, "and the sale reads as live throughout")
+
+
+def test_an_undated_funding_is_never_ghosted(t):
+    """State restored from a backup taken before Levo dated its locks carries a
+    funding with no block and no height. The sale may have sold out long ago,
+    and calling it a ghost would wipe every buyer's allocation on nothing more
+    than the platform's own forgetfulness."""
+    s = _sale(seen_at=None)
+    s.record_purchase("02" + "22" * 32, 25 * 10**8, 100 * 10**8, txid="cd" * 32)
+    rpc = FakeRPC()
+    _settle(s, rpc)
+    t.eq(s.status, S.LIVE, "an undated funding leaves the sale as it was")
+    t.eq(s.allocations["02" + "22" * 32], 25 * 10**8, "and the ledger is untouched")
+    t.eq(s.funding["unverifiable"], True, "the sale is marked as unverified instead")
+
+
+def test_an_undated_funding_found_in_the_recent_chain_sold_out(t):
+    """The same sale, when the chain can still show where its funding was
+    mined: that is evidence, and the sale is finished rather than unverified."""
+    s = _sale(seen_at=None)
+    rpc = FakeRPC()
+    rpc.blocks[99] = "block-99"
+    rpc.mined["block-99"] = ["ab" * 32]
+    _settle(s, rpc)
+    t.eq(s.status, S.SOLD_OUT, "the funding is in a recent block: the sale sold out")
+    t.eq(s.funding["block"], "block-99", "and the block is remembered from now on")
+
+
+def test_the_deep_search_is_made_once(t):
+    """Nothing about an old funding changes from one poll to the next, and the
+    search reads a block at a time."""
+    s = _sale(seen_at=None)
+
+    class Counting(FakeRPC):
+        reads = 0
+
+        def call(self, method, *params):
+            if method == "getblock":
+                Counting.reads += 1
+            return super().call(method, *params)
+
+    rpc = Counting()
+    w = _watch(s, rpc)
+    _twice(w, rpc)
+    after_first = Counting.reads
+    t.ok(after_first > 0, "the chain is searched once")
+    rpc.height += 1
+    w.poll()
+    rpc.height += 1
+    w.poll()
+    t.eq(Counting.reads, after_first, "and not again on every later poll")

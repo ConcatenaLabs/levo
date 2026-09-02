@@ -37,7 +37,9 @@ enforced by consensus:
   positive evidence only: a sale becomes a ghost when the chain says its
   funding is gone -- the block it was mined in is no longer at that height, or
   it was never mined and is in no block and no mempool -- and never merely
-  because nothing was found.
+  because nothing was found. A sale whose funding cannot be placed at all is
+  left as it was and reported as unverified, in `/api/health` and on its own
+  page.
 
 Two things are deliberately **not** consensus, and the code says so wherever
 they appear. **Per-buyer tier caps are Levo's allocation policy.** The sell leaf

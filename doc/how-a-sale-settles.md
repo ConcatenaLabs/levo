@@ -170,7 +170,12 @@ block is intact and the sale had not closed, only buys could have emptied it:
 
 A sale that has moved keeps the block of the outpoint it came from, so a chain
 of spends that began in a block still on the chain proves the sale was real
-however fast those spends came. Absence of the transaction is NOT evidence: a
+however fast those spends came. A sale whose record carries no date at all --
+state restored from a backup taken before levod dated its locks -- is looked
+for in the recent chain, and if it is not there the sale is left exactly as it
+was and reported as unverified. It is never called a ghost on the platform's
+own forgetfulness, because ghosting a sale that really sold wipes the
+allocation ledger behind it. Absence of the transaction is NOT evidence: a
 node without `-txindex` cannot find a fully spent transaction either, and
 treating that as a reorg would report a sold-out sale as one that never
 existed. Neither is a node that has not caught up: while it is still building
