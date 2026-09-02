@@ -195,6 +195,7 @@ note on what each field means; `bin/levo create listing.json` submits it.
 python3 levod/tests/run.py        # crypto, covenant, tiers, transactions, watcher, persistence
 python3 levod/tests/test_e2e.py   # the API end to end, against a stub node
 python3 levod/tests/test_node.py  # the whole life of a sale against a real sequentiad; skipped without one
+python3 levod/tests/test_render.py # every page, in a real browser; skipped without a chromium
 npm --prefix web test             # formatting, the beam's geometry, bech32
 npm --prefix web run build        # the frontend gate
 ```
@@ -208,6 +209,12 @@ throwaway regtest chain (it looks at `SEQUENTIAD`, `SEQUENTIA_SRC/src`, then
 watcher, a sell-out, a reclaim under both kinds of close, a sale whose treasury
 is a version-0 address, a funding that never lands, and every spend the
 covenant must refuse.
+
+The render test starts the demo server and paints every route in a headless
+Chromium, failing on a console error or a page that painted nothing. It is
+there because every other test reads code or talks to the API: a change can
+leave the bundle building and the routes answering and still ship a white
+screen.
 
 No CI and no framework. Those commands are the whole gate.
 
