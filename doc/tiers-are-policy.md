@@ -14,7 +14,9 @@ A sale's sell leaf checks, on every spend:
   token;
 - the payment asset is the published one;
 - the treasury output pays at least `ceil(filled * price_num / price_den)`;
-- the treasury output goes to the published scriptPubKey;
+- the treasury output goes to the published scriptPubKey, whose witness
+  version is pinned beside its program, so a taproot treasury and a version-0
+  one are different sales;
 - `filled >= min_lot`, and any remainder is also `>= min_lot`;
 - a remainder returns to the *identical* covenant scriptPubKey.
 

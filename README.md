@@ -31,9 +31,13 @@ enforced by consensus:
   counts for the person who owns it. See [doc/delegated-stake.md](doc/delegated-stake.md).
   The tier boundaries that weight maps to are Levo's configuration, not a chain
   rule.
-- **The chain decides.** A watcher reconciles every sale against the UTXO set,
-  so a purchase made without Levo still moves the sale, and a lock undone by a
-  Bitcoin-driven reorg stops being investable.
+- **The chain decides.** A watcher reconciles every sale against the UTXO set
+  and the mempool, so a purchase made without Levo still moves the sale, and a
+  lock undone by a Bitcoin-driven reorg stops being investable. It decides on
+  positive evidence only: a sale becomes a ghost when the chain says its
+  funding is gone -- the block it was mined in is no longer at that height, or
+  it was never mined and is in no block and no mempool -- and never merely
+  because nothing was found.
 
 Two things are deliberately **not** consensus, and the code says so wherever
 they appear. **Per-buyer tier caps are Levo's allocation policy.** The sell leaf
@@ -82,19 +86,23 @@ it against your own wallet before swapping.
 
 **A buyer** needs a Levo account (a key that can sign a message: the browser
 extension, or any wallet that signs messages), staked Sequence under a key they
-can prove they control, and unblinded USDX. The browser extension signs and
-broadcasts a purchase in place: Levo hands it a PSET whose covenant input
-already carries its witness, and the wallet signs only the buyer's own inputs. A
-node signs the same purchase with `signrawtransactionwithwallet`, or lets
-`bin/levo buy` do the whole thing.
+can prove they control, and unblinded USDX. A browser wallet signs and
+broadcasts the purchase in place: Levo hands it a PSET whose covenant input
+already carries its witness, and the wallet signs only the buyer's own inputs.
+That needs a wallet that fills in its own key origins before signing, which it
+announces as the `pset-site-built` capability; where the wallet cannot, Levo
+offers the node path instead and says so. A node signs the same purchase with
+`signrawtransactionwithwallet`, or lets `bin/levo buy` do the whole thing.
 
 **A project** needs a tier that may list, an issued asset (registered, so
-wallets show its name), the whole allocation in a wallet it can send from, a
-taproot address for the treasury, and a reclaim key it can sign with outside a
-browser wallet, because reclaiming means signing a raw sighash. `bin/levo
-keygen` makes one. The project locks its tokens by sending them to the sale
-address, and Levo finds the lock on chain; after the close, `bin/levo reclaim`
-sweeps what did not sell.
+wallets show its name), the whole allocation in a wallet it can send from, an
+address for the treasury, and a reclaim key it can sign with outside a browser
+wallet, because reclaiming means signing a raw sighash. `bin/levo keygen` makes
+one. The treasury may be any witness address the project's wallet hands out,
+taproot or version-0: the version is compiled into the leaf beside the program,
+so a wallet without taproot addresses can still run a sale. The project locks
+its tokens by sending them to the sale address, and Levo finds the lock on
+chain; after the close, `bin/levo reclaim` sweeps what did not sell.
 
 ## Layout
 
@@ -172,7 +180,12 @@ bin/levo buy helios-grid --tokens 40                 # picks unblinded inputs, b
 `levo --help` lists every command: `sales`, `show`, `verify`, `whoami`,
 `link`, `keygen`, `create`, `lock`, `buy`, `reclaim`, `withdraw`. Fees are
 never defaulted to the policy asset: `lock`, `buy` and `reclaim` pay them in the
-sale's payment asset unless told otherwise.
+sale's payment asset unless told otherwise, and their size comes from the
+node's own relay floor rather than a figure typed in.
+
+Listing from the command line takes a JSON file holding `{"project": {...},
+"terms": {...}}`. `bin/levo create --example` prints one to start from, with a
+note on what each field means; `bin/levo create listing.json` submits it.
 
 ## Tests
 
@@ -190,7 +203,9 @@ computed, the address encoder against an address a live node printed, and the
 covenant bytes against frozen vectors. The node test starts `sequentiad` on a
 throwaway regtest chain (it looks at `SEQUENTIAD`, `SEQUENTIA_SRC/src`, then
 `~/Sequentia/src`) and runs a lock, a PSET purchase, a raw purchase, the
-watcher, a sell-out, a reclaim and every spend the covenant must refuse.
+watcher, a sell-out, a reclaim under both kinds of close, a sale whose treasury
+is a version-0 address, a funding that never lands, and every spend the
+covenant must refuse.
 
 No CI and no framework. Those commands are the whole gate.
 
@@ -218,7 +233,13 @@ handle_path /levo/* {
 
 One route covers both the API (`/levo/api/...`) and the app, because levod
 serves them from one origin. Uptime checks should watch `/levo/api/health`,
-which answers 503 when the node is unreachable or the watcher has stalled.
+which answers 503 when the node is unreachable, when the watcher has stalled,
+or when it runs but every poll is failing -- a watcher that reconciles nothing
+leaves sold-out sales showing as open.
+
+An operator named in `LEVOD_OPERATORS` can hide a listing from the board and
+put a notice on its page. That reaches the page and nothing else: the sale is a
+covenant on a public chain, and anyone holding its terms can still buy from it.
 
 ## Configuration
 
@@ -240,6 +261,11 @@ which answers 503 when the node is unreachable or the watcher has stalled.
 | `LEVOD_WATCH_SECONDS` | `60` | How often the watcher reconciles. |
 | `LEVOD_AUTH_PER_MINUTE` / `LEVOD_WRITES_PER_MINUTE` | `30` / `120` | Per-client limits on sign-in and listing calls. |
 | `LEVOD_VERBOSE` | — | Log every request, including successful health checks and asset fetches. |
+| `LEVOD_CHAIN` | — | What to call the chain when the node cannot be asked. levod asks the node and keeps asking until it answers, so this is only a fallback. |
+| `LEVOD_ORIGIN` | the request's `Host` | The address this Levo is reached at. It is named in the statement a wallet is asked to sign, so behind a proxy set it to the public URL. |
+| `LEVOD_SOURCE_URL` | this repository | Where this Levo's source is. Linked from the site, because a visitor is told to run a command and to rebuild an address themselves. |
+| `LEVOD_OPERATORS` | — | Public keys (compressed hex, comma or space separated) that may hide or flag a listing. Empty means nobody can. |
+| `LEVOD_TRUSTED_PROXIES` | `127.0.0.1 ::1` | Peers whose `X-Forwarded-For` is believed. Set it empty when levod is exposed directly, or any caller can pick their own rate-limit bucket. |
 
 Changing `LEVOD_PAYMENT_ASSET` while a sale is open is not supported: every
 sale's covenant is priced in the asset it was listed with.

@@ -12,6 +12,9 @@ EnvironmentFile=/etc/sequentia/levod.env
 ExecStart=/usr/bin/python3 /root/sequentia/levo/levod/server.py
 Restart=always
 RestartSec=5
+# levod exits 78 when the state file cannot be read. Restarting cannot fix
+# that, and a loop would bury the message saying to restore a backup.
+RestartPreventExitStatus=78
 # levod saves on every mutation and stops cleanly on SIGTERM.
 KillSignal=SIGTERM
 TimeoutStopSec=20
