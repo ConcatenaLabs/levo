@@ -4,9 +4,12 @@ A launchpad on Sequentia: stake sets your allocation ceiling, and a covenant
 holds the project's tokens from lock to delivery.
 
 `README.md`'s "What is real" section is the most important thing in the repo.
-The sale covenant, the signed-message login and the stake tiers are real and
-enforced by consensus. Per-buyer tier caps are Levo's policy and are not.
-Never blur that line, in code or in copy.
+The sale covenant is enforced by consensus; the signed-message login and the
+stake weights are real facts Levo checks against a signature and the chain.
+Per-buyer tier caps and the tier boundaries are Levo's policy. The close date
+opens the reclaim path and does not shut the sell path, and a project can
+always buy its own sale out at the published price. Never blur any of those
+lines, in code or in copy.
 
 Node and consensus conventions live in the
 [`Sequentia`](https://github.com/ConcatenaLabs/Sequentia) repo.
@@ -23,19 +26,24 @@ ecosystem.
 ```sh
 python3 levod/tests/run.py        # unit checks
 python3 levod/tests/test_e2e.py   # the API end to end, against a stub node
+python3 levod/tests/test_node.py  # against a real sequentiad; skipped without one
+npm --prefix web test && npm --prefix web run build
 python3 levod/demo.py             # the whole platform, no chain needed
-cd web && npm install && npm run build
 ```
 
-There is no CI. Those commands are the whole gate.
+There is no CI. Those commands are the whole gate. `test_node.py` is the only
+one that proves anything about consensus; run it whenever `covenant.py`,
+`tx.py`, `pset.py` or `watcher.py` change.
 
 ## The custody line
 
 levod holds no keys and signs nothing; the transactions it builds are unsigned,
 and only the buyer's (or the project's) wallet can complete them. It reads the
 chain over JSON-RPC and writes a JSON file of listings. Do not add a route that
-accepts key material, and do not add a wallet call to `rpc.py` — the absence of
-one is why a compromised levod can mislead but cannot rob.
+accepts key material, do not add a signing path to `tx.py` (the reclaim returns
+a sighash; `bin/levo` signs it on the project's machine), and do not add a
+wallet call to `rpc.py` — the absence of those is why a compromised levod can
+mislead but cannot rob.
 
 ## Traps
 
@@ -64,8 +72,26 @@ one is why a compromised levod can mislead but cannot rob.
   and transaction output commitments. Getting it wrong builds a sale priced in
   an asset nobody holds, silently.
 - **Everything a covenant touches must be explicit.** Confidential inputs cannot
-  fill a sale, and tokens locked into a confidential output can never be sold or
-  reclaimed. Both are refused with reasons; do not soften either.
+  fill a sale, output 1 of a buy must be explicit (the leaf inspects its asset),
+  and tokens locked into a confidential output can never be sold, only taken
+  back by the project after the close. All are refused with reasons; do not
+  soften any of them.
+- **The sell leaf does not pin the asset it spends.** Anything resting at a sale
+  address can be bought at the sale's price, so the watcher reports stray assets
+  and the lock instructions say to send nothing but the token. A leaf that
+  checks the input's asset moves every sale address: a vectors migration.
+- **A sale ends only after a new block says so.** The watcher counts silent
+  polls AND requires the chain to have moved, because a remainder in the mempool
+  is invisible to the confirmed-set scan; a recorded purchase names the outpoint
+  the remainder rests at so it is seen at once. GHOST and SOLD_OUT are final;
+  CLOSED-and-empty becomes RECLAIMED only on the reclaim's own output.
+- **The ledger only grows, and only by named transactions.** `record_purchase`
+  needs a txid, positive amounts, and never records less than the covenant's
+  price for the tokens named. A repeat of the same txid is answered, not added.
+- **A signed statement must be the issued statement.** Login and stake links
+  compare the whole text, not just the nonce; a caller may name the address it
+  signed with so a signature over different bytes is an error, not a phantom
+  account. Statements end without a newline so shells and text boxes agree.
 - **`scantxoutset` sees only CONFIRMED outputs.** Ask about a known outpoint with
   `gettxout` first, and never end a sale on one silent reading -- a mempool
   remainder is invisible to the scan.

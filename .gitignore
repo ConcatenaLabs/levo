@@ -1,5 +1,5 @@
 # Build output and dependencies
-web/node_modules/
+web/node_modules
 web/dist/
 
 # Runtime state: listings and the allocation ledger, not source
@@ -15,3 +15,6 @@ levod/tests/_e2e-state.json
 __pycache__/
 *.pyc
 .DS_Store
+
+# Agent tooling never belongs in the tree
+.claude/

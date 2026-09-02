@@ -1,0 +1,7 @@
+[Unit]
+Description=Copy levod's state file
+
+[Service]
+Type=oneshot
+EnvironmentFile=-/etc/sequentia/levod.env
+ExecStart=/root/sequentia/levo/contrib/levo-backup.sh

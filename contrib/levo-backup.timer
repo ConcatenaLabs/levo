@@ -1,0 +1,9 @@
+[Unit]
+Description=Copy levod's state file every six hours
+
+[Timer]
+OnCalendar=*-*-* 00,06,12,18:15:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target
