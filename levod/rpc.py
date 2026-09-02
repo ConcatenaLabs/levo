@@ -3,7 +3,7 @@
 Levo reads the chain and never writes to it. The node is asked about stake
 (`getstakerinfo`), about outputs (`gettxout`, `scantxoutset`, `getrawmempool`,
 `getrawtransaction`), about the tip and its blocks (`getblockchaininfo`,
-`getblockhash`), and about fees (`getfeeexchangerates`, `dumpassetlabels`,
+`getblockhash`, `getblock`, `getblockheader`), and about fees (`getfeeexchangerates`, `dumpassetlabels`,
 `getmempoolinfo`). There is no wallet call here on purpose: levod holds no keys
 and can move no funds, so a compromised levod can misinform users but cannot
 rob them.

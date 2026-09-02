@@ -1,6 +1,8 @@
 """Persistence: what goes to disk comes back, including what the watcher
 learns, and a broken file stops the service rather than emptying the ledger."""
 
+import contextlib
+import io
 import json
 import sys
 import tempfile
@@ -66,13 +68,20 @@ def test_round_trip(t):
 
 
 def test_a_corrupt_state_file_stops_the_service(t):
+    """And stops it in a way a supervisor will not fight: the reason is on
+    stderr and the exit status says restarting cannot help, so levod stays
+    down with one legible message instead of looping every five seconds."""
     d = Path(tempfile.mkdtemp())
     (d / "state.json").write_text("{not json")
+    err = io.StringIO()
     try:
-        ST.Store(d / "state.json")
+        with contextlib.redirect_stderr(err):
+            ST.Store(d / "state.json")
         t.ok(False, "a corrupt file is refused")
     except SystemExit as e:
-        t.ok("not valid JSON" in str(e), "a corrupt file stops startup with a reason")
+        t.eq(e.code, ST.BAD_STATE_EXIT, "with the do-not-restart status")
+        t.ok("not valid JSON" in err.getvalue(), "and a reason on stderr")
+        t.ok("backup" in err.getvalue(), "that says what to do about it")
 
 
 def test_stale_temp_files_are_swept(t):

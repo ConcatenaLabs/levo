@@ -82,11 +82,36 @@ def canonical_price(num, den):
     derive different addresses despite quoting the same price.
     """
     from math import gcd
-    num, den = int(num), int(den)
+    num, den = _price_part(num, "price_num"), _price_part(den, "price_den")
     if num < 1 or den < 1:
         raise ValueError("price_num and price_den must both be at least 1")
     g = gcd(num, den)
     return num // g, den // g
+
+
+def _price_part(v, name):
+    """One side of the price ratio, whole.
+
+    A price is a ratio of two whole numbers -- 1/4, not 0.25 -- because that is
+    what the leaf computes with. Rounding a fraction into place here would
+    change the price the covenant charges without anyone being told, so a
+    fraction is refused instead.
+    """
+    if isinstance(v, bool):
+        raise ValueError("%s must be a whole number" % name)
+    if isinstance(v, int):
+        return v
+    if isinstance(v, float):
+        if v.is_integer():
+            return int(v)
+        raise ValueError(
+            "%s must be a whole number: a price is a ratio of two whole "
+            "numbers, so write 1/4 rather than 0.25/1" % name)
+    if isinstance(v, str) and v.strip().lstrip("-").isdigit():
+        return int(v.strip())
+    raise ValueError(
+        "%s must be a whole number written in digits: a price is a ratio of "
+        "two whole numbers, so write 1 and 4 rather than 0.25" % name)
 
 
 def le8(n):
@@ -121,10 +146,13 @@ def build_sell_leaf(token_asset, payment_asset, price_num, price_den,
         raise ValueError("asset ids are 32 bytes, in internal byte order")
     if price_num < 1 or price_den < 1 or min_lot < 1:
         raise ValueError("price and minimum lot must all be at least 1")
-    if treasury_ver != 1:
-        raise ValueError("this builder pins a v1 taproot treasury payout")
-    if len(treasury_prog) != 32:
-        raise ValueError("treasury witness program must be 32 bytes")
+    if treasury_ver not in (0, 1):
+        raise ValueError("the treasury is a version-0 or a taproot (version-1) "
+                         "witness output")
+    if treasury_ver == 1 and len(treasury_prog) != 32:
+        raise ValueError("a taproot treasury witness program is 32 bytes")
+    if treasury_ver == 0 and len(treasury_prog) not in (20, 32):
+        raise ValueError("a version-0 treasury witness program is 20 or 32 bytes")
 
     O = K.ops
     s = []
@@ -167,9 +195,17 @@ def build_sell_leaf(token_asset, payment_asset, price_num, price_den,
     s += [le8(price_den)] + O(K.OP_DIV64, K.OP_VERIFY, K.OP_NIP)
 
     # The treasury credit at output 2k: right asset, right script, enough value.
+    #
+    # INSPECTOUTPUTSCRIPTPUBKEY pushes the witness version and the program, so
+    # the version is checked as a number and the program as bytes. A treasury
+    # may be either kind of witness output: taproot, or the version-0 address
+    # an ordinary wallet hands out. Nothing about the guarantee changes with
+    # the version -- it is where the money lands -- and refusing version 0
+    # would shut out every wallet that does not do taproot yet.
     s += _credit_idx() + O(K.OP_INSPECTOUTPUTASSET, K.OP_1, K.OP_EQUALVERIFY) \
         + [payment_asset] + O(K.OP_EQUALVERIFY)
-    s += _credit_idx() + O(K.OP_INSPECTOUTPUTSCRIPTPUBKEY, K.OP_1, K.OP_EQUALVERIFY) \
+    s += _credit_idx() + O(K.OP_INSPECTOUTPUTSCRIPTPUBKEY,
+                           K.OP_1 if treasury_ver == 1 else K.OP_0, K.OP_EQUALVERIFY) \
         + [treasury_prog] + O(K.OP_EQUALVERIFY)
     s += _credit_idx() + O(K.OP_INSPECTOUTPUTVALUE, K.OP_1, K.OP_EQUALVERIFY)
     s += O(K.OP_SWAP, K.OP_GREATERTHANOREQUAL64)
@@ -185,6 +221,21 @@ def build_reclaim_leaf(close_locktime, reclaim_xonly):
 
 
 # --- Levo's view of a sale --------------------------------------------------
+
+def _witness_program(v, version):
+    """A witness program in hex, of a length the version allows."""
+    text = str(v or "").lower()
+    lengths = (32,) if version == 1 else (20, 32)
+    try:
+        raw = bytes.fromhex(text)
+    except ValueError:
+        raise ValueError("treasury_prog must be hex")
+    if len(raw) not in lengths:
+        raise ValueError(
+            "a version-%d treasury witness program is %s bytes, not %d"
+            % (version, " or ".join(str(n) for n in lengths), len(raw)))
+    return raw.hex()
+
 
 def _int(v, name):
     """A whole number, given as an int or a decimal string. Strings are
@@ -221,17 +272,31 @@ class SaleTerms:
 
     def __init__(self, token_asset, payment_asset, price_num, price_den,
                  treasury_prog, min_lot, close_locktime, reclaim_xonly,
-                 total_atoms=None):
+                 total_atoms=None, treasury_ver=1):
         self.token_asset = _hex32(token_asset, "token_asset")
         self.payment_asset = _hex32(payment_asset, "payment_asset")
         self.price_num = _int(price_num, "price_num")
         self.price_den = _int(price_den, "price_den")
-        self.treasury_prog = _hex32(treasury_prog, "treasury_prog")
+        self.treasury_ver = _int(treasury_ver, "treasury_ver")
+        if self.treasury_ver not in (0, 1):
+            # Versions above 1 are anyone-can-spend on this chain, so a
+            # treasury there would pay whoever swept it first rather than the
+            # project.
+            raise ValueError("the treasury is a version-0 or a taproot "
+                             "(version-1) witness output")
+        self.treasury_prog = _witness_program(treasury_prog, self.treasury_ver)
         self.min_lot = _int(min_lot, "min_lot")
         self.close_locktime = _int(close_locktime, "close_locktime")
         self.reclaim_xonly = _hex32(reclaim_xonly, "reclaim_xonly")
         self.total_atoms = _int(total_atoms, "total_atoms") if total_atoms is not None else None
         self._validate()
+
+    @property
+    def treasury_spk(self):
+        """The scriptPubKey the treasury credit must pay, as bytes."""
+        prog = bytes.fromhex(self.treasury_prog)
+        head = 0x51 if self.treasury_ver == 1 else 0x00
+        return bytes([head, len(prog)]) + prog
 
     def _validate(self):
         if self.price_num < 1 or self.price_den < 1:
@@ -283,6 +348,7 @@ class SaleTerms:
             "price_num": self.price_num,
             "price_den": self.price_den,
             "treasury_prog": self.treasury_prog,
+            "treasury_ver": self.treasury_ver,
             "min_lot": self.min_lot,
             "close_locktime": self.close_locktime,
             "reclaim_xonly": self.reclaim_xonly,
@@ -299,7 +365,8 @@ class SaleTerms:
                 raise ValueError("the terms are missing %s" % k)
         return cls(d["token_asset"], d["payment_asset"], d["price_num"],
                    d["price_den"], d["treasury_prog"], d["min_lot"],
-                   d["close_locktime"], d["reclaim_xonly"], d.get("total_atoms"))
+                   d["close_locktime"], d["reclaim_xonly"], d.get("total_atoms"),
+                   treasury_ver=d.get("treasury_ver", 1))
 
 
 class SaleCovenant:
@@ -315,7 +382,8 @@ class SaleCovenant:
         self.sell_leaf = build_sell_leaf(
             asset_to_wire(terms.token_asset), asset_to_wire(terms.payment_asset),
             terms.price_num, terms.price_den,
-            bytes.fromhex(terms.treasury_prog), terms.min_lot)
+            bytes.fromhex(terms.treasury_prog), terms.min_lot,
+            treasury_ver=terms.treasury_ver)
         self.reclaim_leaf = build_reclaim_leaf(
             terms.close_locktime, bytes.fromhex(terms.reclaim_xonly))
         self.tap = K.Taptree(internal_key,

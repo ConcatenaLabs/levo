@@ -2,9 +2,9 @@ import { useEffect, useState } from 'react'
 import { useParams, Link } from 'react-router-dom'
 import { api } from '../lib/api'
 import { useStore } from '../lib/store'
-import { amount, capitalise, closeIn, closeLabel, compact, priceLabel, shortHex } from '../lib/format'
+import { amount, capitalise, closeIn, closeLabel, compact, priceLabel, shortHex, treasurySpk } from '../lib/format'
 import { addressOf } from '../lib/bech32'
-import { Copy, Ext, Hex, Notice, usePageTitle } from '../components/ui'
+import { Hex, Notice, usePageTitle } from '../components/ui'
 import SignIn from '../components/SignIn'
 import Beam from '../components/Beam'
 import BuyFlow from '../components/BuyFlow'
@@ -16,7 +16,7 @@ function Terms({ project, sale }) {
   const { payment, config, explorer } = useStore()
   const t = sale.terms
   const d = project.decimals ?? 8
-  const treasuryAddr = addressOf('5120' + t.treasury_prog, config.hrp)
+  const treasuryAddr = addressOf(treasurySpk(t), config.hrp)
   return (
     <table className="terms">
       <tbody>
@@ -34,7 +34,10 @@ function Terms({ project, sale }) {
         <tr><th>For sale</th><td>{amount(t.total_atoms, d)} {project.ticker}</td></tr>
         <tr><th>Reclaim opens</th><td>{closeLabel(t.close_locktime)}</td></tr>
         <tr><th>Treasury address</th><td><Hex value={treasuryAddr} href={explorer('address', treasuryAddr)} />
-          <div className="dim small prose">witness program {shortHex(t.treasury_prog, 10, 6)}</div></td></tr>
+          <div className="dim small prose">
+            {Number(t.treasury_ver ?? 1) === 1 ? 'taproot' : 'version-0'} witness program{' '}
+            {shortHex(t.treasury_prog, 10, 6)}
+          </div></td></tr>
         <tr><th>Reclaim key</th><td><Hex value={t.reclaim_xonly} /></td></tr>
       </tbody>
     </table>
@@ -163,25 +166,43 @@ function EditPanel({ project, onSaved }) {
 
 export default function ProjectDetail() {
   const { slug } = useParams()
-  const { account, explorer, health, payment, config } = useStore()
+  const { account, explorer, health, payment } = useStore()
   const [project, setProject] = useState(null)
   const [error, setError] = useState(null)
+  const [notFound, setNotFound] = useState(false)
   const [withdrawError, setWithdrawError] = useState(null)
   const [withdrawn, setWithdrawn] = useState(false)
+  const [chainHeight, setChainHeight] = useState(null)
   usePageTitle(project ? project.name + ' (' + project.ticker + ')' : 'Sale')
+  useEffect(() => {
+    let alive = true
+    const read = () => api.health().then((h) => {
+      if (alive && h && h.node && h.node.height) setChainHeight(h.node.height)
+    }).catch(() => {})
+    read()
+    const t = setInterval(read, 60_000)
+    return () => { alive = false; clearInterval(t) }
+  }, [])
 
   const load = () => {
-    setError(null)
-    return api.project(slug).then(setProject).catch((e) => setError(e.message))
+    setError(null); setNotFound(false)
+    return api.project(slug).then(setProject).catch(fail)
+  }
+  function fail(e) {
+    if (e && e.status === 404) setNotFound(true)
+    else setError(e.message)
   }
   useEffect(() => {
     let alive = true
-    setError(null); setProject(null); setWithdrawn(false)
-    api.project(slug).then((p) => alive && setProject(p)).catch((e) => alive && setError(e.message))
+    setError(null); setNotFound(false); setProject(null); setWithdrawn(false)
+    api.project(slug).then((p) => alive && setProject(p)).catch((e) => alive && fail(e))
     return () => { alive = false }
   }, [slug])
 
-  const height = health && health.node ? health.node.height : null
+  // The countdown is only worth showing if it is current: the height in the
+  // health snapshot was read when the page loaded, and a sale that closes at a
+  // block would go on claiming the same number of blocks left all afternoon.
+  const height = chainHeight ?? (health && health.node ? health.node.height : null)
 
   if (withdrawn) {
     return (
@@ -192,12 +213,27 @@ export default function ProjectDetail() {
       </div>
     )
   }
+  if (notFound) {
+    return (
+      <div className="wrap section" style={{ maxWidth: 560 }}>
+        <h1 className="h2">No sale at this address</h1>
+        <p className="dim">
+          Levo has no listing called <span className="mono">{slug}</span>. It may
+          have been withdrawn before it was funded, or the link may be mistyped.
+        </p>
+        <div className="btn-row">
+          <Link className="btn" to="/projects">See the open sales</Link>
+          <Link className="btn btn-ghost" to="/launch">Launch one</Link>
+        </div>
+      </div>
+    )
+  }
   if (error) {
     return (
       <div className="wrap section">
         <h1 className="h2">Sale</h1>
         <Notice kind="bad" style={{ marginTop: '1rem' }}>
-          {error} <button className="btn btn-sm btn-ghost" style={{ marginLeft: '.75rem' }} onClick={load}>Try again</button>
+          {capitalise(error)} <button className="btn btn-sm btn-ghost" style={{ marginLeft: '.75rem' }} onClick={load}>Try again</button>
         </Notice>
       </div>
     )
@@ -222,6 +258,15 @@ export default function ProjectDetail() {
       <p className="eyebrow">{project.ticker} <span className="dim">·</span> <Status sale={sale} /></p>
       <h1 style={{ fontSize: 'clamp(2rem, 4.5vw, 3.2rem)' }}>{project.name}</h1>
       <p className="hero-lede" style={{ marginTop: '1rem' }}>{project.summary}</p>
+      {project.notice && (
+        <Notice kind="bad" style={{ marginTop: '1rem' }}>
+          <strong>From the operator of this Levo:</strong> {project.notice}
+          <div className="small" style={{ marginTop: '.4rem' }}>
+            This is a note on the page. The sale is a covenant on chain: Levo can
+            neither stop it nor change its terms.
+          </div>
+        </Notice>
+      )}
       {links.length > 0 && (
         <ul className="links-list">
           {links.map(([label, href]) => (
@@ -252,10 +297,16 @@ export default function ProjectDetail() {
 
               {project.verify && (
                 <Notice kind="good" style={{ marginTop: '1.5rem' }}>
-                  <strong>{open ? 'Verify before you buy.' : 'Verify the lock.'}</strong>{' '}
-                  Rebuild the sale address from the terms above and compare it with the
-                  address the funding output pays. If they match, the tokens are locked
-                  under exactly these terms. <span className="mono">bin/levo verify {project.slug}</span> does it on your own node.
+                  <strong>{sale.funding ? (open ? 'Verify before you buy.' : 'Verify the lock.')
+                                          : 'Check the address before you send anything.'}</strong>{' '}
+                  {sale.funding
+                    ? <>Rebuild the sale address from the terms above and compare it with the
+                        address the funding output pays. If they match, the tokens are locked
+                        under exactly these terms.</>
+                    : <>Nothing is locked here yet. Rebuild the address from the terms above
+                        before sending tokens to it: the address is what the terms make, and
+                        only a derived address is safe to pay.</>}{' '}
+                  <span className="mono">levo verify {project.slug}</span> does it on your own node.
                   <table className="terms" style={{ marginTop: '.75rem' }}>
                     <tbody>
                       <tr><th>Sale address</th>
@@ -264,8 +315,15 @@ export default function ProjectDetail() {
                       <tr><th>Internal key</th>
                           <td className="prose">{project.verify.internal_key}</td></tr>
                       {sale.funding && (
-                        <tr><th>Locked at</th>
-                            <td><Hex value={sale.funding.txid + ':' + sale.funding.vout} href={explorer('tx', sale.funding.txid)} /></td></tr>
+                        <tr><th>{sale.sold_atoms > 0 ? 'Resting at' : 'Locked at'}</th>
+                            <td><Hex value={sale.funding.txid + ':' + sale.funding.vout} href={explorer('tx', sale.funding.txid)} />
+                              {sale.sold_atoms > 0 && (
+                                <div className="dim small prose">
+                                  a partial buy re-rests what is left at the same address,
+                                  so this is where the covenant sits now, not where it was funded
+                                </div>
+                              )}
+                            </td></tr>
                       )}
                     </tbody>
                   </table>
@@ -278,7 +336,11 @@ export default function ProjectDetail() {
                   can take them at the sale's price. The project can sweep them after the close.
                   <ul className="small" style={{ margin: '.5rem 0 0', paddingLeft: '1.1rem' }}>
                     {sale.strays.map((s) => (
-                      <li key={s.txid + s.vout}>{amount(s.atoms, 8)} of {shortHex(s.asset, 8, 6)} at {shortHex(s.txid, 8, 6)}:{s.vout}</li>
+                      <li key={s.txid + s.vout}>
+                        {amount(s.atoms, s.asset === sale.terms.payment_asset ? payment.decimals : 8)}{' '}
+                        {s.asset === sale.terms.payment_asset ? payment.label : <span className="mono">{shortHex(s.asset, 8, 6)}</span>}
+                        {' '}at <span className="mono">{shortHex(s.txid, 8, 6)}:{s.vout}</span>
+                      </li>
                     ))}
                   </ul>
                 </Notice>
@@ -316,7 +378,6 @@ export default function ProjectDetail() {
               )}
             </div>
           )}
-          {!config.explorer_url && null}
         </div>
       </div>
     </div>

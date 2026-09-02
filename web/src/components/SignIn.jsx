@@ -86,17 +86,20 @@ export default function SignIn({ onDone, label = 'Sign in with your wallet' }) {
       <div>
         <p className="small dim">
           Sign this exact text with your wallet, then paste the signature back.
-          It authorises no payment. The text has no trailing newline, so a copy
-          from this box and a file read with <span className="mono">$(cat file)</span> are
-          the same bytes.
+          It authorises no payment. Copy it whole: a signature over even slightly
+          different text signs nobody in.
         </p>
         <div className="field">
           <label htmlFor="challenge">Message to sign <Copy value={manual.message} label="Copy the message" /></label>
           <textarea id="challenge" className="mono fit" readOnly value={manual.message} rows={rows}
                     onFocus={(e) => e.target.select()} />
           <div className="hint">
-            With a node, message signing needs a legacy address:{' '}
-            <span className="mono">sequentia-cli getnewaddress "" legacy</span>, then{' '}
+            With a node: save the text above to a file, say{' '}
+            <span className="mono">levo-challenge.txt</span>, and read it back with{' '}
+            <span className="mono">$(cat …)</span> so the shell adds no newline of its
+            own. Message signing needs a legacy address, so{' '}
+            <span className="mono">sequentia-cli getnewaddress "" legacy</span> first,
+            then{' '}
             <span className="mono">sequentia-cli signmessage "&lt;that address&gt;" "$(cat levo-challenge.txt)"</span>.
             To sign in as your staking key, so your tier shows at once:{' '}
             <span className="mono">sequentia-cli signmessagewithprivkey "&lt;staking WIF&gt;" "$(cat levo-challenge.txt)"</span>.

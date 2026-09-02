@@ -26,6 +26,9 @@ class FakeRPC:
         self.unspents = []
         self.txouts = {}
         self.blocks = {}          # height -> hash currently at that height
+        self.mined = {}           # block hash -> txids in it
+        self.mempool = []
+        self.ibd = False
         self.height = 100
 
     def call(self, method, *params):
@@ -33,9 +36,17 @@ class FakeRPC:
             return {"success": True, "unspents": list(self.unspents)}
         if method == "getblockhash":
             return self.blocks.get(int(params[0]))
+        if method == "getblock":
+            return {"tx": list(self.mined.get(params[0], []))}
+        if method == "getrawmempool":
+            return list(self.mempool)
         if method == "getrawtransaction":
             return None
         raise RuntimeError("unexpected call %s" % method)
+
+    def chain_info(self):
+        return {"blocks": self.height, "mediantime": 1_700_000_000,
+                "initialblockdownload": self.ibd}
 
     def txout(self, txid, vout, include_mempool=True):
         return self.txouts.get((txid, int(vout)))
@@ -571,3 +582,160 @@ def test_other_assets_at_the_sale_address_are_reported_as_strays(t):
     t.eq(s.strays, [{"txid": "99" * 32, "vout": 0, "asset": USDX, "atoms": 100 * 10**8}],
          "the stray USDX is recorded")
     t.eq(s.locked_atoms, 600 * 10**8, "and does not count as the sale")
+
+
+def test_a_sale_that_sells_out_before_the_first_poll_is_not_a_ghost(t):
+    """The lock is dated when it is accepted, so a sale bought out in the
+    minute between locking and the watcher's first look is still a sale that
+    sold: the block it was funded in is on the chain, and that is the test."""
+    s = _sale()
+    rpc = FakeRPC()
+    rpc.blocks[95] = "block-95"
+    s.funding.update({"height": 95, "block": "block-95"})   # as confirm_lock dates it
+    _settle(s, rpc)
+    t.eq(s.status, S.SOLD_OUT, "dated at the lock, gone at the first poll: sold out")
+
+
+def test_a_sale_keeps_the_block_of_the_outpoint_it_came_from(t):
+    """A sale that has moved may never have been seen confirmed AT its current
+    outpoint -- a remainder is adopted from the mempool. Its lineage back to a
+    block still on the chain is what proves it was real, so the block of the
+    outpoint it came from is carried forward."""
+    s = _sale()
+    rpc = FakeRPC()
+    rpc.blocks[95] = "block-95"
+    rpc.txouts[("ab" * 32, 0)] = {"value": TOTAL / 1e8, "confirmations": 6}
+    _watch(s, rpc).poll()
+    del rpc.txouts[("ab" * 32, 0)]
+    s.expect_remainder_at("ee" * 32)
+    rpc.txouts[("ee" * 32, 1)] = {"value": 250.0, "asset": GOLD,
+                                  "scriptPubKey": {"hex": s.script_pubkey}}
+    _watch(s, rpc).poll()
+    t.eq(s.funding["ancestor_block"], "block-95", "the older block is kept")
+    del rpc.txouts[("ee" * 32, 1)]                  # the remainder sells too
+    _settle(s, rpc)
+    t.eq(s.status, S.SOLD_OUT, "an intact ancestor makes this a sell-out")
+
+
+def test_a_funding_that_never_reached_a_block_is_a_ghost(t):
+    """A lock seen only in the mempool, dropped before it was mined, and in no
+    block since: that funding was never made, and the sale is a phantom."""
+    s = _sale()
+    rpc = FakeRPC()
+    rpc.txouts[("ab" * 32, 0)] = {"value": TOTAL / 1e8}       # unconfirmed
+    _watch(s, rpc).poll()
+    t.eq(s.funding["seen_height"], 100, "the height it was first seen at is noted")
+    del rpc.txouts[("ab" * 32, 0)]                            # dropped
+    _settle(s, rpc)
+    t.eq(s.status, S.GHOST, "in no block and no mempool: never funded")
+
+
+def test_a_funding_found_in_a_later_block_is_not_a_ghost(t):
+    """The same silence, with the funding transaction actually in a block: the
+    sale was real and sold, and the watcher looks before it judges."""
+    s = _sale()
+    rpc = FakeRPC()
+    rpc.txouts[("ab" * 32, 0)] = {"value": TOTAL / 1e8}
+    _watch(s, rpc).poll()
+    del rpc.txouts[("ab" * 32, 0)]
+    rpc.blocks[100] = "block-100"
+    rpc.mined["block-100"] = ["ab" * 32]
+    _settle(s, rpc)
+    t.eq(s.status, S.SOLD_OUT, "the funding is in a block: it sold")
+    t.eq(s.funding["block"], "block-100", "and the block is remembered")
+
+
+def test_a_funding_still_in_the_mempool_is_left_alone(t):
+    s = _sale()
+    rpc = FakeRPC()
+    rpc.txouts[("ab" * 32, 0)] = {"value": TOTAL / 1e8}
+    _watch(s, rpc).poll()
+    del rpc.txouts[("ab" * 32, 0)]           # the node dropped it from gettxout
+    rpc.mempool = ["ab" * 32]               # but it is still waiting to be mined
+    _settle(s, rpc)
+    t.eq(s.status, S.LIVE, "a funding still in the mempool is not a ghost")
+
+
+def test_a_syncing_node_ends_nothing(t):
+    """A node rebuilding its chain reports a tip climbing from zero and finds
+    nothing anywhere. Every sale on the platform would ghost against it."""
+    s = _sale()
+    rpc = FakeRPC()
+    rpc.ibd = True
+    _settle(s, rpc)
+    t.eq(s.status, S.LIVE, "nothing is concluded while the node is catching up")
+
+
+def test_a_stale_scan_cannot_resurrect_a_spent_outpoint(t):
+    """`gettxout` sees the mempool and `scantxoutset` does not, so the instant
+    a buy is broadcast the scan still lists the outpoint it spent. Believing
+    the scan would park the sale on an outpoint that is already gone."""
+    s = _sale()
+
+    class MempoolRPC(FakeRPC):
+        def call(self, method, *params):
+            if method == "getrawmempool":
+                return ["ee" * 32]
+            if method == "getrawtransaction":
+                return {"txid": "ee" * 32,
+                        "vin": [{"txid": "ab" * 32, "vout": 0}],
+                        "vout": [{"n": 1, "value": 600.0, "asset": GOLD,
+                                  "scriptPubKey": {"hex": s.script_pubkey}}]}
+            return super().call(method, *params)
+
+    rpc = MempoolRPC()
+    rpc.blocks[95] = "block-95"
+    rpc.txouts[("ab" * 32, 0)] = {"value": TOTAL / 1e8, "confirmations": 6}
+    _watch(s, rpc).poll()
+    del rpc.txouts[("ab" * 32, 0)]                       # spent in the mempool
+    rpc.unspents = [{"txid": "ab" * 32, "vout": 0, "scriptPubKey": s.script_pubkey,
+                     "amount": TOTAL / 1e8, "asset": GOLD}]   # the scan lags
+    _watch(s, rpc).poll()
+    t.eq(s.funding["txid"], "ee" * 32, "the sale follows the mempool spend")
+    t.eq(s.locked_atoms, 600 * 10**8, "and holds the re-rested remainder")
+
+
+def test_assets_that_are_not_the_sale_token_are_reported(t):
+    """The sell leaf reads the value of what it spends, not its asset, so
+    anything else left at the sale address can be taken by anyone at the sale's
+    price. The project is told rather than left to find out."""
+    s = _sale()
+    rpc = FakeRPC()
+    rpc.txouts[("ab" * 32, 0)] = {"value": TOTAL / 1e8, "confirmations": 6}
+    rpc.blocks[95] = "block-95"
+    rpc.unspents = [
+        {"txid": "ab" * 32, "vout": 0, "scriptPubKey": s.script_pubkey,
+         "amount": TOTAL / 1e8, "asset": GOLD},
+        {"txid": "99" * 32, "vout": 3, "scriptPubKey": s.script_pubkey,
+         "amount": 2.5, "asset": USDX},
+    ]
+    w = _watch(s, rpc)
+    w._round = 9                                  # the next poll is a stray round
+    w.poll()
+    t.eq(len(s.strays), 1, "the foreign asset is recorded")
+    t.eq(s.strays[0]["asset"], USDX, "as itself")
+    t.eq(s.strays[0]["atoms"], 250000000, "with what it holds")
+    t.eq(s.locked_atoms, TOTAL, "and the sale is untouched by it")
+
+
+def test_the_known_outpoint_is_read_without_a_scan(t):
+    """A steady platform should not walk the node's UTXO set every minute: the
+    outpoint each sale rests at answers for it, mempool included."""
+    s = _sale()
+
+    class CountingRPC(FakeRPC):
+        scans = 0
+
+        def call(self, method, *params):
+            if method == "scantxoutset":
+                CountingRPC.scans += 1
+            return super().call(method, *params)
+
+    rpc = CountingRPC()
+    rpc.blocks[95] = "block-95"
+    rpc.txouts[("ab" * 32, 0)] = {"value": TOTAL / 1e8, "confirmations": 6}
+    w = _watch(s, rpc)
+    for _ in range(5):
+        w.poll()
+    t.eq(CountingRPC.scans, 0, "no scan while the sale is where it was")
+    t.eq(s.status, S.LIVE, "and the sale reads as live throughout")

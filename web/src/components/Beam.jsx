@@ -38,6 +38,21 @@ export default function Beam({ tiers, stakeAtoms = 0, compactMode = false, showM
   const path = steps.map((s, i) =>
     `${i === 0 ? 'M' : 'L'} ${s.x0} ${s.y} L ${s.x1} ${s.y}`).join(' ')
 
+  // What a reader who cannot see the drawing needs from it: the rule, and
+  // where they stand on it. A tier with no cap cannot buy, which is a
+  // different fact from a cap of zero.
+  const label = 'Per-sale cap by amount staked. ' + tiers.map((t) => {
+    const from = Number(t.min_stake_atoms) > 0
+      ? 'from ' + compact(t.min_stake_atoms) + ' ' + stakeLabel + ' staked'
+      : 'below the first threshold'
+    return t.name + ', ' + from + ', ' +
+      (Number(t.cap_atoms) > 0
+        ? 'up to ' + compact(t.cap_atoms) + ' ' + paymentLabel + ' per sale'
+        : 'cannot buy') +
+      (t.may_list ? ', and may list a project' : '')
+  }).join('. ') + '. You have ' + compact(stake) + ' ' + stakeLabel +
+    ' staked, which is ' + steps[reachedIndex].tier.name + '.'
+
   return (
     <div className={'beam' + (compactMode ? ' compact' : '')}>
       <div className="beam-head">
@@ -45,9 +60,7 @@ export default function Beam({ tiers, stakeAtoms = 0, compactMode = false, showM
         <span>cap per sale, {paymentLabel}</span>
       </div>
       <svg viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none"
-           role="img" aria-label={'Per-sale cap by amount staked: ' + tiers.map((t) =>
-             t.name + ' from ' + compact(t.min_stake_atoms) + ' ' + stakeLabel + ', up to ' +
-             compact(t.cap_atoms) + ' ' + paymentLabel).join('; ')}>
+           role="img" aria-label={label}>
         {/* the ground the steps stand on */}
         <line x1="0" y1={H - padB} x2={W} y2={H - padB}
               stroke="var(--line)" strokeWidth="1" vectorEffect="non-scaling-stroke" />

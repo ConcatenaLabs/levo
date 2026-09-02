@@ -14,8 +14,15 @@ easy path to its reclaim, and it costs every buyer their allocation record.
 
 import json
 import os
+import sys
 import tempfile
 from pathlib import Path
+
+# Exit status for "the state on disk is not something levod may start from".
+# It is a configuration failure, not a crash: restarting cannot fix it, and a
+# supervisor that retried would bury the one message that says what to do.
+# contrib/levod.service holds the matching RestartPreventExitStatus.
+BAD_STATE_EXIT = 78
 
 
 class Store:
@@ -25,6 +32,18 @@ class Store:
         if self.path.is_file():
             self.load()
         self._sweep_temp()
+
+    def _refuse(self, why):
+        """Stop, with the reason where an operator will read it.
+
+        The exit status says "do not restart me": a state file that cannot be
+        read will not become readable in five seconds, and a restart loop turns
+        one legible message into thousands of illegible ones.
+        """
+        sys.stderr.write("levod: %s\n" % why)
+        sys.stderr.write("levod: not starting. Fix or restore the file, then "
+                         "start levod again.\n")
+        raise SystemExit(BAD_STATE_EXIT)
 
     def _sweep_temp(self):
         """Drop temp files a killed process left beside the state file. Each
@@ -39,11 +58,13 @@ class Store:
         try:
             data = json.loads(self.path.read_text())
         except ValueError as e:
-            raise SystemExit("levod: the state file %s is not valid JSON (%s). "
-                             "Restore it from a backup rather than starting "
-                             "with an empty ledger." % (self.path, e))
+            self._refuse("the state file %s is not valid JSON (%s). Restore it "
+                         "from a backup rather than starting with an empty "
+                         "ledger." % (self.path, e))
+        except OSError as e:
+            self._refuse("the state file %s cannot be read (%s)." % (self.path, e))
         if not isinstance(data, dict):
-            raise SystemExit("levod: the state file %s does not hold an object" % self.path)
+            self._refuse("the state file %s does not hold an object." % self.path)
         self.data = data
         self.data.setdefault("projects", {})
         self.data.setdefault("stake_links", {})

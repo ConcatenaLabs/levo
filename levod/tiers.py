@@ -77,17 +77,22 @@ USDX_ATOMS = 100_000_000
 #   Contributor  0.01%   the floor below which consensus ignores a staker
 #   Backer       0.05%
 #   Founder      0.25%   and the only tier that may list
+# A blurb says what a tier MEANS. It quotes no figure and no ticker: the cap
+# and the threshold are data, shown beside it in whatever units the deployment
+# actually runs -- tSEQ on a testnet, SEQ on mainnet -- and a blurb repeating
+# them from memory is how a card ends up saying "50,000 SEQ" next to
+# "50,000 tSEQ".
 DEFAULT_TIERS = [
     Tier(0, "Visitor", 0, 0, False,
-         "Browse every sale. Staking 40,000 SEQ opens the first allocation tier."),
+         "Read every sale and check every address it publishes. Staking opens "
+         "the first allocation tier."),
     Tier(1, "Contributor", POS_MIN_STAKE_ATOMS, 1_000 * USDX_ATOMS, False,
-         "0.01% of supply staked, the chain's own blocksigner floor. Up to "
-         "1,000 USDX into any one sale."),
+         "0.01% of the supply staked, which is the chain's own blocksigner "
+         "floor: below it, consensus ignores a staker's weight entirely."),
     Tier(2, "Backer", 5 * POS_MIN_STAKE_ATOMS, 10_000 * USDX_ATOMS, False,
-         "0.05% of supply staked. Up to 10,000 USDX into any one sale."),
+         "0.05% of the supply staked."),
     Tier(3, "Founder", 25 * POS_MIN_STAKE_ATOMS, 100_000 * USDX_ATOMS, True,
-         "0.25% of supply staked. Up to 100,000 USDX into any one sale, and the "
-         "only tier that may list a project."),
+         "0.25% of the supply staked, and the only tier that may list a project."),
 ]
 
 

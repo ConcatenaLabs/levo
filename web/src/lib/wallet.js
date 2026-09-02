@@ -82,11 +82,21 @@ export async function broadcastPset(pset) {
   return txid
 }
 
+// Whether this wallet can sign a transaction THIS SITE built.
+//
+// Having a `signPset` method is not enough. A signer only signs an input it
+// can recognise as its own, and the key origins that say so are not in a PSET
+// composed from public data -- the wallet has to fill them in from its own
+// descriptor before signing. Wallets that do announce it as a feature; on one
+// that does not, the button would open the wallet and come back with nothing
+// signed, so Levo offers the node path instead.
 export async function supportsPset() {
   try {
     const caps = await request('getCapabilities', {})
     const list = (caps && (caps.methods || caps)) || []
-    return Array.isArray(list) && list.includes('signPset') && list.includes('broadcast')
+    const features = (caps && caps.features) || []
+    return Array.isArray(list) && list.includes('signPset') && list.includes('broadcast') &&
+           Array.isArray(features) && features.includes('pset-site-built')
   } catch { return false }
 }
 

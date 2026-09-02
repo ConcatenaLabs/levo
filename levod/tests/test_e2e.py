@@ -166,6 +166,7 @@ class Drill:
         os.environ["LEVOD_EXPLORER_URL"] = "https://example.test/explorer/"
         os.environ["LEVOD_LINKS"] = json.dumps({"Faucet": "https://example.test/faucet"})
         os.environ["LEVOD_AUTH_PER_MINUTE"] = "100000"     # the drill signs in a lot
+        os.environ["LEVOD_OPERATORS"] = SH.pubkey_of(self.issuer_sec)
         os.environ["LEVOD_WRITES_PER_MINUTE"] = "100000"
         os.environ.pop("LEVOD_TIERS", None)
         import server
@@ -442,7 +443,16 @@ def run(d):
     code, r = req("PATCH", "/api/projects/helios", {"summary": "Edited.", "links": {}}, token=issuer_tok)
     ok.eq(code, 200, "the issuer can edit copy")
     ok.eq(r["summary"], "Edited.", "and the edit lands")
-    code, r = req("POST", "/api/projects", {"project": dict(meta, slug="to-withdraw"), "terms": terms}, token=issuer_tok)
+    # A second listing has to differ in something the address is made of.
+    # Identical terms derive one covenant, and two sales sharing one could not
+    # be told apart on chain.
+    code, r = req("POST", "/api/projects",
+                  {"project": dict(meta, slug="same-terms"), "terms": terms},
+                  token=issuer_tok)
+    ok.eq(code, 400, "a listing that derives an existing sale address is refused")
+    ok.ok("same sale address" in (r.get("error") or ""), "with the reason")
+    second = dict(terms, min_lot=terms["min_lot"] + 1)
+    code, r = req("POST", "/api/projects", {"project": dict(meta, slug="to-withdraw"), "terms": second}, token=issuer_tok)
     ok.eq(code, 201, "a second listing")
     code, r = req("DELETE", "/api/projects/to-withdraw", token=buyer_tok)
     ok.eq(code, 403, "a stranger cannot withdraw it")
@@ -451,7 +461,9 @@ def run(d):
     code, r = req("GET", "/api/projects/to-withdraw")
     ok.eq(code, 404, "and it is gone")
     for i in range(3):
-        code, r = req("POST", "/api/projects", {"project": dict(meta, slug="draft-%d" % i), "terms": terms},
+        code, r = req("POST", "/api/projects",
+                      {"project": dict(meta, slug="draft-%d" % i),
+                       "terms": dict(terms, min_lot=terms["min_lot"] + 10 + i)},
                       token=issuer_tok)
     ok.eq(code, 400, "a fourth unfunded draft is refused (helios is still a draft)")
     ok.ok("waiting to be funded" in r["error"], "with the reason", r["error"])
@@ -528,9 +540,17 @@ def run(d):
     # --- building the transaction that settles it -------------------------
     ok.section("transaction")
     buyer_addr = ADDR.from_script_pubkey("0014" + "cc" * 20, "tb")
+    # The fee comes from what the plan advised, which is what a client does.
+    # A figure below the node's relay floor is refused here rather than by
+    # every node the buyer offers the signed transaction to.
+    code, planned = req("POST", "/api/projects/helios/buy",
+                        {"token_atoms": 100 * 100_000_000}, token=buyer_tok)
+    fee_atoms = planned["fee"]["suggested_atoms"]
+    ok.ok(fee_atoms and fee_atoms >= planned["fee"]["min_atoms"],
+          "the plan advises a fee at or above the node's floor")
     body = {"token_atoms": 100 * 100_000_000,
             "buyer": {"token_address": buyer_addr, "change_address": buyer_addr,
-                      "inputs": [{"txid": "77" * 32, "vout": 0}], "fee_atoms": 1000}}
+                      "inputs": [{"txid": "77" * 32, "vout": 0}], "fee_atoms": fee_atoms}}
     code, r = req("POST", "/api/projects/helios/transaction", body, token=issuer_tok)
     ok.eq(code, 400, "an input that is not on chain is refused")
     node.utxos[("77" * 32, 0)] = {"scriptPubKey": {"hex": "0014" + "cc" * 20}, "asset": USDX,
@@ -545,6 +565,30 @@ def run(d):
     ok.eq(built["outputs"][1]["script_pubkey"], spk, "the remainder re-rests at the sale address")
     ok.eq(built["outputs"][2]["script_pubkey"], "0014" + "cc" * 20, "the tokens go to the decoded address")
     ok.eq(built["outputs"][2]["role"], "your tokens", "labelled as the buyer's tokens")
+    ok.ok(built["vsize_estimate"] <= planned["fee"]["vsize_estimate"],
+          "and sized the transaction generously rather than short",
+          "%s vs advised %s" % (built["vsize_estimate"], planned["fee"]["vsize_estimate"]))
+    for bad, why in ((0, "a fee of nothing"), (1000, "a fee below the relay floor")):
+        code, r = req("POST", "/api/projects/helios/transaction",
+                      dict(body, buyer=dict(body["buyer"], fee_atoms=bad)), token=issuer_tok)
+        ok.eq(code, 400, "%s is refused" % why)
+        ok.ok("fee" in (r.get("error") or "").lower(), "with a message about the fee", r.get("error"))
+    code, r = req("POST", "/api/projects/helios/transaction",
+                  dict(body, buyer=dict(body["buyer"], fee_asset="USDX")), token=issuer_tok)
+    ok.eq(code, 200, "the fee asset may be given as the label the wallet shows")
+    code, r = req("POST", "/api/projects/helios/transaction",
+                  dict(body, buyer=dict(body["buyer"], token_address=None,
+                                        token_script_pubkey="5320" + "cc" * 32)),
+                  token=issuer_tok)
+    ok.eq(code, 400, "an anyone-can-spend destination is refused")
+    ok.ok("anyone" in (r.get("error") or ""), "saying why", r.get("error"))
+    code, r = req("POST", "/api/projects/helios/transaction",
+                  {"token_atoms": body["token_atoms"],
+                   "buyer": {"token_address": buyer_addr, "inputs": body["buyer"]["inputs"],
+                             "fee_atoms": fee_atoms}}, token=issuer_tok)
+    ok.eq(code, 200, "leaving the change address blank sends change where the tokens go")
+    ok.ok(any(o["script_pubkey"] == "0014" + "cc" * 20 and o["role"] == "your change"
+              for o in r["outputs"]), "with a change output at that address")
     body_dup = dict(body, buyer=dict(body["buyer"], inputs=[{"txid": "77" * 32, "vout": 0}] * 2))
     code, r = req("POST", "/api/projects/helios/transaction", body_dup, token=issuer_tok)
     ok.eq(code, 400, "an input listed twice is refused")
@@ -665,11 +709,11 @@ def run(d):
     node.height += 5
     code, r = req("GET", "/api/projects/closing")
     ok.eq(r["sale"]["status"], "closed", "past its close the sale reads closed")
-    code, r = req("POST", "/api/projects/closing/reclaim", {"fee_inputs": [{"txid": "77" * 32, "vout": 0}], "fee_atoms": 1000},
+    code, r = req("POST", "/api/projects/closing/reclaim", {"fee_inputs": [{"txid": "77" * 32, "vout": 0}], "fee_atoms": 200_000},
                   token=issuer_tok)
     ok.eq(code, 400, "a reclaim needs a destination")
     code, r = req("POST", "/api/projects/closing/reclaim",
-                  {"destination_address": buyer_addr, "fee_inputs": [{"txid": "77" * 32, "vout": 0}], "fee_atoms": 1000},
+                  {"destination_address": buyer_addr, "fee_inputs": [{"txid": "77" * 32, "vout": 0}], "fee_atoms": 200_000},
                   token=issuer_tok)
     ok.eq(code, 200, "after the close a reclaim builds")
     ok.ok("sighash" in r and "leaf" in r and "control_block" in r and "signature" not in r,
@@ -687,6 +731,74 @@ def run(d):
     ok.eq(r["verify"]["sell_leaf"], C.derive(C.SaleTerms.from_json(r["sale"]["terms"])).sell_leaf.hex(),
           "and its leaves, so a client can keep them")
     ok.eq(r["node_reachable"], True, "and whether the node answered")
+
+    # --- the board a visitor lands on --------------------------------------
+    ok.section("board")
+    code, r = req("GET", "/api/projects")
+    ok.eq(code, 200, "the board answers")
+    ok.ok(r["total"] >= 2, "and says how many listings there are", r["total"])
+    ok.eq(len(r["projects"]), r["total"], "with all of them when no page is asked for")
+    code, r = req("GET", "/api/projects?status=open")
+    ok.ok(all(p["sale"]["status"] in ("live", "partial") for p in r["projects"]),
+          "the open filter returns only sales that can be bought")
+    code, r = req("GET", "/api/projects?status=finished")
+    ok.ok(all(p["sale"]["status"] in ("sold_out", "closed", "reclaimed") for p in r["projects"]),
+          "and the finished filter only ones that cannot")
+    code, r = req("GET", "/api/projects?limit=1&offset=0")
+    ok.eq(len(r["projects"]), 1, "a page holds what was asked for")
+    first = r["projects"][0]["slug"]
+    code, r = req("GET", "/api/projects?limit=1&offset=1")
+    ok.ok(r["projects"] and r["projects"][0]["slug"] != first, "and the next page moves on")
+    code, r = req("GET", "/api/projects?q=helios")
+    ok.ok("helios" in [p["slug"] for p in r["projects"]],
+          "a search finds a listing by name")
+    code, r = req("GET", "/api/projects?q=closing")
+    ok.eq([p["slug"] for p in r["projects"]], ["closing"], "and by its page name")
+    code, r = req("GET", "/api/projects?q=nothing-is-called-this")
+    ok.eq(r["projects"], [], "and finds nothing when there is nothing")
+    code, r = req("GET", "/api/projects?status=nonsense")
+    ok.eq(code, 400, "an unknown filter is refused rather than ignored")
+    code, r = req("GET", "/api/projects?limit=abc")
+    ok.eq(code, 400, "and so is a page size that is not a number")
+
+    # --- what an operator can and cannot do --------------------------------
+    ok.section("operator")
+    code, r = req("POST", "/api/projects/helios/flag", {"hidden": True}, token=buyer_tok)
+    ok.eq(code, 403, "an ordinary account cannot flag a listing")
+    code, r = req("POST", "/api/projects/helios/flag",
+                  {"hidden": True, "notice": "Under review."}, token=issuer_tok)
+    ok.eq(code, 200, "an operator can")
+    ok.ok("covenant" in r["reaches"], "and is told how far that reaches", r["reaches"])
+    code, r = req("GET", "/api/projects")
+    ok.ok("helios" not in [p["slug"] for p in r["projects"]], "a flagged listing leaves the board")
+    code, r = req("GET", "/api/projects/helios")
+    ok.eq(code, 200, "but its page still answers")
+    ok.eq(r["notice"], "Under review.", "carrying the operator's notice")
+    code, r = req("POST", "/api/projects/helios/flag", {"hidden": False}, token=issuer_tok)
+    ok.eq(code, 200, "and it can be put back")
+    code, r = req("GET", "/api/projects")
+    ok.ok("helios" in [p["slug"] for p in r["projects"]], "back on the board")
+
+    # --- the ledger only records purchases that could have happened --------
+    ok.section("ledger")
+    for body, why in (
+            ({"txid": "d1" * 32, "token_atoms": 1, "payment_atoms": 1},
+             "a purchase below the covenant's minimum lot"),
+            ({"txid": "d2" * 32, "token_atoms": total * 2, "payment_atoms": 1},
+             "a purchase larger than the sale ever held")):
+        code, r = req("POST", "/api/projects/helios/confirm", body, token=buyer_tok)
+        ok.eq(code, 400, "%s is refused" % why)
+    code, r = req("POST", "/api/projects/helios/confirm",
+                  {"txid": "e1" * 32, "token_atoms": 100_000, "payment_atoms": 1},
+                  token=issuer_tok)
+    ok.eq(code, 400, "a purchase already recorded by another account is refused")
+    ok.ok("another account" in (r.get("error") or ""), "saying so", r.get("error"))
+
+    # --- the statement a wallet is asked to sign ---------------------------
+    ok.section("login")
+    code, ch = req("POST", "/api/auth/challenge")
+    ok.ok("Site: http" in ch["message"], "the login statement names the site it signs in to",
+          ch["message"].splitlines()[:2])
 
 
 def main():

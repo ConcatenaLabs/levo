@@ -24,6 +24,7 @@ matters most.
 import json
 import os
 import signal
+import re
 import sys
 import threading
 import time
@@ -34,6 +35,7 @@ from urllib.parse import urlparse, parse_qs
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+import address as ADDR    # noqa: E402
 import auth as A          # noqa: E402
 import market as M        # noqa: E402
 import rails as R         # noqa: E402
@@ -45,6 +47,7 @@ import watcher as W       # noqa: E402
 
 MAX_BODY = 256 * 1024
 WATCHER_RPC_TIMEOUT = 300         # a UTXO-set scan on a big chain takes a while
+BUSY_WAIT_SECONDS = 5            # how long a request waits for a free handler
 MAX_HANDLERS = 64                 # concurrent requests before the rest wait
 
 
@@ -96,19 +99,34 @@ class App:
         self.store = ST.Store()
         payment_asset = os.environ.get("LEVOD_PAYMENT_ASSET", M.DEFAULT_PAYMENT_ASSET).lower()
         payment_label = os.environ.get("LEVOD_PAYMENT_LABEL", "USDX")
-        self.hrp = os.environ.get("LEVOD_HRP", "tb")
-        self.chain = self._chain_name()
-        self.stake_label = os.environ.get("LEVOD_STAKE_LABEL") or (
-            "tSEQ" if self.chain == "test" else "SEQ")
+        self._chain = None
+        self._stake_label_env = os.environ.get("LEVOD_STAKE_LABEL")
+        # levod is often started beside the node it reads, and wins the race.
+        # Asking once would then label the testnet's stake SEQ and report no
+        # chain at all for the life of the process, so it is asked again until
+        # it answers.
+        self.stake_label = self._stake_label_env or "SEQ"
+        self.chain          # ask now; the property asks again until it answers
+        # Addresses are encoded and decoded against this prefix, so getting it
+        # wrong sends tokens nowhere. The chain the node reports decides it
+        # unless an operator says otherwise.
+        self.hrp = os.environ.get("LEVOD_HRP") or ADDR.hrp_for(self.chain)
         self.explorer_url = os.environ.get("LEVOD_EXPLORER_URL", "").rstrip("/")
         self.site_links = _site_links(os.environ.get("LEVOD_LINKS"))
+        # Where this Levo's own source is. A visitor is told to run a command
+        # and to rebuild a sale address themselves; both need somewhere to get
+        # the code, and an operator running a fork should point at their own.
+        self.source_url = (os.environ.get("LEVOD_SOURCE_URL")
+                           or "https://github.com/ConcatenaLabs/levo").rstrip("/")
         self.rails = R.Rails(payment_asset, payment_label,
                              R.NodeRateSource(self.node))
         self.watcher = None
+        self.operators = _accounts(os.environ.get("LEVOD_OPERATORS"))
         self.market = M.Platform(self.store, self.reader, self.rails, self.node,
                                  hrp=self.hrp, payment_asset=payment_asset,
                                  payment_label=payment_label,
                                  stake_label=self.stake_label,
+                                 operators=self.operators,
                                  on_stale=lambda: self.watcher and self.watcher.nudge())
         watch_node = self.node.with_timeout(WATCHER_RPC_TIMEOUT) \
             if hasattr(self.node, "with_timeout") else self.node
@@ -122,16 +140,39 @@ class App:
         self.auth_limit = RateLimit(per_minute=int(os.environ.get("LEVOD_AUTH_PER_MINUTE", "30")))
         self.write_limit = RateLimit(per_minute=int(os.environ.get("LEVOD_WRITES_PER_MINUTE", "120")))
         self.handlers = threading.BoundedSemaphore(MAX_HANDLERS)
+        # The reverse proxy in front of levod, whose X-Forwarded-For is worth
+        # believing. Loopback by default, because that is where a proxy on the
+        # same host connects from; set it empty when levod is exposed directly.
+        # The address this Levo is reached at, named in the statement a wallet
+        # is asked to sign. Configured where there is a proxy in front, since
+        # the Host header is then whatever the proxy passes on.
+        self.origin = (os.environ.get("LEVOD_ORIGIN") or "").strip().rstrip("/") or None
+        self.trusted_proxies = {a for a in re.split(
+            r"[,\s]+", os.environ.get("LEVOD_TRUSTED_PROXIES", "127.0.0.1 ::1")) if a}
         self.webroot = Path(os.environ.get(
             "LEVOD_WEBROOT",
             str(Path(__file__).resolve().parent.parent / "web" / "dist")))
         self.verbose = bool(os.environ.get("LEVOD_VERBOSE"))
 
-    def _chain_name(self):
+    @property
+    def chain(self):
+        """The chain the node reports, or what the environment was told to
+        assume. Cached once it is known, since a node does not change chains
+        under a running process."""
+        if self._chain:
+            return self._chain
         try:
-            return self.node.chain_name()
+            name = self.node.chain_name()
         except Exception:
+            name = None
+        if not name:
             return os.environ.get("LEVOD_CHAIN", "")
+        self._chain = name
+        if not self._stake_label_env:
+            self.stake_label = "tSEQ" if name == "test" else "SEQ"
+            if getattr(self, "market", None) is not None:
+                self.market.stake_label = self.stake_label
+        return name
 
     def config(self):
         """The facts a client needs to label and link things correctly."""
@@ -149,6 +190,7 @@ class App:
             "first_tier_atoms": first.min_stake_atoms,
             "first_tier_is_chain_floor": first.min_stake_atoms == T.POS_MIN_STAKE_ATOMS,
             "links": self.site_links,
+            "source_url": self.source_url,
         }
 
     def tiers_note(self):
@@ -175,25 +217,62 @@ class Handler(BaseHTTPRequestHandler):
     def version_string(self):
         return "levod"                 # no interpreter version on the wire
 
-    def client(self):
-        """Who is asking: the address the proxy forwards when the peer is the
-        proxy, otherwise the peer itself."""
+    def origin(self):
+        """Where the caller reached this Levo: what the operator configured, or
+        else the host the request names. It goes into the statement a wallet
+        shows before signing, so it has to be the address the person is
+        actually looking at."""
+        if self.app and self.app.origin:
+            return self.app.origin
+        host = (self.headers.get("Host") or "").strip()[:100]
+        if not host or any(c in host for c in " \r\n"):
+            return None
+        proto = "http"
         peer = self.client_address[0] if self.client_address else "?"
-        if peer in ("127.0.0.1", "::1"):
+        if self.app and peer in self.app.trusted_proxies:
+            proto = (self.headers.get("X-Forwarded-Proto") or "http").strip().lower()
+            if proto not in ("http", "https"):
+                proto = "http"
+        return "%s://%s" % (proto, host)
+
+    def client(self):
+        """Who is asking: the address the proxy forwards when the peer is a
+        proxy Levo was told to believe, otherwise the peer itself.
+
+        The header is a claim, and anything that can reach levod can make it.
+        Believing it from an address that is not the reverse proxy would let a
+        caller pick their own rate-limit bucket per request, which is the same
+        as having no rate limit at all.
+        """
+        peer = self.client_address[0] if self.client_address else "?"
+        if self.app and peer in self.app.trusted_proxies:
             fwd = self.headers.get("X-Forwarded-For")
             if fwd:
-                return fwd.split(",")[0].strip()
+                return fwd.split(",")[0].strip()[:64]
         return peer
 
     def handle_one_request(self):
-        acquired = self.app.handlers.acquire(timeout=30) if self.app else True
+        # The slot is taken BEFORE the request line is read, so nothing about
+        # the request is known here yet -- not even whether one was sent.
+        # BaseHTTPRequestHandler's reply helpers all need a parsed request, so
+        # the refusal is written out as bytes and the connection closed.
+        acquired = self.app.handlers.acquire(timeout=BUSY_WAIT_SECONDS) if self.app else True
+        if not acquired:
+            body = b'{"error": "levod is busy; try again in a moment"}'
+            try:
+                self.wfile.write(b"HTTP/1.1 503 Service Unavailable\r\n"
+                                 b"Content-Type: application/json\r\n"
+                                 b"Content-Length: " + str(len(body)).encode() + b"\r\n"
+                                 b"Retry-After: 2\r\n"
+                                 b"Connection: close\r\n\r\n" + body)
+            except Exception:
+                pass
+            self.close_connection = True
+            return
         try:
-            if not acquired:
-                self._json(503, {"error": "levod is busy; try again in a moment"})
-                return
             super().handle_one_request()
         finally:
-            if acquired and self.app:
+            if self.app:
                 self.app.handlers.release()
 
     # --- plumbing -----------------------------------------------------------
@@ -356,11 +435,16 @@ class Handler(BaseHTTPRequestHandler):
             w = app.watcher
             age = (time.time() - w.last_run) if w.last_run else None
             stale = bool(w._thread) and (age is None or age > 3 * w.interval)
-            ok = node["reachable"] and not stale
+            # A watcher that runs on time but fails every poll reconciles
+            # nothing, and a sale that has sold out goes on showing as open. A
+            # monitor has to see that, so it is not "ok" either.
+            failing = bool(w.last_error)
+            ok = node["reachable"] and not stale and not failing
             return self._json(200 if ok else 503, {
                 "service": "levod", "ok": ok, "node": node,
                 "watcher": {"running": bool(w._thread and w._thread.is_alive()),
                             "last_run_age_seconds": int(age) if age is not None else None,
+                            "reconciling": not failing,
                             "last_error": w.last_error},
             })
 
@@ -402,7 +486,8 @@ class Handler(BaseHTTPRequestHandler):
                                    "minute and try again")
 
         if method == "POST" and parts == ["auth", "challenge"]:
-            return self._json(200, app.challenges.issue("Sign in to Levo"))
+            return self._json(200, app.challenges.issue("Sign in to Levo",
+                                                        origin=self.origin()))
 
         if method == "POST" and parts == ["auth", "verify"]:
             b = self._body()
@@ -454,7 +539,8 @@ class Handler(BaseHTTPRequestHandler):
             _check_pubkey(staker)
             ch = app.stake_challenges.issue(
                 purpose=T.StakeLinks.PURPOSE,
-                extra_lines=T.StakeLinks.binding_lines(acct, staker))
+                extra_lines=T.StakeLinks.binding_lines(acct, staker),
+                origin=self.origin())
             return self._json(200, ch)
 
         if method == "POST" and parts == ["stake", "link"]:
@@ -497,8 +583,30 @@ class Handler(BaseHTTPRequestHandler):
 
         # -- projects ----------------------------------------------------------
         if method == "GET" and parts == ["projects"]:
-            return self._json(200, {"projects": app.market.public_projects(),
-                                    "node_reachable": app.market.height() is not None})
+            page = app.market.public_projects(
+                status=_one(query, "status"), q=_one(query, "q"),
+                sort=_one(query, "sort") or "new",
+                limit=_int_param(query, "limit"),
+                offset=_int_param(query, "offset") or 0)
+            page["node_reachable"] = app.market.height() is not None
+            return self._json(200, page)
+
+        if method == "GET" and len(parts) == 3 and parts[0] == "projects" \
+                and parts[2] == "fee":
+            # What a fee should be for a transaction against this sale, before
+            # there is a transaction to measure. The buy path gets this with
+            # its quote; a reclaim has no quote, and guessing a figure in a
+            # form is how a transaction ends up below the relay floor.
+            p = app.market.project(parts[1])
+            if p.sale is None:
+                raise M.NotFound("this project has no sale")
+            kind = _one(query, "kind") or "buy"
+            if kind not in ("buy", "reclaim"):
+                raise M.PlatformError("kind is buy or reclaim")
+            n = _int_param(query, "inputs")
+            return self._json(200, app.market.fee_advice(
+                p.sale, n_inputs=max(1, min(int(n or 1), M.MAX_INPUTS)),
+                fee_asset=_one(query, "asset"), kind=kind))
 
         if len(parts) == 2 and parts[0] == "projects":
             slug = parts[1]
@@ -550,6 +658,16 @@ class Handler(BaseHTTPRequestHandler):
             if action == "reclaim":
                 acct = self._require_account()
                 return self._json(200, app.market.build_reclaim(acct, slug, self._body()))
+            if action == "flag":
+                acct = self._require_account()
+                b = self._body()
+                p = app.market.set_visibility(acct, slug, hidden=b.get("hidden"),
+                                              notice=b.get("notice"))
+                return self._json(200, {"slug": p.slug, "hidden": p.hidden,
+                                        "notice": p.notice,
+                                        "reaches": "this page only: the sale is a "
+                                                   "covenant on chain and can still "
+                                                   "be bought from with its terms"})
             if action == "confirm":
                 acct = self._require_account()
                 b = self._body()
@@ -612,6 +730,40 @@ def _check_pubkey(pk):
     if len(pk) != 66 or not pk.startswith(("02", "03")) \
             or any(c not in "0123456789abcdef" for c in pk):
         raise ValueError("staker_pubkey must be a 33-byte compressed key in hex")
+
+
+def _accounts(text):
+    """Account keys from an environment list: comma or space separated, each a
+    33-byte compressed public key in hex. Anything else is dropped with a note
+    on stderr rather than silently granting or silently refusing."""
+    out = []
+    for part in re.split(r"[,\s]+", str(text or "").strip()):
+        if not part:
+            continue
+        key = part.strip().lower()
+        if re.match(r"^0[23][0-9a-f]{64}$", key):
+            out.append(key)
+        else:
+            sys.stderr.write("levod: LEVOD_OPERATORS entry %r is not a compressed "
+                             "public key; ignored\n" % part)
+    return out
+
+
+def _one(query, name):
+    """One value for a query parameter, or None. A repeated parameter is a
+    client bug, not a list: the first is taken and the rest ignored."""
+    v = (query.get(name) or [None])[0]
+    v = (v or "").strip()
+    return v or None
+
+
+def _int_param(query, name):
+    v = _one(query, name)
+    if v is None:
+        return None
+    if not v.lstrip("-").isdigit():
+        raise M.PlatformError("%s must be a whole number" % name)
+    return int(v)
 
 
 def _str(body, name):

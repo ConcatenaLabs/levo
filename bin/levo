@@ -13,6 +13,7 @@ the transaction, signs your inputs with your wallet, and broadcasts.
     levo link                               prove a staking key for your account
     levo keygen                             a reclaim key pair for a new listing
     levo create terms.json                  list a project from a JSON file
+                                            (levo create --example prints one)
     levo lock <slug>                        fund a sale you are listing
     levo buy <slug> --tokens 100            buy, end to end
     levo reclaim <slug> --to <address>      sweep what did not sell, after close
@@ -229,8 +230,46 @@ def unblinded_inputs(asset_hex, need_atoms):
         % (asset_hex[:12], U.fmt(need_atoms), U.fmt(total)))
 
 
+_CONFIG = {}
+
+
+def config():
+    """What this levod says about itself: the chain, the labels it uses, the
+    address prefix. Read once, so a command that prints a ticker prints the one
+    the deployment actually runs."""
+    global _CONFIG
+    if not _CONFIG:
+        try:
+            _CONFIG = api("GET", "/api/config") or {}
+        except Exception:
+            _CONFIG = {"payment": {"label": "the payment asset"},
+                       "stake": {"label": "staked"}}
+    return _CONFIG
+
+
+def stake_label():
+    return (config().get("stake") or {}).get("label") or "staked"
+
+
+def payment_label():
+    return (config().get("payment") or {}).get("label") or "the payment asset"
+
+
+def _units(atoms, decimals=8):
+    """Atoms as the decimal string a node's RPC expects, exactly."""
+    atoms = int(atoms)
+    sign = "-" if atoms < 0 else ""
+    atoms = abs(atoms)
+    base = 10 ** decimals
+    return "%s%d.%0*d" % (sign, atoms // base, decimals, atoms % base)
+
+
 def _payment_label(p):
-    return (p.get("payment_label") or "USDX")
+    """What to call the payment asset in this CLI's own output. The sale says
+    so when it can; otherwise the deployment does. Nothing is assumed here: a
+    ticker typed into this file would be wrong on any Levo that prices in
+    something else."""
+    return (p or {}).get("payment_label") or payment_label()
 
 
 # --- commands -----------------------------------------------------------------
@@ -254,9 +293,10 @@ def cmd_whoami(args):
     tok = sign_in()
     me = api("GET", "/api/me", token=tok)
     print("account  %s" % me["account"])
-    print("tier     %s (%s staked)" % (me["tier"]["name"], U.fmt(me["stake_atoms"], 8, "SEQ")))
+    label = stake_label()
+    print("tier     %s (%s staked)" % (me["tier"]["name"], U.fmt(me["stake_atoms"], 8, label)))
     for k in me["keys"]:
-        print("key      %s  %s%s" % (k["staker_pubkey"], U.fmt(k["weight_atoms"], 8, "SEQ"),
+        print("key      %s  %s%s" % (k["staker_pubkey"], U.fmt(k["weight_atoms"], 8, label),
                                      "  (login key)" if k.get("is_login_key") else ""))
     if not me.get("staking_available", True):
         print("note     %s" % me["delegation_note"])
@@ -329,7 +369,8 @@ def cmd_link(args):
                    "your wallet) or --wif")
     st = api("POST", "/api/stake/link", {"message": ch["message"], "signature": sig,
                                          "staker_pubkey": pk}, tok)
-    print("linked. tier %s, %s staked" % (st["tier"]["name"], U.fmt(st["stake_atoms"], 8, "SEQ")))
+    print("linked. tier %s, %s staked" % (st["tier"]["name"],
+                                          U.fmt(st["stake_atoms"], 8, stake_label())))
 
 
 def cmd_keygen(args):
@@ -346,11 +387,46 @@ def cmd_keygen(args):
     }, indent=2))
 
 
+EXAMPLE_LISTING = {
+    "project": {
+        "slug": "helios-grid",
+        "name": "Helios Grid",
+        "ticker": "HLX",
+        "decimals": 8,
+        "summary": "One line, shown on the board.",
+        "description": "The long text on the sale page. Blank lines separate paragraphs.",
+        "links": {"Website": "https://example.com"},
+    },
+    "terms": {
+        "token_asset": "the 64-hex asset id of the token you are selling",
+        "price_num": 1,
+        "price_den": 4,
+        "min_lot": 100000000,
+        "total_atoms": 100000000000,
+        "close_locktime": 1800000000,
+        "treasury_address": "the address buyers' payments land at",
+        "reclaim_xonly": "the 32-byte x-only public key from `levo keygen`",
+    },
+}
+
+
 def cmd_create(args):
+    if args.example:
+        print(json.dumps(EXAMPLE_LISTING, indent=2))
+        print("\n# price_num/price_den are payment atoms per token atom: 1/4 is"
+              "\n# 0.25 payment units per whole token at 8 decimals."
+              "\n# min_lot and total_atoms are ATOMS of the token."
+              "\n# close_locktime is a unix time above 500000000, or a block"
+              "\n# height below it. It is when the RECLAIM path opens.",
+              file=sys.stderr)
+        return
+    if not args.file:
+        raise Fail("give the listing file, or `levo create --example` to print one")
     tok = sign_in()
     spec = json.loads(Path(args.file).read_text())
     if not isinstance(spec, dict) or "project" not in spec or "terms" not in spec:
-        raise Fail("the file needs {\"project\": {...}, \"terms\": {...}}; see README")
+        raise Fail("the file holds {\"project\": {...}, \"terms\": {...}}. "
+                   "`levo create --example` prints one to start from")
     r = api("POST", "/api/projects", spec, tok)
     lock = r["lock"]
     print("listed %s" % r["project"]["slug"])
@@ -376,7 +452,11 @@ def cmd_lock(args):
         txid, vout = args.txid, args.vout
     else:
         print("sending %s of %s to %s" % (U.fmt(amount), sale["terms"]["token_asset"], addr))
-        txid = node("sendtoaddress", address=addr, amount="%.8f" % (amount / 100_000_000),
+        # Atoms to a decimal string WITHOUT a float in the middle: a float
+        # carries 15 digits and an allocation can need more, so "%.8f" would
+        # send a different number of atoms than the sale published and strand
+        # the tokens at the address as an amount the covenant refuses.
+        txid = node("sendtoaddress", address=addr, amount=_units(amount),
                     assetlabel=args.asset_label or sale["terms"]["token_asset"],
                     fee_asset_label=fee_asset)
         raw = node("getrawtransaction", txid, 1)
@@ -406,7 +486,10 @@ def cmd_buy(args):
 
     pay_asset = sale["terms"]["payment_asset"]
     fee_atoms = int(args.fee) if args.fee is not None else int(
-        plan.get("fee", {}).get("suggested_atoms") or 100_000)
+        plan.get("fee", {}).get("suggested_atoms") or 0)
+    if fee_atoms <= 0:
+        raise Fail("this levod could not suggest a fee (its node did not answer "
+                   "with an exchange rate); pass --fee with a number of atoms")
     ins, _ = unblinded_inputs(pay_asset, plan["payment_atoms"] + fee_atoms)
 
     dest = args.to or node("getnewaddress", "levo-buy")
@@ -447,7 +530,14 @@ def cmd_reclaim(args):
     p = api("GET", "/api/projects/%s" % args.slug)
     sale = p["sale"]
     dest = args.to or node("getnewaddress", "levo-reclaim")
-    fee_atoms = int(args.fee)
+    # The reclaim's own shape decides the floor, and levod measures it. A
+    # figure typed here was only ever a guess at what the node would relay.
+    fee_atoms = int(args.fee) if args.fee is not None else int(
+        (api("GET", "/api/projects/%s/fee?kind=reclaim&inputs=2" % args.slug) or {})
+        .get("suggested_atoms") or 0)
+    if fee_atoms <= 0:
+        raise Fail("this levod could not suggest a fee (its node did not answer "
+                   "with an exchange rate); pass --fee with a number of atoms")
     fee_asset = args.fee_asset or sale["terms"]["payment_asset"]
     ins, _ = unblinded_inputs(fee_asset, fee_atoms)
     r = api("POST", "/api/projects/%s/reclaim" % args.slug, {
@@ -514,7 +604,11 @@ def main():
     ln.add_argument("--wif", help="or the key's WIF, to sign with signmessagewithprivkey")
     ln.set_defaults(fn=cmd_link)
 
-    cr = sub.add_parser("create"); cr.add_argument("file"); cr.set_defaults(fn=cmd_create)
+    cr = sub.add_parser("create")
+    cr.add_argument("file", nargs="?", help="a JSON file holding {project, terms}")
+    cr.add_argument("--example", action="store_true",
+                    help="print a listing file to start from, and what each field means")
+    cr.set_defaults(fn=cmd_create)
 
     lk = sub.add_parser("lock")
     lk.add_argument("slug"); lk.add_argument("--atoms", type=int)
@@ -535,7 +629,7 @@ def main():
 
     rc = sub.add_parser("reclaim")
     rc.add_argument("slug"); rc.add_argument("--to")
-    rc.add_argument("--fee", type=int, default=100000)
+    rc.add_argument("--fee", type=int, help="fee in atoms of the fee asset (default: levod's suggestion)")
     rc.add_argument("--fee-asset", help="asset to pay the fee in (default: the sale's payment asset)")
     rc.add_argument("--reclaim-key", help="32-byte hex; signs the covenant here")
     rc.add_argument("--dry-run", action="store_true")

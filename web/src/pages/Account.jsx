@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { api } from '../lib/api'
 import { useStore } from '../lib/store'
-import { signMessage, signStakerMessage, supportsStakerSigning, getStakerPublicKey, hasProvider,
+import { signStakerMessage, supportsStakerSigning, getStakerPublicKey, hasProvider,
          friendly } from '../lib/wallet'
 import { amount, capitalise, compact, shortHex, timeLabel } from '../lib/format'
 import { Copy, Hex, Notice, usePageTitle } from '../components/ui'
@@ -108,8 +108,10 @@ function LinkKey({ onLinked }) {
                   onFocus={(e) => e.target.select()} />
         <div className="hint">
           On a node: <span className="mono">sequentia-cli dumpprivkey &lt;the address you registered the stake from&gt;</span> gives
-          the key's WIF; then <span className="mono">sequentia-cli signmessagewithprivkey "&lt;WIF&gt;" "$(cat levo-link.txt)"</span>.
-          Or <span className="mono">bin/levo link --pubkey &lt;key&gt; --address &lt;a legacy address of that key&gt;</span>.
+          the key's WIF. Save the statement above as{' '}
+          <span className="mono">levo-link.txt</span>, then{' '}
+          <span className="mono">sequentia-cli signmessagewithprivkey "&lt;WIF&gt;" "$(cat levo-link.txt)"</span>.
+          Or <span className="mono">levo link --pubkey &lt;key&gt; --address &lt;a legacy address of that key&gt;</span>.
         </div>
       </div>
       <div className="field">
@@ -237,7 +239,13 @@ export default function Account() {
 
       <div className="grid-3" style={{ marginBottom: '2.5rem' }}>
         <div className="stat">
-          <b>{compact(st.stake_atoms)}</b><span>{stake.label} staked</span>
+          <b title={amount(st.stake_atoms, stake.decimals) + ' ' + stake.label}>
+            {compact(st.stake_atoms)}
+          </b>
+          <span>{stake.label} staked</span>
+          <span className="num" style={{ fontSize: '.78rem' }}>
+            {amount(st.stake_atoms, stake.decimals)} exactly
+          </span>
         </div>
         <div className="stat">
           <b>{amount(st.tier.cap_atoms, payment.decimals)}</b><span>{payment.label} cap per sale</span>
@@ -245,6 +253,11 @@ export default function Account() {
         <div className="stat">
           <b>{st.next_tier ? compact(st.to_next_atoms) : '—'}</b>
           <span>{st.next_tier ? stake.label + ' to ' + st.next_tier.name : 'top tier'}</span>
+          {st.next_tier && (
+            <span className="num" style={{ fontSize: '.78rem' }}>
+              {amount(st.to_next_atoms, stake.decimals)} exactly
+            </span>
+          )}
         </div>
       </div>
 

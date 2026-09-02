@@ -2,7 +2,7 @@ import { Link } from 'react-router-dom'
 import { useStore } from '../lib/store'
 import Beam from '../components/Beam'
 import { Notice, usePageTitle } from '../components/ui'
-import { compact } from '../lib/format'
+import { compact, tierSays } from '../lib/format'
 
 export default function Home() {
   usePageTitle('')
@@ -10,6 +10,9 @@ export default function Home() {
   const list = tiers ? tiers.tiers : null
   const stakeAtoms = standing ? standing.stake_atoms : 0
   const first = list && list.length > 1 ? list[1] : null
+  // The tier table is a second request and can fail on its own; config
+  // carries the first threshold so the page can still say what it is.
+  const firstAtoms = first ? first.min_stake_atoms : config.first_tier_atoms
   const floor = compact(config.staking_floor_atoms)
   const wallet = links.Wallet || links.wallet
   const faucet = links.Faucet || links.faucet
@@ -99,13 +102,11 @@ export default function Home() {
             <div className="section-head">
               <h2>Tiers</h2>
               <p>
-                {first && config.first_tier_is_chain_floor
+                {config.first_tier_is_chain_floor
                   ? 'The first tier starts where the chain\'s own does: ' + floor + ' staked ' + stake.label +
                     ', the floor below which consensus ignores a staker entirely.'
-                  : first
-                    ? 'The first tier opens at ' + compact(first.min_stake_atoms) + ' staked ' + stake.label +
-                      '. The chain\'s own blocksigner floor is ' + floor + '.'
-                    : ''}
+                  : 'The first tier opens at ' + compact(firstAtoms) + ' staked ' + stake.label +
+                    '. The chain\'s own blocksigner floor is ' + floor + '.'}
                 {' '}Every proven key's stake adds to your total, and the total decides
                 the tier. Only staked Sequence counts, and only for keys you have
                 proven you control.
@@ -121,7 +122,10 @@ export default function Home() {
                         {compact(t.min_stake_atoms)} {stake.label} staked
                       </span>
                     </div>
-                    <p className="small dim" style={{ margin: '.5rem 0 0' }}>{t.blurb}</p>
+                    <p className="small dim" style={{ margin: '.5rem 0 0' }}>
+                      {tierSays(t, payment.label)}
+                    </p>
+                    {t.blurb && <p className="small dim" style={{ margin: '.35rem 0 0' }}>{t.blurb}</p>}
                   </div>
                 ))}
               </div>
@@ -145,11 +149,15 @@ export default function Home() {
             <div className="card" style={{ marginTop: '1rem' }}>
               <h3>Getting started</h3>
               <ol className="small dim" style={{ paddingLeft: '1.1rem', margin: 0 }}>
-                <li>Get a Sequentia wallet{wallet ? <>: <a href={wallet} target="_blank" rel="noopener noreferrer">the browser extension or web wallet</a></> : ''}.</li>
+                <li>
+                  Get a Sequentia wallet. The browser extension signs in here in one
+                  click; any wallet that can sign a message works too, by pasting the
+                  signature{wallet ? <>. <a href={wallet} target="_blank" rel="noopener noreferrer">Where to get one</a></> : ''}.
+                </li>
                 {config.testnet && faucet && (
                   <li>Get testnet {stake.label} and {payment.label} from <a href={faucet} target="_blank" rel="noopener noreferrer">the faucet</a>.</li>
                 )}
-                <li>Stake {first ? compact(first.min_stake_atoms) : floor} {stake.label}{pools ? <>, or delegate to <a href={pools} target="_blank" rel="noopener noreferrer">a pool</a></> : ''}. Delegated stake still counts for you.</li>
+                <li>Stake {compact(firstAtoms)} {stake.label}{pools ? <>, or delegate to <a href={pools} target="_blank" rel="noopener noreferrer">a pool</a></> : ''}. Delegated stake still counts for you.</li>
                 <li><Link to="/account">Sign in</Link> with the staking key, and your tier is on the first screen.</li>
               </ol>
             </div>

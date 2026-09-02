@@ -15,6 +15,7 @@ It looks for the node at $SEQUENTIAD, then $SEQUENTIA_SRC/src/sequentiad, then
 """
 
 import base64
+import copy
 import json
 import os
 import shutil
@@ -32,6 +33,7 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent))
 sys.path.insert(0, str(HERE))
 
+import address as ADDR  # noqa: E402
 import covenant as C  # noqa: E402
 import market as M  # noqa: E402
 import pset as P  # noqa: E402
@@ -89,8 +91,18 @@ class Wallet:
 
 class Rig:
     def __init__(self, binary):
+        self.binary = binary
         self.root = tempfile.mkdtemp(prefix="levo-node-")
         self.port = free_port()
+        self.extra = []
+        self._launch()
+        self.n("createwallet", "levo")
+        self.w = Wallet(self.url, "levo", "levo", "levo")
+        self.w("rescanblockchain", 0)
+        self.mine(101)
+
+    def _launch(self):
+        binary = self.binary
         args = [binary, "-datadir=%s" % self.root, "-chain=elementsregtest",
                 "-initialfreecoins=2100000000000000", "-con_blocksubsidy=0",
                 "-con_connect_genesis_outputs=1", "-con_any_asset_fees=1",
@@ -101,8 +113,9 @@ class Rig:
                 "-con_default_blinded_addresses=0", "-validatepegin=0",
                 "-con_parent_chain_signblockscript=51", "-txindex=0",
                 "-fallbackfee=0.0002", "-listen=0", "-server=1", "-persistmempool=0",
-                "-rpcport=%d" % self.port, "-rpcuser=levo", "-rpcpassword=levo", "-daemon=0"]
-        self.log = open(os.path.join(self.root, "stdout.log"), "w")
+                "-rpcport=%d" % self.port, "-rpcuser=levo", "-rpcpassword=levo",
+                "-daemon=0"] + list(self.extra)
+        self.log = open(os.path.join(self.root, "stdout.log"), "a")
         self.proc = subprocess.Popen(args, stdout=self.log, stderr=subprocess.STDOUT)
         self.url = "http://127.0.0.1:%d" % self.port
         self.n = Wallet(self.url, "levo", "levo")
@@ -114,10 +127,28 @@ class Rig:
                 if self.proc.poll() is not None:
                     raise RuntimeError("sequentiad exited; see %s/stdout.log" % self.root)
                 time.sleep(0.25)
-        self.n("createwallet", "levo")
+
+    def restart(self, extra=()):
+        """Stop and start the node again, keeping the chain and the wallet.
+
+        The rig runs with -persistmempool=0, so a restart is also the way to
+        make a transaction that was only ever in the mempool really go away --
+        which is the one thing that makes a funding a ghost rather than a spend
+        nobody has seen yet.
+        """
+        try:
+            self.n("stop")
+            self.proc.wait(timeout=60)
+        except Exception:
+            self.proc.kill()
+        self.log.close()
+        self.extra = list(extra)
+        self._launch()
         self.w = Wallet(self.url, "levo", "levo", "levo")
-        self.w("rescanblockchain", 0)
-        self.mine(101)
+        try:
+            self.n("loadwallet", "levo")
+        except Exception:
+            pass
 
     def mine(self, k=1):
         self.w("generatetoaddress", k, self.w("getnewaddress"))
@@ -228,13 +259,15 @@ def run(ok, rig):
     def dest_spk():
         return w("getaddressinfo", w("getnewaddress"))["scriptPubKey"]
 
-    # --- listing refuses a v0 treasury address and a spent-asset mistake --
+    # --- listing refuses what the chain would not pay ---------------------
     try:
         plat.list_project(issuer, {"slug": "bad", "name": "Bad", "ticker": "BAD"},
-                          dict(terms(node.chain_height() + 500), treasury_address=treasury_addr))
-        ok.ok(False, "a v0 treasury address is refused")
+                          dict(terms(node.chain_height() + 500),
+                               treasury_address=ADDR.from_script_pubkey("5220" + "aa" * 32, "ert")))
+        ok.ok(False, "an address the chain treats as anyone-can-spend is refused as a treasury")
     except M.PlatformError as e:
-        ok.ok("taproot" in str(e), "a v0 treasury address is refused with the reason", str(e))
+        ok.ok("treasury" in str(e).lower() or "address" in str(e).lower(),
+              "an unusable treasury address is refused with a reason", str(e))
 
     # --- alpha: lock found by scan, PSET buy, remainder seen in the mempool -
     h = node.chain_height()
@@ -251,7 +284,10 @@ def run(ok, rig):
     ok.eq(A.sale.status, S.LIVE, "the lock is found on chain by scanning, without naming the outpoint")
     ok.eq(A.sale.funding["txid"], lock_txid, "at the funding transaction")
     watch.poll()
-    ok.ok(A.sale.funding.get("block"), "the watcher notes the block the lock confirmed in")
+    ok.eq(A.sale.funding.get("height"), node.chain_height(),
+          "the watcher notes the height the lock confirmed at")
+    ok.eq(A.sale.funding.get("block"), n("getblockhash", node.chain_height()),
+          "and the block at that height, which is what a reorg changes")
     ok.eq(plat.verify_buyer_inputs([]), [], "no inputs is an empty list")
 
     # A browser wallet's purchase: PSET signed and finalised by the wallet.
@@ -290,6 +326,115 @@ def run(ok, rig):
         ok.ok(False, "a spent input is refused")
     except M.PlatformError as e:
         ok.ok("not an unspent output" in str(e), "a spent input is refused before signing")
+
+    # --- the advertised minimum fee is one the node will actually relay ----
+    #
+    # Levo tells a buyer the smallest fee this node relays for a transaction of
+    # this shape. If that figure is short, the buyer signs a transaction that
+    # simply never confirms, and nothing says why.
+    advice = plat.fee_advice(A.sale, n_inputs=1)
+    ok.ok(advice["min_atoms"] and advice["min_atoms"] > 0, "the node quotes a floor")
+    min_ins = pay_input(A.sale.terms.cost_for(100 * COIN) + advice["min_atoms"])
+    at_floor = plat.build_buy("buyer", "alpha", {"token_atoms": 100 * COIN},
+                              {"token_script_pubkey": dest_spk(),
+                               "change_script_pubkey": dest_spk(),
+                               "inputs": min_ins, "fee_atoms": advice["min_atoms"],
+                               "fee_asset": pay})
+    ok.ok(at_floor["vsize_estimate"] <= advice["vsize_estimate"],
+          "and sizes the transaction at or above what it really is",
+          "%s vs %s" % (at_floor["vsize_estimate"], advice["vsize_estimate"]))
+    at_floor_signed = w("signrawtransactionwithwallet", at_floor["unsigned_tx_hex"])
+    allowed, why = accept(at_floor_signed["hex"])
+    ok.ok(allowed, "a purchase paying exactly the advertised minimum is relayed", why)
+    try:
+        plat.build_buy("buyer", "alpha", {"token_atoms": 100 * COIN},
+                       {"token_script_pubkey": dest_spk(), "change_script_pubkey": dest_spk(),
+                        "inputs": min_ins, "fee_atoms": 1, "fee_asset": pay})
+        ok.ok(False, "a fee below the floor is refused")
+    except M.PlatformError as e:
+        ok.ok("relay" in str(e), "and a fee below that floor is refused before signing", str(e))
+
+    # --- a sale whose treasury is an ordinary version-0 address ------------
+    #
+    # Most wallets, the browser extension included, hand out version-0
+    # addresses and no taproot one. A sale whose treasury is one has to work
+    # exactly as well, or an issuer using such a wallet cannot list at all.
+    h = node.chain_height()
+    v0_terms = terms(h + 500)
+    v0_terms.pop("treasury_prog")
+    v0_terms["treasury_address"] = treasury_addr
+    plat.list_project(issuer, {"slug": "vzero", "name": "V Zero", "ticker": "VZ",
+                               "summary": "s", "description": "d"}, v0_terms)
+    V = plat.projects["vzero"]
+    ok.eq(V.sale.terms.treasury_ver, 0, "the version comes from the address given")
+    ok.eq(V.sale.terms.treasury_spk.hex(), w("getaddressinfo", treasury_addr)["scriptPubKey"],
+          "and the credit the leaf checks is that address's own script")
+    fund("vzero")
+    rig.mine()
+    plat.confirm_lock(issuer, "vzero")
+    ok.eq(V.sale.status, S.LIVE, "a version-0 treasury sale funds like any other")
+    vplan = V.sale.plan_buy("buyer", tier, token_atoms=1_000 * COIN, height=node.chain_height())
+    vins = pay_input(vplan.payment_atoms + 5_000)
+    vbuilt = plat.build_buy("buyer", "vzero", {"token_atoms": 1_000 * COIN},
+                            {"token_script_pubkey": dest_spk(), "change_script_pubkey": dest_spk(),
+                             "inputs": vins, "fee_atoms": 1_000, "fee_asset": pay})
+    vsigned = w("signrawtransactionwithwallet", vbuilt["unsigned_tx_hex"])
+    allowed, why = accept(vsigned["hex"])
+    ok.ok(allowed, "and the chain accepts a purchase that pays a version-0 treasury", why)
+    vtxid = w("sendrawtransaction", vsigned["hex"])
+    rig.mine()
+    watch.poll()
+    ok.eq(V.sale.status, S.PARTIAL, "the watcher follows it like any other sale")
+    ok.eq(V.sale.sold_atoms, 1_000 * COIN, "with what was sold")
+    paid = next(o for o in n("decoderawtransaction", vsigned["hex"])["vout"]
+                if o.get("scriptPubKey", {}).get("hex") == V.sale.terms.treasury_spk.hex())
+    ok.eq(RPCMOD.to_atoms(paid["value"]), vplan.payment_atoms,
+          "and the treasury was paid at its own address")
+
+    # --- a funding that never reached a block is a ghost --------------------
+    #
+    # The dangerous mistake is the opposite one: calling a sale that sold out a
+    # ghost, and voiding its buyers' allocations. So this proves the ghost path
+    # on the one case that really is a ghost -- a lock confirmed from the
+    # mempool that then never lands -- and the sold-out cases above prove it
+    # does not fire when the funding is on the chain.
+    h = node.chain_height()
+    plat.list_project(issuer, {"slug": "ghosted", "name": "Ghosted", "ticker": "GHO",
+                               "summary": "s", "description": "d"},
+                      terms(h + 500, total=5_000))
+    G, gtxid = fund("ghosted")
+    graw = n("decoderawtransaction", w("gettransaction", gtxid)["hex"])
+    gvout = next(o["n"] for o in graw["vout"]
+                 if o.get("scriptPubKey", {}).get("hex") == G.sale.script_pubkey)
+    plat.confirm_lock(issuer, "ghosted", gtxid, gvout)
+    ok.eq(G.sale.status, S.LIVE, "a lock still in the mempool can be confirmed by its outpoint")
+    ok.ok(G.sale.funding.get("seen_height"), "and is dated by the height it was first seen at")
+    ok.ok(not G.sale.funding.get("block"), "with no block, because it has none")
+    watch.poll()
+    ok.eq(G.sale.status, S.LIVE, "the watcher leaves an unconfirmed lock alone")
+    # The rig keeps no mempool across a restart, and the wallet is told not to
+    # rebroadcast: the funding transaction is now in no block and no mempool,
+    # which is the whole of what makes a sale a ghost.
+    rig.restart(["-walletbroadcast=0"])
+    ok.eq(w("getrawmempool"), [], "after the restart the mempool is empty")
+    watch.poll()
+    rig.mine()
+    watch.poll()
+    ok.eq(G.sale.status, S.GHOST, "a funding in no block and no mempool ghosts the sale")
+    ok.eq(G.sale.funding, None, "and the sale holds no outpoint")
+    ok.eq(A.sale.status, S.PARTIAL, "while the funded sale beside it is untouched")
+    ok.eq(V.sale.status, S.PARTIAL, "and so is the version-0 one")
+    # And it comes back, at the same address, when the tokens are really sent.
+    # The wallet still holds the dropped transaction and counts its inputs as
+    # spent, so it is abandoned first -- the same step a project would take.
+    w("abandontransaction", gtxid)
+    rig.restart()                      # broadcasting again, like any ordinary node
+    fund("ghosted")
+    rig.mine()
+    plat.confirm_lock(issuer, "ghosted")
+    watch.poll()
+    ok.eq(G.sale.status, S.LIVE, "locking again reopens the sale")
+    ok.ok(G.sale.funding.get("block"), "now with the block it was mined in")
 
     # --- the covenant refuses what it must ---------------------------------
     def raw_buy(sale, token_atoms, mutate=None, fee=1_000, late=False):
@@ -411,6 +556,89 @@ def run(ok, rig):
     ok.eq(B.sale.status, S.RECLAIMED, "the watcher proves the reclaim by its output and says so")
     ok.eq(B.sale.locked_atoms, 0, "the covenant is empty")
 
+    # --- a sale that closes at a TIME rather than a height ------------------
+    #
+    # A locktime below 500,000,000 is a height and above it a unix time, and
+    # the chain judges a time against median time past rather than the wall
+    # clock. Both paths compile into the reclaim leaf, so both need proving on
+    # a real node: a reclaim built against the wrong clock is rejected as
+    # non-final after the project has signed it.
+    now = int(time.time())
+    close_at = now + 3600
+    plat.list_project(issuer, {"slug": "timed", "name": "Timed", "ticker": "TMD",
+                               "summary": "s", "description": "d"},
+                      terms(close_at, total=2_000))
+    TS = plat.projects["timed"]
+    fund("timed")
+    rig.mine()
+    plat.confirm_lock(issuer, "timed")
+    watch.poll()
+    ok.eq(TS.sale.close_is_height(), False, "the sale closes at a time, not a height")
+    ok.eq(TS.sale.status, S.LIVE, "and is live before it")
+    try:
+        plat.build_reclaim(issuer, "timed", {"destination_script_pubkey": dest_spk(),
+                                             "fee_inputs": [], "fee_atoms": 1_000})
+        ok.ok(False, "a reclaim before a time close is refused")
+    except M.PlatformError as e:
+        ok.ok("clock" in str(e), "a reclaim before a time close is refused by the chain's clock", str(e))
+    # Move the chain's clock past the close. Median time past is the median of
+    # the last eleven blocks, so a few blocks at the new time carry it over.
+    n("setmocktime", close_at + 600)
+    rig.mine(12)
+    ok.ok(node.median_time() > close_at, "the chain's median time is past the close")
+    ok.eq(TS.sale.shown_status(now=node.median_time()), S.CLOSED, "so the sale reads closed")
+    t_fee_ins = pay_input(5_000)
+    tr = plat.build_reclaim(issuer, "timed", {
+        "destination_script_pubkey": dest_spk(),
+        "fee_inputs": [{"txid": i["txid"], "vout": i["vout"]} for i in t_fee_ins],
+        "fee_atoms": 1_000})
+    ok.eq(tr["locktime"], close_at, "the reclaim carries the sale's own close as its locktime")
+    tsig = K.schnorr_sign(bytes.fromhex(tr["sighash"]), reclaim_sec)
+    tsigned = w("signrawtransactionwithwallet", tr["unsigned_tx_hex"])
+    allowed, why = accept(TX.set_witness(tsigned["hex"], 0, TX.reclaim_witness(TS.sale, tsig)))
+    ok.ok(allowed, "and the chain accepts a time-locked reclaim once its clock has passed", why)
+    n("setmocktime", 0)
+
+    # --- a sale that moves twice between two polls -------------------------
+    #
+    # The watcher can miss a sale's whole middle: a recorded buy leaves a
+    # remainder, and a second buy takes it, both before the next poll. Nothing
+    # rests, and the outpoint the watcher knew is long gone. What must NOT
+    # happen is a ghost -- that would tell buyers a sale they were paid from
+    # was never funded, and wipe their allocations.
+    h = node.chain_height()
+    plat.list_project(issuer, {"slug": "swift", "name": "Swift", "ticker": "SWF",
+                               "summary": "s", "description": "d"},
+                      terms(h + 500, total=4_000))
+    SW = plat.projects["swift"]
+    fund("swift")
+    rig.mine()
+    plat.confirm_lock(issuer, "swift")
+    watch.poll()
+    ok.eq(SW.sale.status, S.LIVE, "swift is live")
+    first_buy = 1_000 * COIN
+    (allowed, why), hexed = raw_buy(SW.sale, first_buy)
+    ok.ok(allowed, "the first buy is valid", why)
+    tx1 = w("sendrawtransaction", hexed)
+    plat.record_purchase("buyer", "swift", tx1, first_buy, SW.sale.terms.cost_for(first_buy))
+    # The rest, taken from the remainder before the watcher has looked once.
+    rest = SW.sale.terms.total_atoms - first_buy
+    moved = copy.deepcopy(SW.sale)
+    moved.funding = {"txid": tx1, "vout": 1, "atoms": rest}
+    moved.locked_atoms = rest
+    (allowed, why), hexed2 = raw_buy(moved, rest)
+    ok.ok(allowed, "and so is a full buy of the remainder", why)
+    w("sendrawtransaction", hexed2)
+    rig.mine()
+    watch.poll()
+    rig.mine()
+    watch.poll()
+    ok.eq(SW.sale.status, S.SOLD_OUT, "two moves between two polls is a sell-out, not a ghost")
+    ok.eq(SW.sale.sold_atoms, SW.sale.terms.total_atoms, "with everything sold")
+    mine_ = [q for q in plat.positions("buyer", tier) if q["slug"] == "swift"]
+    ok.eq(len(mine_), 1, "and the buyer keeps their allocation in it")
+    ok.eq(mine_[0]["tokens_atoms"], first_buy, "for the tokens they bought")
+
     # --- gamma: a stray asset at the sale address is reported ---------------
     h = node.chain_height()
     plat.list_project(issuer, {"slug": "gamma", "name": "Gamma", "ticker": "GAM",
@@ -433,8 +661,10 @@ def run(ok, rig):
     try:
         TX.build_reclaim(G.sale, dest_spk(), [], 0, pay, n("getblockhash", 0), locktime=1_800_000_000)
         ok.ok(False, "a time locktime on a height-closed sale is refused")
-    except TX.BuildError:
-        ok.ok(True, "a time locktime on a height-closed sale is refused")
+    except TX.BuildError as e:
+        ok.ok("block height" in str(e),
+              "a time locktime on a height-closed sale is refused for being the wrong kind",
+              str(e))
 
 
 def main():

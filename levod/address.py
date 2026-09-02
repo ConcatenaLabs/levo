@@ -116,8 +116,6 @@ def decode(addr):
         raise ValueError("%s is not a valid witness address" % addr)
     if witver == 0 and kind != "bech32":
         raise ValueError("%s is a version-0 program with a bech32m checksum" % addr)
-    if witver != 0 and kind != "bech32":
-        pass
     if witver != 0 and kind != "bech32m":
         raise ValueError("%s is a version-%d program with a bech32 checksum" % (addr, witver))
     if len(prog) not in (20, 32) if witver == 0 else not 2 <= len(prog) <= 40:
@@ -131,22 +129,80 @@ def to_script_pubkey(addr, hrp=None):
     `hrp`, when given, is the chain's unblinded prefix, and an address from a
     different chain is refused: sending a purchase's tokens to a Bitcoin
     address that happens to share the format would burn them.
+
+    Witness versions above 1 are refused as well. The chain accepts them as
+    anyone-can-spend until a future rule gives them meaning, so tokens paid to
+    one are not the buyer's, they are the first taker's.
     """
     got_hrp, witver, prog = decode(addr)
     if hrp and got_hrp != hrp:
         raise ValueError(
             "%s is a %s address, but this chain's addresses begin %s1"
             % (addr, got_hrp, hrp))
+    if witver > 1:
+        raise ValueError(
+            "%s is a version-%d witness address, which this chain treats as "
+            "anyone-can-spend: whatever is paid to it belongs to whoever "
+            "spends it first. Use a %s1q or %s1p address"
+            % (addr, witver, got_hrp, got_hrp))
     ver_byte = 0 if witver == 0 else 0x50 + witver
     return bytes([ver_byte, len(prog)]) + prog
 
 
-def taproot_program(addr, hrp=None):
-    """The 32-byte program of a taproot (witness v1) address, as hex.
+def check_script_pubkey(spk_hex, what="that output"):
+    """Refuse a raw scriptPubKey Levo should not pay to.
 
-    The treasury of a sale is a v1 program: the sell leaf pins a 32-byte
-    scriptPubKey program, so a v0 address cannot be a treasury.
+    A caller may give a scriptPubKey instead of an address, which skips every
+    check the address form carries. Only the two witness versions the chain
+    enforces today are accepted: a version-2 or later program is
+    anyone-can-spend, and a bare or non-standard script would not relay.
     """
+    text = str(spk_hex or "").lower()
+    try:
+        raw = bytes.fromhex(text)
+    except ValueError:
+        raise ValueError("%s: scriptPubKey must be hex" % what)
+    if len(raw) == 22 and raw[0] == 0x00 and raw[1] == 0x14:
+        return text
+    if len(raw) == 34 and raw[0] == 0x00 and raw[1] == 0x20:
+        return text
+    if len(raw) == 34 and raw[0] == 0x51 and raw[1] == 0x20:
+        return text
+    if len(raw) >= 2 and raw[0] in range(0x52, 0x61):
+        raise ValueError(
+            "%s: that is a version-%d witness program, which this chain treats "
+            "as anyone-can-spend -- whatever is paid to it belongs to whoever "
+            "spends it first" % (what, raw[0] - 0x50))
+    raise ValueError(
+        "%s: Levo pays to witness outputs -- a version-0 key or script hash, or "
+        "a taproot output. Give the address your wallet shows instead" % what)
+
+
+def witness_program(addr, hrp=None):
+    """(witness version, program hex) for an address Levo can pay to.
+
+    A sale's treasury may be either kind of witness output, so what matters is
+    which one it is -- the version goes into the leaf beside the program.
+    """
+    got_hrp, witver, prog = decode(addr)
+    if hrp and got_hrp != hrp:
+        raise ValueError(
+            "%s is a %s address, but this chain's addresses begin %s1"
+            % (addr, got_hrp, hrp))
+    if witver > 1:
+        raise ValueError(
+            "%s is a version-%d witness address, which this chain treats as "
+            "anyone-can-spend: whatever is paid to it belongs to whoever spends "
+            "it first" % (addr, witver))
+    if witver == 0 and len(prog) not in (20, 32):
+        raise ValueError("%s carries a witness program of the wrong length" % addr)
+    if witver == 1 and len(prog) != 32:
+        raise ValueError("%s is not a taproot output" % addr)
+    return witver, prog.hex()
+
+
+def taproot_program(addr, hrp=None):
+    """The 32-byte program of a taproot (witness v1) address, as hex."""
     got_hrp, witver, prog = decode(addr)
     if hrp and got_hrp != hrp:
         raise ValueError(

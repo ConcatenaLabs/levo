@@ -1,4 +1,5 @@
-import { Routes, Route, Link } from 'react-router-dom'
+import { useEffect, useRef } from 'react'
+import { Routes, Route, Link, useLocation } from 'react-router-dom'
 import { Nav, Footer } from './components/Chrome'
 import { usePageTitle } from './components/ui'
 import Home from './pages/Home'
@@ -20,11 +21,29 @@ function NotFound() {
   )
 }
 
+// A client-side navigation replaces the page without moving the reader. A
+// screen reader goes on announcing the old one, and a keyboard tab starts from
+// wherever the last link was, so each route puts focus at the top of the new
+// content and scrolls there.
+function FocusOnNavigate({ target }) {
+  const { pathname } = useLocation()
+  const first = useRef(true)
+  useEffect(() => {
+    if (first.current) { first.current = false; return }
+    const el = target.current
+    if (el) el.focus({ preventScroll: true })
+    window.scrollTo(0, 0)
+  }, [pathname, target])
+  return null
+}
+
 export default function App() {
+  const main = useRef(null)
   return (
     <>
       <Nav />
-      <main id="main">
+      <FocusOnNavigate target={main} />
+      <main id="main" ref={main} tabIndex={-1}>
         <Routes>
           <Route path="/" element={<Home />} />
           <Route path="/projects" element={<Projects />} />

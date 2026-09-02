@@ -11,7 +11,7 @@ the sell leaf reads specific output positions, so the layout IS the contract:
 
 | Output | What | Checked by the covenant |
 |---|---|---|
-| `2k` | the treasury credit | asset, scriptPubKey, and at least `ceil(n × num / den)` |
+| `2k` | the treasury credit | asset, scriptPubKey (witness version and program), and at least `ceil(n × num / den)` |
 | `2k+1` | the unsold remainder | must be the token asset at the IDENTICAL sale address, and at least `min_lot` |
 | anywhere else | the buyer's tokens, change, the fee | no |
 
@@ -30,6 +30,15 @@ such look-up, so Levo also returns the transaction as a PSET, with the output
 each input spends attached and the covenant's witness already final. The wallet
 signs the buyer's inputs, finalises, and broadcasts; it cannot alter the
 covenant's half, and the transaction id is the same either way.
+
+A PSET Levo built carries no key origins, and it cannot: Levo knows no
+extended public key, and the buyer's wallet is the only thing that can say
+which inputs are its own. A signer that decides what to sign from key origins
+alone therefore signs nothing at all. The wallet has to fill them in from its
+own descriptor before signing and strip them afterwards, so that what comes
+back is a signed transaction rather than a map of the buyer's key tree. Wallets
+that do this announce it, and Levo offers the node path to the ones that do
+not.
 
 ## The trap in a full buy
 
@@ -127,22 +136,42 @@ so the watcher finds a smaller output at a new outpoint and carries on.
 It looks in four places, cheapest and most certain first: the outpoint it
 already knows, which `gettxout` answers with the mempool included; any outpoint
 a purchase recorded through Levo said the remainder would rest at, so a buy
-moves the sale the moment it is broadcast; the confirmed UTXO set; and the
-mempool itself, for a transaction spending the known outpoint. It ends a sale
-only after two silent polls with a new block between them, because a remainder
-in the mempool is invisible to the confirmed-set scan until a block carries it.
+moves the sale the moment it is broadcast; the mempool itself, for a
+transaction spending the known outpoint; and the confirmed UTXO set. That order
+matters at the last two. `gettxout` sees the mempool and `scantxoutset` does
+not, so the instant a buy is broadcast the scan still lists the outpoint it
+spent -- believing the scan would park the sale on an outpoint that is already
+gone. It ends a sale only after two silent polls with a new block between them,
+because a remainder in the mempool is invisible to the confirmed-set scan until
+a block carries it.
+
+In the steady state none of that costs a scan: every sale is where it was, its
+own outpoint answers, and the UTXO set is walked only for a sale whose outpoint
+has moved -- and, every tenth poll, to notice assets resting at a sale address
+that the covenant does not sell.
 
 Three states look identical from the address alone and mean different things.
 A sold-out sale, a sale whose funding was undone by a Bitcoin-driven reorg, and
 a sale the project reclaimed after the close all leave nothing at the address.
 They are told apart by evidence the watcher keeps as it goes: the block each
-resting output was mined into, and the transaction id of any reclaim Levo
-built. If the chain no longer has the funding's block at that height, the
+resting output was mined into, the block an earlier outpoint was mined into
+when the sale has since moved, the height at which a still-unconfirmed funding
+was first seen, and the transaction id of any reclaim Levo built.
+
+Every one of those is POSITIVE evidence, and only positive evidence ends a
+sale. If the chain no longer has the funding's block at that height, the
 funding went with it, and the sale is a `GHOST` -- not funded, not investable,
-and recoverable by locking again. If the block is intact and the sale had not
-closed, only buys could have emptied it: `SOLD_OUT`, which is final. If it had
-closed, the sale is `CLOSED` and empty, and becomes `RECLAIMED` when the
-reclaim's own output is seen. Absence of the transaction is NOT evidence: a
+and recoverable by locking again. A funding that was never mined is a ghost
+too, but only once the chain has been asked: it counts as one when its
+transaction is in no block since it was first seen and in no mempool. If the
+block is intact and the sale had not closed, only buys could have emptied it:
+`SOLD_OUT`. If it had closed, the sale is `CLOSED` and empty, and becomes
+`RECLAIMED` when the reclaim's own output is seen.
+
+A sale that has moved keeps the block of the outpoint it came from, so a chain
+of spends that began in a block still on the chain proves the sale was real
+however fast those spends came. Absence of the transaction is NOT evidence: a
 node without `-txindex` cannot find a fully spent transaction either, and
 treating that as a reorg would report a sold-out sale as one that never
-existed.
+existed. Neither is a node that has not caught up: while it is still building
+its chain, the watcher concludes nothing at all.

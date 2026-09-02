@@ -76,6 +76,11 @@ export function Footer() {
           <Link to="/how-it-works">How it works</Link>
           <Link to="/projects">Sales</Link>
           <Link to="/launch">Launch a project</Link>
+          {config.source_url && (
+            <a href={config.source_url} target="_blank" rel="noopener noreferrer">
+              Source and the levo command
+            </a>
+          )}
         </div>
         {named.length > 0 && (
           <div>
