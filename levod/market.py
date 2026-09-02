@@ -52,7 +52,10 @@ RECLAIM_BASE_VSIZE = 300
 PER_INPUT_VSIZE = 70
 
 SALE_FILTERS = ("all", "open", "draft", "finished")
-MAX_PAGE = 200                   # listings one request will return
+SALE_SORTS = ("new", "closing", "progress")
+DEFAULT_PAGE = 50                # listings a request returns when it asks for no size
+MAX_PAGE = 200                   # the most one request will return
+MAX_STRAYS_KEPT = 20             # foreign outputs kept when a state file is read
 MAX_PURCHASES_PER_ACCOUNT = 64   # ledger entries one account keeps per sale
 MAX_DRAFTS = 3                   # unfunded listings one account may hold at once
 DEFAULT_PAYMENT_ASSET = "2a515539da5e6a60caa7766ecd65bac0c10d15717ddd2088844ba58f4d04b9de"
@@ -153,13 +156,19 @@ class Project:
             self.description = _text(meta.get("description"), "description", 8000)
         if "links" in meta:
             self.links = validate_links(meta.get("links"))
-        if "decimals" in meta:
-            if self.sale and self.sale.funding:
-                raise PlatformError("the token's decimals cannot change once the "
-                                    "sale is funded; buyers priced it this way")
-            self.decimals = _decimals(meta.get("decimals"))
-            if self.sale:
-                self.sale.token_decimals = self.decimals
+        if "decimals" in meta and _decimals(meta.get("decimals")) != self.decimals:
+            # Every amount in the terms is in atoms, and the decimals are how
+            # they are read: the same 100000000000 is 1,000 tokens at eight
+            # decimals and 1,000,000,000 at two. Changing them after a sale
+            # exists reprices the whole page without touching a single number
+            # the covenant sees, so it is not an edit -- it is a different
+            # sale. A draft can be withdrawn and listed again in a moment.
+            raise PlatformError(
+                "the token's decimals cannot change once a sale exists: every "
+                "amount in its terms is in atoms, and the decimals are how those "
+                "amounts are read, so changing them would reprice the sale "
+                "without changing the covenant. Withdraw this listing and list "
+                "it again")
 
     def to_json(self, height=None, now=None):
         return {
@@ -186,7 +195,10 @@ class Platform:
         self.stake = stake_reader
         self.rails = rails
         self.rpc = rpc
-        self.hrp = hrp
+        # Either the prefix itself or something that answers with it. A levod
+        # whose node was down at startup does not know its chain yet, and the
+        # answer must not be frozen at that moment.
+        self._hrp = hrp
         self.payment_asset = (payment_asset or (rails.payment_asset if rails else None)
                               or DEFAULT_PAYMENT_ASSET).lower()
         self.payment_label = payment_label or (rails.payment_label if rails else None) or "USDX"
@@ -214,6 +226,25 @@ class Platform:
                       payment_label=self.payment_label)
 
     def _load(self):
+        """Read the state file, or refuse to start.
+
+        A file that parses as JSON can still be damaged: a sale without its
+        terms, a number where an object belongs, a truncated write from a full
+        disk. Letting that raise here gives systemd a crash loop and no
+        message. The store's refusal exits with a status that says restarting
+        cannot help, and names the listing that could not be read.
+        """
+        try:
+            self._read_projects()
+        except SystemExit:
+            raise
+        except Exception as e:
+            self.store._refuse(
+                "the state file %s parses but cannot be read: %s. Restore it "
+                "from a backup rather than starting with an empty ledger."
+                % (self.store.path, e))
+
+    def _read_projects(self):
         for slug, d in (self.store.data.get("projects") or {}).items():
             p = Project(d["slug"], d["name"], d["ticker"], d.get("summary"),
                         d.get("description"), d["issuer_account"],
@@ -232,7 +263,20 @@ class Platform:
                 sl.purchases = {k: list(v) for k, v in (sd.get("purchases") or {}).items()}
                 sl.candidates = list(sd.get("candidates") or [])
                 sl.reclaim_txids = list(sd.get("reclaim_txids") or [])
-                sl.strays = list(sd.get("strays") or [])
+                sl.strays = list(sd.get("strays") or [])[:MAX_STRAYS_KEPT]
+                # The address is what everything about a sale rests on: the
+                # watcher reads it, buyers pay it, and the reclaim spends it.
+                # If the terms in this file derive an address other than the
+                # one they derived when the sale was funded -- a rollback to a
+                # levod that serialised them differently, a hand edit -- then
+                # levod would quietly watch, quote and reclaim the wrong one.
+                was = sd.get("script_pubkey")
+                if was and was != sl.script_pubkey:
+                    self.store._refuse(
+                        "the sale %s no longer derives the address it was "
+                        "funded at: the file says %s and its terms make %s. "
+                        "Restore the file from a backup taken by the version "
+                        "that wrote it." % (slug, was, sl.script_pubkey))
                 p.sale = sl
             self.projects[slug] = p
         self.stake.links.load(self.store.data.get("stake_links"))
@@ -249,6 +293,9 @@ class Platform:
                     d["sale"]["candidates"] = list(p.sale.candidates)
                     d["sale"]["strays"] = list(p.sale.strays)
                     d["sale"]["created_at"] = p.sale.created_at
+                    # Written so a later load can check the terms still derive
+                    # it. Nothing reads it but that check.
+                    d["sale"]["script_pubkey"] = p.sale.script_pubkey
                     # `status` is recomputed on read for closure; persist the raw one.
                     d["sale"]["status"] = p.sale.status
                 out[slug] = d
@@ -300,6 +347,12 @@ class Platform:
                     lt.name, U.fmt(lt.min_stake_atoms, 8, self.stake_label),
                     standing["tier"]["name"],
                     U.fmt(standing["stake_atoms"], 8, self.stake_label)))
+        ticker = str(meta.get("ticker") or "").upper()
+        if ticker and ticker == (self.payment_label or "").upper():
+            raise PlatformError(
+                "%s is what this Levo prices sales in, so a token cannot use it "
+                "as its ticker: every amount on the board would read as that "
+                "asset" % self.payment_label)
         slug = meta.get("slug")
         if slug in self.projects:
             raise PlatformError("a project with that page name already exists")
@@ -862,6 +915,16 @@ class Platform:
                 out = self.rpc.txout(txid, 0)
             except Exception:
                 out = None
+            if out is None and not self._node_has_seen(txid):
+                # Recording spends the caller's own headroom in this sale, and
+                # nothing gives it back. A transaction the node has never heard
+                # of is far more likely to be a purchase that was never
+                # broadcast -- or a typo -- than one already spent, and the
+                # caller can record it the moment it exists.
+                raise PlatformError(
+                    "the node has not seen %s. Broadcast the purchase first, "
+                    "then record it; recording spends your allocation in this "
+                    "sale and cannot be undone" % txid)
             if out is not None:
                 spk = ((out.get("scriptPubKey") or {}).get("hex") or "").lower()
                 want = TX.treasury_script_pubkey(sale.terms).hex()
@@ -902,6 +965,10 @@ class Platform:
         """One listing by its page name, or NotFound."""
         return self._project(slug)
 
+    @property
+    def hrp(self):
+        return self._hrp() if callable(self._hrp) else self._hrp
+
     def _project(self, slug):
         p = self.projects.get(slug)
         if p is None:
@@ -923,9 +990,16 @@ class Platform:
         wanted = (status or "all").lower()
         if wanted not in SALE_FILTERS:
             raise PlatformError("status must be one of: %s" % ", ".join(sorted(SALE_FILTERS)))
+        sort = (sort or "new").lower()
+        if sort not in SALE_SORTS:
+            raise PlatformError("sort must be one of: %s" % ", ".join(SALE_SORTS))
         needle = str(q or "").strip().lower()[:80]
         items = []
-        for p in self.projects.values():
+        # A listing created or withdrawn while this runs would otherwise change
+        # the map mid-iteration and take the whole board down with a 500.
+        with self.lock:
+            everything = list(self.projects.values())
+        for p in everything:
             if p.hidden:
                 continue
             if not self._matches(p, wanted, h, now):
@@ -937,11 +1011,10 @@ class Platform:
         items.sort(key=self._order(sort, h, now))
         total = len(items)
         offset = max(0, int(offset or 0))
-        if limit is not None:
-            limit = max(1, min(int(limit), MAX_PAGE))
-            items = items[offset:offset + limit]
-        elif offset:
-            items = items[offset:]
+        # A page size is always applied. Without one the board hands back every
+        # listing ever made, which is fine with two and not with two thousand.
+        limit = DEFAULT_PAGE if limit is None else max(1, min(int(limit), MAX_PAGE))
+        items = items[offset:offset + limit]
         out = []
         for p in items:
             d = p.to_json(height=h, now=now)
@@ -950,7 +1023,7 @@ class Platform:
                 d["address"] = self.sale_address(p.sale)
             out.append(d)
         return {"projects": out, "total": total, "offset": offset,
-                "limit": limit, "status": wanted, "sort": sort or "new",
+                "limit": limit, "status": wanted, "sort": sort,
                 "query": needle or None}
 
     def _matches(self, p, wanted, height, now):
@@ -1010,7 +1083,9 @@ class Platform:
     def projects_of(self, account):
         h = self.height()
         out = []
-        for p in sorted(self.projects.values(), key=lambda x: -x.created_at):
+        with self.lock:
+            mine = sorted(self.projects.values(), key=lambda x: -x.created_at)
+        for p in mine:
             if p.issuer_account != account:
                 continue
             d = p.to_json(height=h)
@@ -1024,7 +1099,9 @@ class Platform:
         """What this account has put into each sale, and what it may still put."""
         h = self.height()
         out = []
-        for p in sorted(self.projects.values(), key=lambda x: -x.created_at):
+        with self.lock:
+            everything = sorted(self.projects.values(), key=lambda x: -x.created_at)
+        for p in everything:
             sale = p.sale
             if sale is None:
                 continue
@@ -1094,6 +1171,30 @@ class Platform:
                         advice.get("suggested_atoms") or floor))
         return advice
 
+    def _node_has_seen(self, txid):
+        """Whether the node knows this transaction at all.
+
+        Absence of an answer is NOT absence of the transaction: without
+        `-txindex` a node cannot find one that is confirmed and fully spent.
+        So this says yes on any evidence and no only when both places that can
+        answer answered and had nothing.
+        """
+        if self.rpc is None:
+            return True
+        seen = False
+        try:
+            if txid in (self.rpc.call("getrawmempool") or []):
+                return True
+            seen = True
+        except Exception:
+            pass
+        try:
+            if self.rpc.call("getrawtransaction", txid, True):
+                return True
+        except Exception:
+            return True                 # cannot tell: do not refuse a real buy
+        return not seen
+
     def check_fee_asset(self, asset, fee_atoms):
         """Refuse a fee in an asset this node will not take.
 
@@ -1117,6 +1218,52 @@ class Platform:
             "open fee market, so a fee may be paid in any accepted asset and "
             "none is the default; the node lists what it takes "
             "(getfeeexchangerates)." % asset)
+
+    def describe_inputs(self, inputs):
+        """Say, for each outpoint, whether a covenant purchase can spend it.
+
+        A wallet knows what it holds but not what a covenant can read: a
+        confidential output states no amount, and the sell leaf reads the
+        amount it is spending. The wallet cannot tell those apart from its own
+        records either, so the page asks here rather than guessing from an
+        address form -- which is how a buyer ends up being told their ordinary
+        funds are confidential.
+        """
+        out = []
+        for i in (inputs if isinstance(inputs, list) else [])[:MAX_INPUTS]:
+            if not isinstance(i, dict) or not i.get("txid") or i.get("vout") is None:
+                raise PlatformError("each input needs a txid and a vout")
+            txid = str(i["txid"]).lower()
+            try:
+                vout = int(i["vout"])
+            except (TypeError, ValueError):
+                raise PlatformError("input vout must be a whole number")
+            if not TXID_RE.match(txid):
+                raise PlatformError("input txid %r is not 64 hex characters" % i["txid"])
+            row = {"txid": txid, "vout": vout, "spendable": False,
+                   "asset": None, "atoms": None, "why": None}
+            if self.rpc is None:
+                row["why"] = "no node connection, so nothing can be checked"
+                out.append(row)
+                continue
+            try:
+                found = self.rpc.txout(txid, vout)
+            except Exception as e:
+                row["why"] = "the node could not be asked: %s" % e
+                out.append(row)
+                continue
+            if found is None:
+                row["why"] = "not an unspent output: it does not exist, or it is spent"
+            elif found.get("valuecommitment") or found.get("amountcommitment") \
+                    or found.get("assetcommitment"):
+                row["why"] = ("confidential: it commits to an amount instead of "
+                              "stating one, and a covenant reads the amount it spends")
+            else:
+                row["spendable"] = True
+                row["asset"] = (found.get("asset") or "").lower()
+                row["atoms"] = _value_atoms(found)
+            out.append(row)
+        return out
 
     def verify_buyer_inputs(self, inputs):
         """Check the buyer's funding outputs against the chain before building.
@@ -1170,6 +1317,39 @@ class Platform:
                             "blinded": blinded})
         return checked
 
+    def sale_ledger(self, account, slug):
+        """Every purchase Levo recorded against this sale.
+
+        The chain is reconcilable by anyone: the sale address is unblinded and
+        every page links it. This is the other half -- what LEVO believes, and
+        what each account has committed against its cap -- which the issuer
+        needs to answer "did my purchase register?" without reading a state
+        file on a server.
+        """
+        p = self._project(slug)
+        if p.issuer_account != account and account not in self.operators:
+            raise NotAuthorised("only the project's issuer, or an operator of "
+                                "this Levo, can read a sale's ledger")
+        sale = p.sale
+        if sale is None:
+            raise NotFound("this project has no sale")
+        entries = []
+        for acct, rows in sale.purchases.items():
+            for e in rows:
+                entries.append(dict(e, account=acct))
+        entries.sort(key=lambda e: e.get("at") or 0)
+        return {
+            "slug": slug,
+            "purchases": entries,
+            "committed_atoms": dict(sale.allocations),
+            "buyers": len([a for a, rows in sale.purchases.items() if rows]),
+            "what_this_is": "Levo's own record, which is what the per-buyer "
+                            "caps are measured against. The chain is the "
+                            "authority on what the sale holds: a purchase made "
+                            "without Levo moves the sale and appears nowhere "
+                            "here.",
+        }
+
     def project_detail(self, slug):
         p = self._project(slug)
         d = p.to_json(height=self.height())
@@ -1179,6 +1359,14 @@ class Platform:
                 "how": "rebuild the sale address from these terms and compare it "
                        "to the scriptPubKey of the funded output; they must be "
                        "identical",
+                "committed": list(C.COMMITTED_TERMS),
+                "published": list(C.PUBLISHED_TERMS),
+                "what_that_means": "the committed terms are compiled into the "
+                                   "address, so changing any of them makes a "
+                                   "different sale. The published ones are not: "
+                                   "the amount for sale is what Levo checked "
+                                   "when it accepted the lock, and the covenant "
+                                   "simply sells whatever it holds.",
                 "script_pubkey": p.sale.script_pubkey,
                 "internal_key": "NUMS -- there is no key path, so the project "
                                 "cannot spend the sale out from under buyers",

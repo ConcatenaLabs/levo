@@ -4,8 +4,10 @@ learns, and a broken file stops the service rather than emptying the ledger."""
 import contextlib
 import io
 import json
+import os
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -91,11 +93,35 @@ def test_a_corrupt_state_file_stops_the_service(t):
         t.ok("backup" in err.getvalue(), "that says what to do about it")
 
 
-def test_stale_temp_files_are_swept(t):
+def test_stale_temp_files_are_swept_and_live_ones_are_not(t):
+    """A temp file is what a save writes through. Sweeping every one of them at
+    startup means a second levod -- a hand-run copy against the same file, which
+    builds its Store long before it fails to bind a port -- deletes the file the
+    running one is writing, and that save fails."""
     d = Path(tempfile.mkdtemp())
-    (d / ".levo-abc.tmp").write_text("{}")
+    old, live = d / ".levo-old.tmp", d / ".levo-live.tmp"
+    old.write_text("{}")
+    live.write_text("{}")
+    os.utime(old, (0, time.time() - ST.STALE_TEMP_SECONDS - 60))
     ST.Store(d / "state.json")
-    t.ok(not (d / ".levo-abc.tmp").exists(), "a leftover temp file is removed at startup")
+    t.ok(not old.exists(), "a temp file left by a dead process is removed")
+    t.ok(live.exists(), "one a running process may be writing is left alone")
+
+
+def test_a_failed_write_is_remembered(t):
+    """The change is already in memory when the write fails, so a levod that
+    carries on is serving a ledger that exists nowhere else."""
+    d = Path(tempfile.mkdtemp())
+    st = ST.Store(d / "state.json")
+    st.save()
+    t.eq(st.write_error, None, "a good save leaves nothing behind")
+    st.path = Path("/proc/levo-cannot-write/state.json")
+    try:
+        st.save()
+        t.ok(False, "a failed write raises")
+    except Exception:
+        t.ok(st.write_error is not None, "and is remembered")
+        t.eq(st.dirty, True, "with the state marked as ahead of the disk")
 
 
 def test_saves_are_atomic(t):
@@ -105,3 +131,66 @@ def test_saves_are_atomic(t):
     s.save()
     t.eq(json.loads((d / "state.json").read_text())["projects"], {"x": 1}, "written")
     t.eq(list(d.glob(".levo-*")), [], "and no temp file is left behind")
+
+
+def test_damage_inside_the_state_file_stops_the_service_too(t):
+    """A file can parse as JSON and still be unreadable: a listing without its
+    terms, a truncated write from a full disk. Raising through would give a
+    supervisor a crash loop and the operator no message."""
+    d = Path(tempfile.mkdtemp())
+    (d / "state.json").write_text(json.dumps({"projects": {"broken": {"slug": "broken"}}}))
+    err = io.StringIO()
+    try:
+        with contextlib.redirect_stderr(err):
+            _platform(d / "state.json")
+        t.ok(False, "a damaged listing is refused")
+    except SystemExit as e:
+        t.eq(e.code, ST.BAD_STATE_EXIT, "with the do-not-restart status")
+        t.ok("cannot be read" in err.getvalue(), "and a reason on stderr")
+
+
+def test_every_route_is_documented(t):
+    """Documentation ships with the change. A route nobody wrote down is one an
+    integrator has to read Python to find, and then depends on whatever they
+    inferred."""
+    import re
+    root = HERE.parent.parent
+    server = (root / "levod" / "server.py").read_text()
+    doc = (root / "doc" / "api.md").read_text()
+    routes = set()
+    for m in re.finditer(r'parts == \[([^\]]+)\]', server):
+        routes.add("/api/" + "/".join(p.strip().strip('"') for p in m.group(1).split(",")))
+    for m in re.finditer(r'if action == "(\w+)"', server):
+        routes.add("/api/projects/<slug>/" + m.group(1))
+    for m in re.finditer(r'parts\[2\] == "(\w+)"', server):
+        routes.add("/api/projects/<slug>/" + m.group(1))
+    missing = sorted(r for r in routes if r not in doc and r.split("/")[-1] not in doc)
+    t.eq(missing, [], "every route levod serves is in doc/api.md")
+
+
+def test_a_sale_that_no_longer_derives_its_own_address_stops_the_service(t):
+    """Everything about a sale rests on its address: the watcher reads it,
+    buyers pay it, the reclaim spends it. Terms that derive a different one
+    than they did when the sale was funded mean levod would watch, quote and
+    reclaim the wrong address, quietly."""
+    d = Path(tempfile.mkdtemp())
+    p = _platform(d / "state.json")
+    p.list_project("02" + "11" * 32,
+                   {"slug": "one", "name": "One", "ticker": "ONE", "decimals": 2},
+                   {"token_asset": "aa" * 32, "payment_asset": USDX, "price_num": 1,
+                    "price_den": 4, "treasury_prog": TREASURY_PROG, "min_lot": 100,
+                    "close_locktime": 2_000_000_000, "reclaim_xonly": RECLAIM_XONLY,
+                    "total_atoms": 10_000})
+    p.save()
+    raw = json.loads((d / "state.json").read_text())
+    t.ok(raw["projects"]["one"]["sale"]["script_pubkey"], "the address is written down")
+    raw["projects"]["one"]["sale"]["terms"]["min_lot"] = 101      # a different sale
+    (d / "state.json").write_text(json.dumps(raw))
+    err = io.StringIO()
+    try:
+        with contextlib.redirect_stderr(err):
+            _platform(d / "state.json")
+        t.ok(False, "the mismatch is refused")
+    except SystemExit as e:
+        t.eq(e.code, ST.BAD_STATE_EXIT, "with the do-not-restart status")
+        t.ok("no longer derives" in err.getvalue(), "and says what happened")

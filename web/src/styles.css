@@ -45,6 +45,10 @@
   --surface-2: #1d2231;
   --line: #2a3143;
   --line-soft: #202638;
+  /* The edge of something you can operate -- a field, a chip, a button. It is
+     a separate token from --line because a divider may be faint and a control
+     may not: 3.24:1 against the page, where a hairline was 1.45:1. */
+  --edge: #5a657f;
   --ink: #eceae4;
   --ink-dim: #b9bccb;
   --muted: #8e96aa;
@@ -73,7 +77,9 @@ body {
   background: var(--ground);
   color: var(--ink);
   font-family: var(--body);
-  font-size: 16px;
+  /* The reader's own default size, whatever they set it to, rather than a
+     pinned 16px that ignores it. */
+  font-size: 100%;
   line-height: 1.6;
   -webkit-font-smoothing: antialiased;
 }
@@ -118,6 +124,12 @@ h1 { font-size: clamp(2.6rem, 6.2vw, 4.6rem); font-weight: 800; }
 h2, h1.h2 { font-size: clamp(1.6rem, 3vw, 2.3rem); font-weight: 700; }
 h3 { font-size: 1.12rem; letter-spacing: -0.01em; }
 h4 { font-size: 1rem; }
+
+/* A section heading inside a long page. It carries the size an h3 had, at the
+   level a screen reader's outline needs: ten sections under one h1 are h2s. */
+.section-h { font-size: 1.12rem; font-weight: 700; letter-spacing: -0.01em;
+             margin: 2.5rem 0 .75rem; }
+.section-h + p { margin-top: .5rem; }
 
 /* One rhythm for a heading and the paragraph that follows it. */
 h1 + p, h2 + p { margin-top: .9rem; }
@@ -189,7 +201,7 @@ p { margin: 0 0 1rem; }
   font: 500 .95rem/1 var(--body);
   padding: .78rem 1.3rem;
   border-radius: var(--radius);
-  border: 1px solid var(--line);
+  border: 1px solid var(--edge);
   background: var(--surface-2);
   color: var(--ink);
   cursor: pointer;
@@ -198,7 +210,10 @@ p { margin: 0 0 1rem; }
   transition: background .15s, border-color .15s, color .15s;
 }
 .btn:hover:not(:disabled) { border-color: var(--brass-dim); background: #232838; }
-.btn:disabled { opacity: .45; cursor: not-allowed; }
+.btn:disabled, .btn[aria-disabled="true"] { opacity: .45; cursor: not-allowed; }
+/* A button that is working stays focusable: disabling the element the reader
+   is standing on drops focus to the top of the document. */
+.btn[aria-disabled="true"] { pointer-events: none; }
 .btn-primary {
   background: var(--brass); border-color: var(--brass); color: #16130a; font-weight: 600;
 }
@@ -210,7 +225,7 @@ p { margin: 0 0 1rem; }
 .copy {
   font: 500 .72rem/1 var(--mono); letter-spacing: .06em; text-transform: uppercase;
   padding: .3rem .5rem; border-radius: var(--radius);
-  border: 1px solid var(--line); background: transparent; color: var(--muted);
+  border: 1px solid var(--edge); background: transparent; color: var(--muted);
   cursor: pointer; vertical-align: middle; margin-left: .5rem; white-space: nowrap;
 }
 .copy:hover { color: var(--brass); border-color: var(--brass-dim); }
@@ -373,12 +388,12 @@ p { margin: 0 0 1rem; }
 /* ---------- forms ---------- */
 
 .field { margin-bottom: 1.1rem; }
-.field label { display: block; font-size: .85rem; color: var(--ink-dim); margin-bottom: .4rem; }
+.field label, .field-title { display: block; font-size: .85rem; color: var(--ink-dim); margin-bottom: .4rem; }
 .field .hint { font-size: .8rem; color: var(--muted); margin-top: .35rem; }
 input, select, textarea {
   width: 100%; padding: .68rem .75rem;
   background: var(--ground); color: var(--ink);
-  border: 1px solid var(--line); border-radius: var(--radius);
+  border: 1px solid var(--edge); border-radius: var(--radius);
   font: 400 .95rem/1.4 var(--body);
 }
 ::placeholder { color: var(--muted); opacity: 1; }
@@ -435,7 +450,7 @@ input[type="date"]::-webkit-calendar-picker-indicator { filter: invert(.85); }
 .rail-pick { display: grid; grid-template-columns: 1fr 1fr; gap: .6rem; margin-bottom: 1.25rem; }
 .rail {
   text-align: left; padding: .7rem .8rem; border-radius: var(--radius);
-  border: 1px solid var(--line); background: var(--ground); color: var(--ink);
+  border: 1px solid var(--edge); background: var(--ground); color: var(--ink);
   cursor: pointer; font: inherit;
 }
 .rail b { display: block; font-family: var(--display); font-size: .95rem; }
@@ -535,7 +550,7 @@ input[type="date"]::-webkit-calendar-picker-indicator { filter: invert(.85); }
   font-size: .85rem;
   padding: .35rem .8rem;
   border-radius: 999px;
-  border: 1px solid var(--line);
+  border: 1px solid var(--edge);
   background: transparent;
   color: var(--ink-dim);
   cursor: pointer;
@@ -548,7 +563,7 @@ input[type="date"]::-webkit-calendar-picker-indicator { filter: invert(.85); }
   font-size: .9rem;
   padding: .4rem .6rem;
   border-radius: 8px;
-  border: 1px solid var(--line);
+  border: 1px solid var(--edge);
   background: var(--surface);
   color: var(--ink);
 }

@@ -31,7 +31,13 @@ function Terms({ project, sale }) {
           </td>
         </tr>
         <tr><th>Minimum purchase</th><td>{amount(t.min_lot, d)} {project.ticker}</td></tr>
-        <tr><th>For sale</th><td>{amount(t.total_atoms, d)} {project.ticker}</td></tr>
+        <tr><th>For sale</th>
+          <td>{amount(t.total_atoms, d)} {project.ticker}
+            <div className="dim small prose">
+              checked against the chain when the lock was accepted; not part of
+              the address
+            </div>
+          </td></tr>
         <tr><th>Reclaim opens</th><td>{closeLabel(t.close_locktime)}</td></tr>
         <tr><th>Treasury address</th><td><Hex value={treasuryAddr} href={explorer('address', treasuryAddr)} />
           <div className="dim small prose">
@@ -157,32 +163,76 @@ function EditPanel({ project, onSaved }) {
       </div>
       {error && <Notice kind="bad" style={{ marginBottom: '1rem' }}>{error}</Notice>}
       <div className="btn-row">
-        <button className="btn btn-primary btn-sm" disabled={busy}>{busy ? 'Saving…' : 'Save'}</button>
+        <button className="btn btn-primary btn-sm" aria-disabled={busy}>{busy ? 'Saving…' : 'Save'}</button>
         <button type="button" className="btn btn-ghost btn-sm" onClick={() => setOpen(false)}>Cancel</button>
       </div>
     </form>
   )
 }
 
+function FlagPanel({ project, onFlagged }) {
+  const [notice, setNotice] = useState(project.notice || '')
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState(null)
+
+  async function apply(hidden) {
+    if (busy) return
+    setError(null); setBusy(true)
+    try {
+      await api.flag(project.slug, { hidden, notice: notice.trim() })
+      onFlagged && onFlagged()
+    } catch (e) { setError(capitalise(e.message)) } finally { setBusy(false) }
+  }
+
+  return (
+    <div className="card" style={{ marginTop: '1rem' }}>
+      <h3>Operator</h3>
+      <p className="small dim">
+        You can take this listing off the board and put a notice on its page.
+        That is all it reaches: the sale is a covenant on chain, and anyone
+        holding its terms can still buy from it.
+      </p>
+      <div className="field">
+        <label htmlFor="opnotice">Notice on this page</label>
+        <textarea id="opnotice" rows={2} value={notice} maxLength={400}
+                  aria-describedby="opnotice-hint"
+                  onChange={(e) => setNotice(e.target.value)}
+                  placeholder="Under review." />
+        <div className="hint" id="opnotice-hint">
+          Shown at the top of the page, above the summary. Leave it empty to
+          take it down.
+        </div>
+      </div>
+      {error && <Notice kind="bad" style={{ marginBottom: '1rem' }}>{error}</Notice>}
+      <div className="btn-row">
+        <button className="btn btn-sm" aria-disabled={busy}
+                onClick={() => apply(project.hidden)}>
+          {busy ? 'Saving…' : 'Save the notice'}
+        </button>
+        <button className="btn btn-sm btn-ghost" aria-disabled={busy}
+                onClick={() => apply(!project.hidden)}>
+          {project.hidden ? 'Put it back on the board' : 'Take it off the board'}
+        </button>
+      </div>
+      {project.hidden && (
+        <p className="small dim" style={{ margin: '.75rem 0 0' }}>
+          This listing is off the board. Its page still answers, and the sale is
+          untouched.
+        </p>
+      )}
+    </div>
+  )
+}
+
 export default function ProjectDetail() {
   const { slug } = useParams()
-  const { account, explorer, health, payment } = useStore()
+  const { account, explorer, chainHeight, payment, standing } = useStore()
   const [project, setProject] = useState(null)
   const [error, setError] = useState(null)
   const [notFound, setNotFound] = useState(false)
   const [withdrawError, setWithdrawError] = useState(null)
   const [withdrawn, setWithdrawn] = useState(false)
-  const [chainHeight, setChainHeight] = useState(null)
   usePageTitle(project ? project.name + ' (' + project.ticker + ')' : 'Sale')
-  useEffect(() => {
-    let alive = true
-    const read = () => api.health().then((h) => {
-      if (alive && h && h.node && h.node.height) setChainHeight(h.node.height)
-    }).catch(() => {})
-    read()
-    const t = setInterval(read, 60_000)
-    return () => { alive = false; clearInterval(t) }
-  }, [])
 
   const load = () => {
     setError(null); setNotFound(false)
@@ -199,10 +249,10 @@ export default function ProjectDetail() {
     return () => { alive = false }
   }, [slug])
 
-  // The countdown is only worth showing if it is current: the height in the
-  // health snapshot was read when the page loaded, and a sale that closes at a
-  // block would go on claiming the same number of blocks left all afternoon.
-  const height = chainHeight ?? (health && health.node ? health.node.height : null)
+  // The countdown has to be current: a sale that closes at a block would
+  // otherwise go on claiming the same number of blocks left all afternoon. The
+  // store keeps the height fresh for the whole app.
+  const height = chainHeight
 
   if (withdrawn) {
     return (
@@ -243,6 +293,7 @@ export default function ProjectDetail() {
   const sale = project.sale
   const d = project.decimals ?? 8
   const issuer = account && account === project.issuer_account
+  const operator = !!(standing && standing.operator)
   const open = sale && (sale.status === 'live' || sale.status === 'partial')
   const needsLock = sale && (sale.status === 'draft' || sale.status === 'ghost')
   const closeLeft = sale && open ? closeIn(sale.terms.close_locktime, height) : ''
@@ -289,9 +340,12 @@ export default function ProjectDetail() {
             <>
               <h2 style={{ marginBottom: '1rem' }}>Terms</h2>
               <p className="small dim" style={{ maxWidth: '60ch' }}>
-                These are the values compiled into the covenant. Change any one
-                of them and the sale address changes with it, which is what makes
-                the address worth checking.
+                Most of these are compiled into the covenant: change one and the
+                sale address changes with it, which is what makes the address
+                worth checking. Two are not. The amount for sale and the token's
+                decimals are Levo's record of the sale -- Levo checked the amount
+                against the chain when it accepted the lock, and after that the
+                covenant simply sells whatever it holds.
               </p>
               <Terms project={project} sale={sale} />
 
@@ -343,7 +397,9 @@ export default function ProjectDetail() {
                 <Notice kind="bad" style={{ marginTop: '1rem' }}>
                   <strong>Other assets are resting at the sale address.</strong> They are not
                   for sale, but the sell leaf does not check what asset it spends, so anyone
-                  can take them at the sale's price. The project can sweep them after the close.
+                  can take them at the sale's price. After the close the project can spend
+                  them under its reclaim key, in a transaction it builds itself: Levo's own
+                  reclaim sweeps the sale token and nothing else.
                   <ul className="small" style={{ margin: '.5rem 0 0', paddingLeft: '1.1rem' }}>
                     {sale.strays.map((s) => (
                       <li key={s.txid + s.vout}>
@@ -377,6 +433,7 @@ export default function ProjectDetail() {
               {closeLeft && <div className="kv"><span>Reclaim opens</span><b>{closeLeft}</b></div>}
             </div>
           )}
+          {operator && <FlagPanel project={project} onFlagged={load} />}
           {issuer && (
             <div style={{ marginTop: '1rem' }}>
               <EditPanel project={project} onSaved={setProject} />

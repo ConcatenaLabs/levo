@@ -98,6 +98,7 @@ export const api = {
   transaction: (slug, payload) => call('POST', '/projects/' + slug + '/transaction', payload),
   reclaim: (slug, payload) => call('POST', '/projects/' + slug + '/reclaim', payload),
   fee: (slug, params) => call('GET', '/projects/' + slug + '/fee' + query(params)),
+  checkOutputs: (outputs) => call('POST', '/outputs/check', { outputs }),
   flag: (slug, payload) => call('POST', '/projects/' + slug + '/flag', payload),
   watcher: () => call('GET', '/watcher'),
 }

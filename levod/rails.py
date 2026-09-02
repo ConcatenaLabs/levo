@@ -47,7 +47,17 @@ BTC_RATE_LABEL = "SBTC"
 
 
 class RailUnavailable(RuntimeError):
-    pass
+    """A rail that cannot be quoted right now, said in words a buyer can act on.
+
+    `detail` is for the log and the operator: which row of the node's rate
+    table was missing is a fact about the deployment, not about the buyer, and
+    naming it to them would name the pegged asset the site spends a paragraph
+    explaining BTC is not.
+    """
+
+    def __init__(self, message, detail=None):
+        super().__init__(message)
+        self.detail = detail
 
 
 class NodeRateSource:
@@ -73,10 +83,16 @@ class NodeRateSource:
         btc = r.get(self.btc_label)
         pay = r.get(payment_label)
         if not btc or not pay:
+            # What reaches the buyer must not name the row this reads. That row
+            # is the pegged asset's, and BTC on Sequentia is native bitcoin on
+            # the parent chain -- telling a buyer otherwise contradicts the
+            # rest of the site. The label goes in the detail, for the log.
             raise RailUnavailable(
-                "the node does not price both %s and %s, so a BTC quote cannot "
-                "be derived from the chain's own rates"
-                % (self.btc_label, payment_label))
+                "a BTC quote needs a bitcoin price from the node's fee "
+                "exchange-rate table, and it is not publishing one right now. "
+                "Pay in %s instead, or try again shortly." % payment_label,
+                detail="the rate table has no %s or no %s row"
+                       % (self.btc_label, payment_label))
         # Both rates are reference units per whole unit, scaled by 1e8, so the
         # ratio is whole payment units per BTC; multiply out to atoms.
         per_btc = int(btc) * 100_000_000 // int(pay)
@@ -97,7 +113,9 @@ class Rails:
 
     def _btc_ready(self):
         if self.rate_source is None:
-            return False, "no rate source is configured"
+            return False, ("this Levo is not reading a node's rate table, so it "
+                           "cannot quote a BTC price. Pay in %s instead."
+                           % self.payment_label)
         try:
             self.rate_source.payment_atoms_per_btc(self.payment_label)
             return True, None

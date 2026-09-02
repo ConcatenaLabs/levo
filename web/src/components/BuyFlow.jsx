@@ -119,8 +119,23 @@ export default function BuyFlow({ project, tier, onSettled }) {
     setPlan(null); setBuilt(null); setSigned(''); setSentTxid(null); setError(null)
   }
 
+  // Re-price without throwing away what has been built or typed: the BTC rate
+  // goes stale while the buyer is off doing the swap it told them to do.
+  async function requote() {
+    if (busy) return
+    setError(null); setBusy(true)
+    try {
+      const atoms = toAtoms(tokens, decimals)
+      if (atoms === null || atoms <= 0n) return
+      const p = await api.buy(project.slug, { token_atoms: atomsArg(atoms), rail })
+      setPlan(p)
+      setNow(Date.now() / 1000)
+    } catch (e) { fail(e) } finally { setBusy(false) }
+  }
+
   async function quote(e) {
     e.preventDefault()
+    if (busy) return
     reset(); setBusy(true)
     try {
       const atoms = toAtoms(tokens, decimals)
@@ -135,22 +150,29 @@ export default function BuyFlow({ project, tier, onSettled }) {
   }
 
   async function autofill() {
+    if (busy) return
     setError(null); setBusy(true)
     try {
-      const need = big(plan.payment_atoms) + big(funding.fee || 0)
+      const need = big(plan.payment_atoms) + (toAtoms(funding.fee, payment.decimals) || 0n)
       const [list, addr] = await Promise.all([getUtxos({}), getAddress({})])
       const right = list.filter((x) => (x.asset || '').toLowerCase() === sale.terms.payment_asset)
-      // A confidential output commits to its value instead of stating it, and
-      // the sell leaf reads the value of what it spends. Those outputs cannot
-      // fund a purchase, so they are left out here rather than refused later
-      // by a builder the buyer has already filled a form for.
-      const usable = right.filter((x) => !x.address || x.address.startsWith(hrp + '1'))
+      if (!right.length) {
+        throw new Error('Your wallet holds no ' + label + ' outputs. A purchase spends ' + label + '.')
+      }
+      // Which of them a covenant can actually spend is the node's answer, not
+      // the wallet's: a confidential output commits to its value instead of
+      // stating one, and the sell leaf reads the value it spends. The wallet's
+      // own record does not distinguish them, so guessing here is how a buyer
+      // gets told their ordinary funds are confidential.
+      const checked = await api.checkOutputs(right.slice(0, 32).map((x) => ({ txid: x.txid, vout: x.vout })))
+      const ok = new Map(checked.outputs.filter((x) => x.spendable).map((x) => [x.txid + ':' + x.vout, x]))
+      const usable = right.filter((x) => ok.has(x.txid + ':' + x.vout))
       const hidden = right.length - usable.length
       if (!usable.length) {
-        throw new Error(right.length
-          ? 'Your ' + label + ' is in confidential outputs, which a covenant cannot read. ' +
-            'Send it to one of your own ' + hrp + '1… addresses first, then come back.'
-          : 'Your wallet holds no ' + label + ' outputs. A purchase spends ' + label + '.')
+        const why = (checked.outputs.find((x) => x.why) || {}).why
+        throw new Error('None of your ' + label + ' outputs can fund a covenant purchase' +
+          (why ? ': ' + why + '.' : '.') +
+          ' Send the balance to one of your own ' + hrp + '1… addresses first, then come back.')
       }
       // Largest first, until the purchase and the fee are covered.
       usable.sort((a, b) => (big(b.value) > big(a.value) ? 1 : big(b.value) < big(a.value) ? -1 : 0))
@@ -171,19 +193,16 @@ export default function BuyFlow({ project, tier, onSettled }) {
         token_addr: f.token_addr || addr,
         change_addr: f.change_addr || addr,
       }))
-      if (hidden) {
-        setError(null)
-        setNote(hidden + ' confidential ' + (hidden === 1 ? 'output was' : 'outputs were') +
-                ' left out: a covenant reads the value of what it spends, and a ' +
-                'confidential output does not state one.')
-      } else {
-        setNote(null)
-      }
+      setNote(hidden
+        ? hidden + ' of your ' + label + ' ' + (hidden === 1 ? 'output was' : 'outputs were') +
+          ' left out: the node says a covenant cannot spend ' + (hidden === 1 ? 'it' : 'them') + '.'
+        : null)
     } catch (e) { fail(e) } finally { setBusy(false) }
   }
 
   async function build(e) {
     e.preventDefault()
+    if (busy) return
     setError(null); setBuilt(null); setSigned(''); setSentTxid(null); setBusy(true)
     try {
       const inputs = funding.inputs.split(/\s+/).filter(Boolean).map((s) => {
@@ -228,6 +247,7 @@ export default function BuyFlow({ project, tier, onSettled }) {
   }
 
   async function signAndSendWithWallet() {
+    if (busy) return
     setError(null); setBusy(true)
     try {
       const signedPset = await signPset(built.pset)
@@ -237,6 +257,7 @@ export default function BuyFlow({ project, tier, onSettled }) {
   }
 
   async function sendHex() {
+    if (busy || !signed.trim()) return
     setError(null); setBusy(true)
     try {
       const txid = await broadcastHex(signed.trim())
@@ -303,15 +324,16 @@ export default function BuyFlow({ project, tier, onSettled }) {
           <div className="field">
             <label htmlFor="qty">{project.ticker} to buy</label>
             <input id="qty" className="mono" inputMode="decimal" value={tokens} required
+                   aria-describedby="qty-hint"
                    onChange={(e) => setTokens(e.target.value)}
                    placeholder={amount(sale.terms.min_lot, decimals)} />
-            <div className="hint">
+            <div className="hint" id="qty-hint">
               Minimum {amount(sale.terms.min_lot, decimals)} {project.ticker}. Your cap in this sale
               is {amount(tier.cap_atoms, payment.decimals)} {label}
               {remaining !== null ? ', of which ' + amount(remaining, payment.decimals) + ' is still open' : ''}.
             </div>
           </div>
-          <button className="btn btn-primary btn-sm" disabled={busy}>
+          <button className="btn btn-primary btn-sm" aria-disabled={busy}>
             {busy && !plan ? 'Working…' : 'Price this purchase'}
           </button>
         </form>
@@ -324,7 +346,7 @@ export default function BuyFlow({ project, tier, onSettled }) {
                 <div className="kv"><span>For</span><b>{amount(plan.payment_atoms, payment.decimals)} {label}</b></div>
                 <div className="kv"><span>Rate</span><b>{amount(plan.quote.rate.payment_atoms_per_btc, payment.decimals, 2)} {label}/BTC</b></div>
                 <div className="kv"><span>Quote valid until</span>
-                  <b>{expired ? 'expired; price it again' : timeLabel(plan.quote.expires_at)}</b></div>
+                  <b>{expired ? 'stale; refresh it below' : timeLabel(plan.quote.expires_at)}</b></div>
               </>
             ) : (
               <div className="kv"><span>You pay</span><b>{amount(plan.payment_atoms, payment.decimals)} {label}</b></div>
@@ -357,8 +379,22 @@ export default function BuyFlow({ project, tier, onSettled }) {
         )}
       </Step>
 
-      {plan && !expired && (
+      {plan && (
         <Step n="2" title="Build the transaction" done={!!built}>
+          {expired && (
+            <Notice style={{ marginBottom: '1rem' }}>
+              <strong>The BTC rate above is stale.</strong> What you pay the
+              covenant has not changed -- it is fixed by the sale's own price --
+              only the sats a swap would cost. If you have already swapped, carry
+              on and spend the {label} you received.
+              <div style={{ marginTop: '.5rem' }}>
+                <button type="button" className="btn btn-sm btn-ghost"
+                        onClick={requote} aria-disabled={busy}>
+                  Refresh the BTC rate
+                </button>
+              </div>
+            </Notice>
+          )}
           <p className="small dim">
             Levo assembles it and signs nothing. The covenant input needs no
             signature; your inputs can only be signed by you.
@@ -375,16 +411,17 @@ export default function BuyFlow({ project, tier, onSettled }) {
             {hasProvider() && (
               <button type="button" className="btn btn-sm btn-ghost"
                       style={{ marginBottom: '.9rem' }}
-                      onClick={autofill} disabled={busy}>
-                Fill from my wallet
+                      onClick={autofill} aria-disabled={busy}>
+                {busy ? 'Asking your wallet…' : 'Fill from my wallet'}
               </button>
             )}
             <div className="field">
               <label htmlFor="inp">Outputs you are spending</label>
               <textarea id="inp" className="mono" rows={3} value={funding.inputs} required
+                        aria-describedby="inp-hint"
                         onChange={(e) => setFunding({ ...funding, inputs: e.target.value })}
                         placeholder="txid:vout, one per line" />
-              <div className="hint">
+              <div className="hint" id="inp-hint">
                 {label} outputs, unblinded: anything you received at a {hrp}1… address is;
                 anything received at a confidential {blinded}1… address is not, and a
                 covenant cannot read it. Send those to a {hrp}1… address first.
@@ -405,10 +442,11 @@ export default function BuyFlow({ project, tier, onSettled }) {
             <div className="field">
               <label htmlFor="fee">Network fee, in {label}</label>
               <input id="fee" className="mono" inputMode="decimal" value={funding.fee} required
+                     aria-describedby="fee-hint"
                      onChange={(e) => setFunding({ ...funding, fee: e.target.value })}
                      placeholder={plan.fee && plan.fee.suggested_atoms
                        ? amount(plan.fee.suggested_atoms, payment.decimals) : ''} />
-              <div className="hint">
+              <div className="hint" id="fee-hint">
                 {plan.fee && plan.fee.min_atoms ? (
                   <>
                     This node relays a transaction of about {plan.fee.vsize_estimate} vB for{' '}
@@ -424,7 +462,7 @@ export default function BuyFlow({ project, tier, onSettled }) {
               </div>
             </div>
             {note && <Notice style={{ margin: '0 0 1rem' }}>{note}</Notice>}
-            <button className="btn btn-primary btn-sm" disabled={busy}>
+            <button className="btn btn-primary btn-sm" aria-disabled={busy}>
               {busy && !built ? 'Building…' : 'Build it'}
             </button>
           </form>
@@ -466,7 +504,8 @@ export default function BuyFlow({ project, tier, onSettled }) {
           )}
           {!sentTxid && !mismatch && walletCanSign && built.pset && (
             <div style={{ marginBottom: '1rem' }}>
-              <button className="btn btn-primary btn-sm" onClick={signAndSendWithWallet} disabled={busy}>
+              <button className="btn btn-primary btn-sm" onClick={signAndSendWithWallet}
+                      aria-disabled={busy}>
                 {busy ? 'Waiting for your wallet…' : 'Sign and broadcast with my wallet'}
               </button>
               <p className="small dim" style={{ margin: '.6rem 0 0' }}>
@@ -476,9 +515,8 @@ export default function BuyFlow({ project, tier, onSettled }) {
           )}
           {!sentTxid && hasProvider() && !walletCanSign && (
             <Notice style={{ marginBottom: '1rem' }}>
-              Your wallet is connected but this version cannot sign a transaction
-              a website built, so the purchase is signed with a node instead. A
-              newer build of the extension adds it.
+              Your wallet did not say it can sign a transaction this site built,
+              so this purchase is signed with a node instead.
             </Notice>
           )}
           {!sentTxid && (
@@ -487,7 +525,8 @@ export default function BuyFlow({ project, tier, onSettled }) {
                 {walletCanSign ? 'Or sign it with a node' : 'Sign it with a node'}
               </summary>
               <div className="field">
-                <label htmlFor="unsigned">Unsigned transaction <Copy value={built.unsigned_tx_hex} label="Copy the unsigned transaction" /></label>
+                <label htmlFor="unsigned">Unsigned transaction</label>
+                <Copy value={built.unsigned_tx_hex} label="Copy the unsigned transaction" />
                 <textarea id="unsigned" className="mono" rows={4} readOnly value={built.unsigned_tx_hex}
                           onFocus={(e) => e.target.select()} />
                 <div className="hint">
@@ -513,13 +552,13 @@ export default function BuyFlow({ project, tier, onSettled }) {
                               placeholder="paste the signed hex" />
                   </div>
                   <button className="btn btn-primary btn-sm" onClick={sendHex}
-                          disabled={busy || !signed.trim()}>
+                          aria-disabled={busy || !signed.trim()}>
                     {busy ? 'Sending…' : 'Broadcast'}
                   </button>
                 </>
               ) : (
                 <div className="btn-row">
-                  <button className="btn btn-primary btn-sm" onClick={recordOwnBroadcast} disabled={busy}>
+                  <button className="btn btn-primary btn-sm" onClick={recordOwnBroadcast} aria-disabled={busy}>
                     I broadcast it from my node
                   </button>
                   <span className="small dim">Records the purchase against your cap.</span>

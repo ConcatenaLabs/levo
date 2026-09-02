@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { amount, compact, toAtoms, atomsArg, closeLabel, closeIn, isHeightClose, pricePerToken, treasurySpk,
+import { amount, compact, toAtoms, atomsArg, closeLabel, closeIn, isHeightClose, pricePerToken, treasurySpk, plain,
          capitalise, big } from '../src/lib/format.js'
 import { xFor, yFor } from '../src/lib/beam.js'
 import { addressOf, encodeSegwit } from '../src/lib/bech32.js'
@@ -96,4 +96,15 @@ test('a close says the time of day, not just the date', () => {
   const label = closeLabel(2000000000)
   assert.match(label, /\d\d:\d\d UTC$/)
   assert.equal(closeLabel(900000), 'block 900,000')
+})
+
+test('a version-0 treasury script says how long its program is', () => {
+  assert.equal(treasurySpk({ treasury_prog: 'bb'.repeat(20), treasury_ver: 0 }), '0014' + 'bb'.repeat(20))
+  assert.equal(treasurySpk({ treasury_prog: 'cc'.repeat(32), treasury_ver: 0 }), '0020' + 'cc'.repeat(32))
+})
+
+test('plain drops the separators a command cannot take', () => {
+  assert.equal(plain(20000000000000n, 8), '200000')
+  assert.equal(plain(1n, 8), '0.00000001')
+  assert.equal(plain(123456789012345678n, 8), '1234567890.12345678')
 })

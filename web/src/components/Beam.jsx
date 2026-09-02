@@ -50,8 +50,10 @@ export default function Beam({ tiers, stakeAtoms = 0, compactMode = false, showM
         ? 'up to ' + compact(t.cap_atoms) + ' ' + paymentLabel + ' per sale'
         : 'cannot buy') +
       (t.may_list ? ', and may list a project' : '')
-  }).join('. ') + '. You have ' + compact(stake) + ' ' + stakeLabel +
-    ' staked, which is ' + steps[reachedIndex].tier.name + '.'
+  }).join('. ') + '.' + (showMarker && stake > 0
+    ? ' You have ' + compact(stake) + ' ' + stakeLabel + ' staked, which is ' +
+      steps[reachedIndex].tier.name + '.'
+    : '')
 
   return (
     <div className={'beam' + (compactMode ? ' compact' : '')}>

@@ -5,3 +5,7 @@ Description=Copy levod's state file
 Type=oneshot
 EnvironmentFile=-/etc/sequentia/levod.env
 ExecStart=/root/sequentia/levo/contrib/levo-backup.sh
+SyslogLevelPrefix=yes
+# A backup that stops working is silent until it is needed. Point this at
+# whatever this deployment uses to tell someone.
+#OnFailure=levod-failed.service

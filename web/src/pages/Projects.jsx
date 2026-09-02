@@ -50,7 +50,7 @@ const FILTERS = [
 
 export default function Projects() {
   usePageTitle('Sales')
-  const { payment, health } = useStore()
+  const { payment, chainHeight } = useStore()
   const [projects, setProjects] = useState(null)
   const [total, setTotal] = useState(0)
   const [error, setError] = useState(null)
@@ -59,7 +59,7 @@ export default function Projects() {
   const [q, setQ] = useState('')
   const [typed, setTyped] = useState('')
   const [page, setPage] = useState(0)
-  const height = health && health.node ? health.node.height : null
+  const height = chainHeight
 
   const load = () => {
     setError(null)
@@ -112,11 +112,17 @@ export default function Projects() {
           {error} <button className="btn btn-sm btn-ghost" style={{ marginLeft: '.75rem' }} onClick={load}>Try again</button>
         </Notice>
       )}
+      <p aria-live="polite" className="visually-hidden">
+        {!projects ? 'Loading the sales.'
+          : total === 0 ? 'No sales match.'
+            : total + (total === 1 ? ' sale' : ' sales') +
+              (q ? ' matching ' + q : '') + ', showing ' + projects.length + '.'}
+      </p>
       {!projects && !error && <p className="dim">Loading the sales…</p>}
 
       {projects && projects.length === 0 && (q || status !== 'open') && (
         <div className="card">
-          <h3>Nothing here</h3>
+          <h2 className="section-h" style={{ marginTop: 0 }}>Nothing here</h2>
           <p className="small dim" style={{ marginBottom: '1rem' }}>
             {q ? <>No sale matches “{q}”.</> : <>No sale is in that state right now.</>}
           </p>
@@ -129,7 +135,7 @@ export default function Projects() {
 
       {projects && projects.length === 0 && !q && status === 'open' && (
         <div className="card">
-          <h3>No sale is open</h3>
+          <h2 className="section-h" style={{ marginTop: 0 }}>No sale is open</h2>
           <p className="small dim" style={{ marginBottom: '1rem' }}>
             Nothing is taking buyers at the moment. Listing needs a tier that may
             list, and a project has to lock its tokens before its sale opens.

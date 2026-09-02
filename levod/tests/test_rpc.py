@@ -81,8 +81,18 @@ def test_credentials_and_calls(t):
         c.chain_height()
         t.eq(f.seen[-1][0], "Basic X19jb29raWVfXzpzM2NyZXQ=", "a cookie file is read")
         f.cookie_file.write_text("__cookie__:rotated")
-        c.chain_height()
+        c.call("getblockchaininfo")
         t.eq(f.seen[-1][0], "Basic X19jb29raWVfXzpyb3RhdGVk", "and re-read on every call")
+        # The tip is held for a moment: drawing a page asks for the height, the
+        # clock and the node's reachability, and that is one round trip rather
+        # than three.
+        c.forget_chain_info()
+        before = len(f.seen)
+        c.chain_height(); c.chain_name(); c.median_time()
+        t.eq(len(f.seen), before + 1, "the tip is asked for once, not once per question")
+        c.forget_chain_info()
+        c.chain_height()
+        t.eq(len(f.seen), before + 2, "and asked again when told to forget it")
         try:
             R.NodeRPC(url=f.url, cookie=str(f.cookie_file) + ".missing")
             t.ok(False, "a missing cookie file is refused at startup")

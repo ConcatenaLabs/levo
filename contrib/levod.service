@@ -20,6 +20,13 @@ KillSignal=SIGTERM
 TimeoutStopSec=20
 StandardOutput=journal
 StandardError=journal
+# levod prefixes its own lines with a syslog priority, so `journalctl -u levod
+# -p err` shows what went wrong and nothing else.
+SyslogLevelPrefix=yes
+# Something to run when levod fails. Fill in the unit for this deployment --
+# an email, a push, a page -- or drop the line if the journal is watched
+# another way.
+#OnFailure=levod-failed.service
 
 [Install]
 WantedBy=multi-user.target

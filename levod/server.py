@@ -49,6 +49,9 @@ MAX_BODY = 256 * 1024
 WATCHER_RPC_TIMEOUT = 300         # a UTXO-set scan on a big chain takes a while
 BUSY_WAIT_SECONDS = 5            # how long a request waits for a free handler
 MAX_HANDLERS = 64                 # concurrent requests before the rest wait
+# Polls that must fail in a row before health calls the watcher broken. One is
+# a bad minute on the node; three in a row is something to look at.
+WATCHER_FAILURES_BEFORE_UNHEALTHY = 3
 
 
 class RateLimit:
@@ -110,7 +113,7 @@ class App:
         # Addresses are encoded and decoded against this prefix, so getting it
         # wrong sends tokens nowhere. The chain the node reports decides it
         # unless an operator says otherwise.
-        self.hrp = os.environ.get("LEVOD_HRP") or ADDR.hrp_for(self.chain)
+        self._hrp_env = os.environ.get("LEVOD_HRP")
         self.explorer_url = os.environ.get("LEVOD_EXPLORER_URL", "").rstrip("/")
         self.site_links = _site_links(os.environ.get("LEVOD_LINKS"))
         # Where this Levo's own source is. A visitor is told to run a command
@@ -123,7 +126,7 @@ class App:
         self.watcher = None
         self.operators = _accounts(os.environ.get("LEVOD_OPERATORS"))
         self.market = M.Platform(self.store, self.reader, self.rails, self.node,
-                                 hrp=self.hrp, payment_asset=payment_asset,
+                                 hrp=lambda: self.hrp, payment_asset=payment_asset,
                                  payment_label=payment_label,
                                  stake_label=self.stake_label,
                                  operators=self.operators,
@@ -133,12 +136,17 @@ class App:
         self.watcher = W.Watcher(
             self.market, watch_node,
             interval=int(os.environ.get("LEVOD_WATCH_SECONDS", "60")),
-            hrp=self.hrp, log=lambda m: sys.stderr.write("levod %s\n" % m))
+            hrp=lambda: self.hrp, log=_log_error, note=_log_notice)
         self.challenges = A.Challenges(site="Levo")
         self.stake_challenges = A.Challenges(site="Levo")
         self.sessions = A.Sessions()
         self.auth_limit = RateLimit(per_minute=int(os.environ.get("LEVOD_AUTH_PER_MINUTE", "30")))
         self.write_limit = RateLimit(per_minute=int(os.environ.get("LEVOD_WRITES_PER_MINUTE", "120")))
+        # Reads are cheap per request and not free: the board asks the node for
+        # its tip, and the fee route asks for the mempool and the rate table.
+        # One caller in a loop could fill every handler with requests blocked
+        # on the node while real visitors wait behind them.
+        self.read_limit = RateLimit(per_minute=int(os.environ.get("LEVOD_READS_PER_MINUTE", "600")))
         self.handlers = threading.BoundedSemaphore(MAX_HANDLERS)
         # The reverse proxy in front of levod, whose X-Forwarded-For is worth
         # believing. Loopback by default, because that is where a proxy on the
@@ -152,7 +160,18 @@ class App:
         self.webroot = Path(os.environ.get(
             "LEVOD_WEBROOT",
             str(Path(__file__).resolve().parent.parent / "web" / "dist")))
+        # Whether a built app was there when levod started. If it was and it
+        # is not now, something removed it and every page is a 404.
+        self.had_webroot = (self.webroot / "index.html").is_file()
         self.verbose = bool(os.environ.get("LEVOD_VERBOSE"))
+
+    @property
+    def hrp(self):
+        """The chain's address prefix. Derived from the chain the node reports,
+        which is asked for until it answers: a levod started while its node was
+        down would otherwise encode every address with the wrong prefix for the
+        life of the process, and a later restart would silently fix it."""
+        return self._hrp_env or ADDR.hrp_for(self.chain)
 
     @property
     def chain(self):
@@ -292,11 +311,13 @@ class Handler(BaseHTTPRequestHandler):
     def log_error(self, fmt, *args):
         pass                            # the request line is logged once, above
 
-    def _send(self, code, body, ctype, cache="no-store"):
+    def _send(self, code, body, ctype, cache="no-store", headers=None):
         self.send_response(code)
         self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Cache-Control", cache)
+        for name, value in (headers or {}).items():
+            self.send_header(name, value)
         self.send_header("X-Content-Type-Options", "nosniff")
         self.send_header("Referrer-Policy", "strict-origin-when-cross-origin")
         self.send_header("X-Frame-Options", "DENY")
@@ -312,9 +333,9 @@ class Handler(BaseHTTPRequestHandler):
             except (BrokenPipeError, ConnectionResetError):
                 pass                    # the client left; nothing to report
 
-    def _json(self, code, payload):
+    def _json(self, code, payload, cache="no-store", headers=None):
         body = json.dumps(payload, indent=2, sort_keys=True).encode()
-        self._send(code, body, "application/json")
+        self._send(code, body, "application/json", cache=cache, headers=headers)
 
     def _body(self):
         if self.headers.get("Transfer-Encoding"):
@@ -369,8 +390,19 @@ class Handler(BaseHTTPRequestHandler):
         self._dispatch("DELETE")
 
     def do_OPTIONS(self):
+        """What this path takes -- this one, not every path.
+
+        Answering the same list everywhere told a client that /api/health takes
+        DELETE and that a static file takes POST.
+        """
+        path = urlparse(self.path).path
+        parts = [p for p in path.split("/") if p]
+        allowed = _methods_for(parts[1:]) if parts[:1] == ["api"] else None
+        if allowed is None:
+            allowed = ["GET"] if not path.startswith("/api/") else []
         self.send_response(204)
-        self.send_header("Allow", "GET, HEAD, POST, PATCH, DELETE, OPTIONS")
+        self.send_header("Allow", ", ".join(allowed + ["HEAD", "OPTIONS"])
+                         if allowed else "OPTIONS")
         self.send_header("Content-Length", "0")
         self.end_headers()
 
@@ -397,7 +429,10 @@ class Handler(BaseHTTPRequestHandler):
                 return self._method_not_allowed()
             return self._static(path)
         except Unsupported as e:
-            self._json(e.code, {"error": str(e)})
+            # A 429 without a Retry-After tells a client to back off and gives
+            # it nothing to back off by.
+            self._json(e.code, {"error": str(e)},
+                       headers={"Retry-After": "60"} if e.code == 429 else None)
         except Unauthorised as e:
             self._json(401, {"error": str(e)})
         except M.NotFound as e:
@@ -410,15 +445,25 @@ class Handler(BaseHTTPRequestHandler):
         except (M.PlatformError, S.SaleError, A.BadSignature, R.RailUnavailable,
                 ValueError) as e:
             self._json(400, {"error": str(e)})
-        except (KeyError, TypeError, AttributeError) as e:
-            # A field of the wrong shape. The request is at fault, not the
-            # server, and the caller deserves to hear which field.
+        except KeyError as e:
+            # A field the request should have carried and did not. The caller
+            # is at fault and deserves to hear which field.
+            #
+            # AttributeError is deliberately NOT caught here: it is what a bug
+            # in levod looks like, and answering one as "malformed request"
+            # blamed the caller for the server's mistake and logged nothing at
+            # all. TypeError stays, because body parsing still leans on it.
             self._json(400, {"error": "malformed request: %s" % _describe(e)})
+        except TypeError as e:
+            _log_error("malformed request on %s %s: %s" % (method, path, e))
+            _log_error(traceback.format_exc())
+            self._json(400, {"error": "malformed request"})
         except RPC.RPCError as e:
             self._json(502, {"error": "the Sequentia node is unreachable or "
                                       "refused the query: %s" % e})
         except Exception:
-            traceback.print_exc()
+            _log_error("unhandled error on %s %s" % (method, path))
+            _log_error(traceback.format_exc())
             self._json(500, {"error": "internal error"})
 
     def _api(self, method, path, query):
@@ -437,23 +482,45 @@ class Handler(BaseHTTPRequestHandler):
             stale = bool(w._thread) and (age is None or age > 3 * w.interval)
             # A watcher that runs on time but fails every poll reconciles
             # nothing, and a sale that has sold out goes on showing as open. A
-            # monitor has to see that, so it is not "ok" either.
-            failing = bool(w.last_error)
-            ok = node["reachable"] and not stale and not failing
+            # monitor has to see that. One poll erroring is not that: a single
+            # RPC timeout on one sale is a normal minute on a busy node, and a
+            # health check that flips to 503 for it teaches its reader to
+            # ignore it.
+            failing = w.consecutive_errors >= WATCHER_FAILURES_BEFORE_UNHEALTHY
+            # A levod that cannot write its state file is serving a ledger that
+            # exists only in its own memory: the next restart reverts to the
+            # last write that worked, and every purchase recorded since is
+            # gone. Nothing about that is visible from the outside otherwise.
+            write_error = app.store.write_error
+            # levod serves the app and the API from one origin, so an emptied
+            # or missing web/dist is a site that answers 404 for every page
+            # while every API check passes. An uptime check watching this
+            # endpoint has to see that. Only when a bundle was there at
+            # startup: an API-only run is not broken.
+            serving = (not app.had_webroot) or (app.webroot / "index.html").is_file()
+            ok = (node["reachable"] and not stale and not failing
+                  and not write_error and serving)
             return self._json(200 if ok else 503, {
                 "service": "levod", "ok": ok, "node": node,
+                "app": {"serving": serving, "webroot": str(app.webroot)},
+                "state_file": {"writable": not write_error,
+                               "unsaved_changes": bool(app.store.dirty),
+                               "last_error": write_error},
                 "watcher": {"running": bool(w._thread and w._thread.is_alive()),
                             "last_run_age_seconds": int(age) if age is not None else None,
                             "reconciling": not failing,
+                            "consecutive_errors": w.consecutive_errors,
                             "unverified_sales": list(w.unverified),
                             "last_error": w.last_error},
             })
 
         if method == "GET" and parts == ["config"]:
-            return self._json(200, app.config())
+            # Labels, prefixes and links: the same answer for every visitor,
+            # and the first thing every page asks for.
+            return self._json(200, app.config(), cache="public, max-age=30")
 
         if method == "GET" and parts == ["tiers"]:
-            return self._json(200, {
+            return self._json(200, cache="public, max-age=30", payload={
                 "tiers": app.policy.to_json(),
                 "staking_floor_atoms": T.POS_MIN_STAKE_ATOMS,
                 "stake_label": app.stake_label,
@@ -483,6 +550,12 @@ class Handler(BaseHTTPRequestHandler):
                                     "exactly as it was rather than guessed at.",
             })
 
+        if method in ("GET", "HEAD") and parts[:1] != ["health"] and \
+                not app.read_limit.allow(self.client()):
+            # Health is left out on purpose: an uptime check must never be the
+            # thing that trips the limit.
+            raise Unsupported(429, "too many requests from this address; slow down")
+
         # -- auth -------------------------------------------------------------
         if method == "POST" and parts[:1] in (["auth"], ["stake"]) and \
                 not app.auth_limit.allow(self.client()):
@@ -507,7 +580,7 @@ class Handler(BaseHTTPRequestHandler):
                 # The caller names the address it signed with, so a signature
                 # over slightly different bytes is a clear error rather than a
                 # phantom account nobody controls.
-                if not A.key_matches_address(pubkey, str(address)):
+                if not A.key_matches_address(pubkey, str(address), hrp=app.hrp):
                     raise A.BadSignature(
                         "that signature was not made by the key behind %s. The "
                         "text that was signed differs from the challenge, or the "
@@ -526,6 +599,9 @@ class Handler(BaseHTTPRequestHandler):
                 with app.market.lock:
                     app.links.dirty = False
                     app.market.save()
+            # Whether this account may flag a listing on this Levo. Without it
+            # a client cannot know whether to offer the control at all.
+            standing["operator"] = acct.lower() in app.market.operators
             return self._json(200, standing)
 
         if method == "GET" and parts == ["me", "projects"]:
@@ -589,6 +665,14 @@ class Handler(BaseHTTPRequestHandler):
                 app.market.save()
             return self._json(200, app.reader.standing(acct))
 
+        if method == "POST" and parts == ["outputs", "check"]:
+            # Which of these outputs a covenant purchase could spend. The
+            # answer is the node's, not a guess from an address form.
+            self._require_account()
+            b = self._body()
+            return self._json(200, {"outputs": app.market.describe_inputs(
+                b.get("outputs") or b.get("inputs") or [])})
+
         # -- projects ----------------------------------------------------------
         if method == "GET" and parts == ["projects"]:
             page = app.market.public_projects(
@@ -598,6 +682,14 @@ class Handler(BaseHTTPRequestHandler):
                 offset=_int_param(query, "offset") or 0)
             page["node_reachable"] = app.market.height() is not None
             return self._json(200, page)
+
+        if method == "GET" and len(parts) == 3 and parts[0] == "projects" \
+                and parts[2] == "purchases":
+            # Levo's own ledger for one sale: what it recorded, and what each
+            # account has committed. The issuer and an operator can read it;
+            # nobody else, because it names accounts and amounts.
+            acct = self._require_account()
+            return self._json(200, app.market.sale_ledger(acct, parts[1]))
 
         if method == "GET" and len(parts) == 3 and parts[0] == "projects" \
                 and parts[2] == "fee":
@@ -645,7 +737,10 @@ class Handler(BaseHTTPRequestHandler):
                 acct = self._require_account()
                 b = self._body()
                 p = app.market.confirm_lock(acct, slug, b.get("txid"), b.get("vout"))
-                return self._json(200, p.to_json(height=app.market.height()))
+                # The same shape the sale's own page returns, so a client that
+                # has just locked can show the address and the leaves it can
+                # rebuild without asking again.
+                return self._json(200, app.market.project_detail(p.slug))
             if action == "withdraw":
                 acct = self._require_account()
                 app.market.withdraw(acct, slug)
@@ -683,6 +778,13 @@ class Handler(BaseHTTPRequestHandler):
                     acct, slug, b.get("txid"), b.get("token_atoms"), b.get("payment_atoms"))
                 return self._json(200, recorded)
 
+        allowed = _methods_for(parts)
+        if allowed and method not in allowed:
+            # The path exists; the verb does not belong to it. Answering 404
+            # tells a client its URL is wrong when only its method was.
+            return self._json(405, {"error": "%s is not allowed here; this path "
+                                             "takes %s" % (method, ", ".join(allowed))},
+                              headers={"Allow": ", ".join(allowed + ["OPTIONS"])})
         return self._json(404, {"error": "no such endpoint"})
 
     # --- the SPA ------------------------------------------------------------
@@ -740,6 +842,24 @@ def _check_pubkey(pk):
         raise ValueError("staker_pubkey must be a 33-byte compressed key in hex")
 
 
+# systemd reads a <N> prefix on a line as its syslog priority, so an operator's
+# `journalctl -p err` finds what went wrong instead of scrolling every request.
+# One prefix per line: systemd parses them line by line, and a traceback is
+# many lines.
+def _log_error(message):
+    for line in str(message).rstrip().splitlines() or [""]:
+        sys.stderr.write("<3>levod %s\n" % line)
+
+
+def _log_warning(message):
+    for line in str(message).rstrip().splitlines() or [""]:
+        sys.stderr.write("<4>levod %s\n" % line)
+
+
+def _log_notice(message):
+    sys.stderr.write("<5>levod %s\n" % str(message).rstrip())
+
+
 def _accounts(text):
     """Account keys from an environment list: comma or space separated, each a
     33-byte compressed public key in hex. Anything else is dropped with a note
@@ -752,9 +872,51 @@ def _accounts(text):
         if re.match(r"^0[23][0-9a-f]{64}$", key):
             out.append(key)
         else:
-            sys.stderr.write("levod: LEVOD_OPERATORS entry %r is not a compressed "
-                             "public key; ignored\n" % part)
+            _log_warning("LEVOD_OPERATORS entry %r is not a compressed public "
+                         "key; ignored" % part)
     return out
+
+
+# What each API path takes. One table, read by OPTIONS and by the fall-through,
+# so a wrong verb is answered as a wrong verb and OPTIONS does not advertise
+# methods a path has never had.
+API_METHODS = (
+    (("health",), ["GET"]),
+    (("config",), ["GET"]),
+    (("tiers",), ["GET"]),
+    (("rails",), ["GET"]),
+    (("watcher",), ["GET"]),
+    (("me",), ["GET"]),
+    (("me", "projects"), ["GET"]),
+    (("me", "positions"), ["GET"]),
+    (("auth", "challenge"), ["POST"]),
+    (("auth", "verify"), ["POST"]),
+    (("stake", "challenge"), ["POST"]),
+    (("stake", "link"), ["POST"]),
+    (("stake", "unlink"), ["POST"]),
+    (("outputs", "check"), ["POST"]),
+    (("projects",), ["GET", "POST"]),
+    (("projects", "*"), ["GET", "PATCH", "DELETE"]),
+    (("projects", "*", "lock"), ["POST"]),
+    (("projects", "*", "buy"), ["POST"]),
+    (("projects", "*", "transaction"), ["POST"]),
+    (("projects", "*", "confirm"), ["POST"]),
+    (("projects", "*", "reclaim"), ["POST"]),
+    (("projects", "*", "withdraw"), ["POST"]),
+    (("projects", "*", "flag"), ["POST"]),
+    (("projects", "*", "fee"), ["GET"]),
+    (("projects", "*", "purchases"), ["GET"]),
+)
+
+
+def _methods_for(parts):
+    """The methods an API path takes, or None when there is no such path."""
+    for shape, methods in API_METHODS:
+        if len(shape) != len(parts):
+            continue
+        if all(a == "*" or a == b for a, b in zip(shape, parts)):
+            return list(methods)
+    return None
 
 
 def _one(query, name):
@@ -815,7 +977,7 @@ def _site_links(raw):
     try:
         return M.validate_links(json.loads(raw))
     except (ValueError, M.PlatformError) as e:
-        sys.stderr.write("levod: LEVOD_LINKS ignored: %s\n" % e)
+        _log_warning("LEVOD_LINKS ignored: %s" % e)
         return {}
 
 
