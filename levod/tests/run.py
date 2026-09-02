@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
-"""Run every Levo test. No dependencies, no framework, no network."""
+"""Run every Levo unit test. No dependencies, no framework, no network.
+
+The two that need something outside this process live beside it and are run on
+their own: `test_e2e.py` (the API end to end over a stub node), `test_node.py`
+(a real sequentiad) and `test_render.py` (a real browser).
+"""
 
 import importlib
 import sys

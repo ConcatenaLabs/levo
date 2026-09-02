@@ -23,6 +23,8 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 sys.path.insert(0, str(HERE / "tests"))
 
+import secp256k1 as K  # noqa: E402
+
 FLOOR = 4_000_000_000_000          # 40,000 SEQ
 USDX = "2a515539da5e6a60caa7766ecd65bac0c10d15717ddd2088844ba58f4d04b9de"
 
@@ -120,13 +122,17 @@ def build(app, node):
     ]
 
     for i, L in enumerate(listings):
+        # Real keys, because Levo refuses a sale whose reclaim path could never
+        # be signed or whose treasury could never spend: about half of all
+        # 32-byte numbers are not points on the curve, and a demo built on one
+        # would be demonstrating something that cannot exist.
         terms = {
             "token_asset": L["token"], "payment_asset": USDX,
             "price_num": L["price_num"], "price_den": 100_000_000,
-            "treasury_prog": ("%02x" % (0x30 + i)) * 32,
+            "treasury_prog": K.xonly_pubkey(0x30 + i).hex(),
             "min_lot": L["min_lot"] * 100_000_000,
             "close_locktime": 2_000_000_000,
-            "reclaim_xonly": ("%02x" % (0x40 + i)) * 32,
+            "reclaim_xonly": K.xonly_pubkey(0x40 + i).hex(),
             "total_atoms": L["total"] * 100_000_000,
         }
         meta = {k: L[k] for k in ("slug", "name", "ticker", "summary", "description", "links")}
