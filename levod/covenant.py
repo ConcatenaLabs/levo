@@ -39,6 +39,7 @@ import json
 from pathlib import Path
 
 import script as K
+import secp256k1 as EC
 from script import Op, NUMS
 
 VECTORS_PATH = Path(__file__).with_name("vectors.json")
@@ -308,6 +309,18 @@ class SaleTerms:
         if self.close_locktime < 1:
             raise ValueError("close_locktime must be set; a sale with no close "
                              "could never be reclaimed")
+        if EC.lift_x(int(self.reclaim_xonly, 16)) is None:
+            # An x-only public key is the x coordinate of a curve point, and
+            # not every 32-byte number is one. A reclaim leaf built on a value
+            # that is not a point can never be satisfied by any signature: the
+            # tokens could be sold, and whatever did not sell would stay in the
+            # covenant for good. Nothing later in the sale's life can catch
+            # this, so it is caught before the address exists.
+            raise ValueError(
+                "reclaim_xonly is not an x-only public key: no point on the "
+                "curve has that x coordinate, so the reclaim path could never "
+                "be signed and unsold tokens would stay locked for ever. Use "
+                "the key `levo keygen` prints")
         if self.close_locktime > 0xffffffff:
             # nLockTime is 32 bits. A larger operand compiles into the reclaim
             # leaf and can never be satisfied: the tokens could be sold but

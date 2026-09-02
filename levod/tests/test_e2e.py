@@ -28,6 +28,10 @@ import rpc as RPCMOD  # noqa: E402
 import signhelper as SH  # noqa: E402
 
 USDX = "2a515539da5e6a60caa7766ecd65bac0c10d15717ddd2088844ba58f4d04b9de"
+# A treasury program is a taproot output key, so it has to be a real point on
+# the curve: a program that is not one can be paid and never spent, and Levo
+# refuses it. This is the x-only key of the secret 0x1111...11.
+TREASURY_PROG = "4f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa"
 TOKEN = "aa" * 32
 FAR = int(time.time()) + 10 ** 7          # a close well in the future
 
@@ -377,7 +381,7 @@ def run(d):
     terms = {
         "token_asset": TOKEN, "payment_asset": USDX,
         "price_num": 25, "price_den": 100,        # 0.25 USDX per token
-        "treasury_prog": "11" * 32, "min_lot": 100_000,
+        "treasury_prog": TREASURY_PROG, "min_lot": 100_000,
         "close_locktime": FAR, "reclaim_xonly": "22" * 32,
         "total_atoms": total,
     }
@@ -419,11 +423,11 @@ def run(d):
     ok.eq(code, 400, "a name that is not text is a 400")
     # A treasury given as a taproot address is decoded to its program.
     import tx as TXMOD
-    treasury_addr = ADDR.from_script_pubkey(TXMOD.v1_script_pubkey("11" * 32).hex(), "tb")
+    treasury_addr = ADDR.from_script_pubkey(TXMOD.v1_script_pubkey(TREASURY_PROG).hex(), "tb")
     t3 = dict(terms); del t3["treasury_prog"]; t3["treasury_address"] = treasury_addr
     code, r = req("POST", "/api/projects", {"project": meta, "terms": t3}, token=issuer_tok)
     ok.eq(code, 201, "top tier can list, naming the treasury by address")
-    ok.eq(r["project"]["sale"]["terms"]["treasury_prog"], "11" * 32, "which decodes to the program")
+    ok.eq(r["project"]["sale"]["terms"]["treasury_prog"], TREASURY_PROG, "which decodes to the program")
     ok.eq(r["project"]["links"], {"Website": "https://example.test/helios"}, "links are kept")
     spk = r["lock"]["script_pubkey"]
     import covenant as C
@@ -626,7 +630,7 @@ def run(d):
 
     # --- recording the purchase ---------------------------------------------
     ok.section("confirm")
-    treasury_spk = "5120" + "11" * 32
+    treasury_spk = "5120" + TREASURY_PROG
     node.utxos[("ab" * 32, 0)] = {"scriptPubKey": {"hex": treasury_spk}, "asset": USDX,
                                   "valueatoms": 250 * 100_000_000}
     code, r = req("POST", "/api/projects/helios/confirm",

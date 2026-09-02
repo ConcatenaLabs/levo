@@ -13,6 +13,7 @@ sys.path.insert(0, str(HERE.parent))
 
 import covenant as C  # noqa: E402
 import script as K  # noqa: E402
+import secp256k1 as EC  # noqa: E402
 
 USDX = "2a515539da5e6a60caa7766ecd65bac0c10d15717ddd2088844ba58f4d04b9de"
 
@@ -252,3 +253,22 @@ def test_a_version_0_treasury_is_pinned_as_such(t):
             t.ok(False, why)
         except ValueError:
             t.ok(True, why)
+
+
+def test_a_reclaim_key_must_be_a_key(t):
+    """A reclaim leaf built on a value that is not a point on the curve can
+    never be satisfied by any signature: everything unsold would stay in the
+    covenant for good, and nothing later in a sale's life could catch it."""
+    for bad, why in ((0, "zero"),
+                     (int("11" * 32, 16), "a number with no point on the curve"),
+                     ((1 << 256) - (1 << 32) - 977, "the field prime")):
+        try:
+            C.SaleTerms(GOLD, USDX, 1, 4, "22" * 32, 10 ** 8, 900_000,
+                        "%064x" % bad, 1000 * 10 ** 8)
+            t.ok(False, "%s is refused as a reclaim key" % why)
+        except ValueError as e:
+            t.ok("x-only public key" in str(e),
+                 "%s is refused as a reclaim key, with the reason" % why)
+    real = EC.xonly_pubkey(0x2222222222222222222222222222222222222222222222222222222222222222).hex()
+    terms = C.SaleTerms(GOLD, USDX, 1, 4, "22" * 32, 10 ** 8, 900_000, real, 1000 * 10 ** 8)
+    t.eq(terms.reclaim_xonly, real, "and a real key is taken")

@@ -357,6 +357,17 @@ class Platform:
             terms = C.SaleTerms.from_json(terms_json)
         except ValueError as e:
             raise PlatformError(str(e))
+        # A taproot treasury program is an output key: the x coordinate of a
+        # point. Not every 32-byte number is one, and a treasury that is not a
+        # point can be paid and never spent -- every buyer's payment would land
+        # somewhere nobody can reach. An address from a wallet always gives a
+        # point; a raw treasury_prog need not, so it is checked here.
+        if terms.treasury_ver == 1 and \
+                C.EC.lift_x(int(terms.treasury_prog, 16)) is None:
+            raise PlatformError(
+                "that taproot treasury is not a point on the curve, so anything "
+                "paid to it could never be spent. Give treasury_address and let "
+                "Levo take the program from it")
         # A sale that has already closed can never be bought, only reclaimed, so
         # listing one is always a mistake. The close is an absolute locktime:
         # below 500000000 it is a HEIGHT and above it a unix time, and both need

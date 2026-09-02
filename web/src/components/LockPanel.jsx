@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { api } from '../lib/api'
 import { useStore } from '../lib/store'
-import { amount, capitalise } from '../lib/format'
+import { amount, capitalise, plain } from '../lib/format'
 import { Copy, Hex, Notice } from './ui'
 
 // Funding a sale is the project sending its tokens to the sale address and
@@ -21,7 +21,7 @@ export default function LockPanel({ project, onLocked }) {
   // is a command that cannot be run.
   const lockCommand = 'sequentia-cli -named sendtoaddress' +
     ' address=' + project.address +
-    ' amount=' + amount(sale.terms.total_atoms, decimals) +
+    ' amount=' + plain(sale.terms.total_atoms, decimals) +
     ' assetlabel=' + sale.terms.token_asset +
     ' fee_asset_label=<the asset you pay fees in>'
 

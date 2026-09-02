@@ -14,6 +14,13 @@ sys.path.insert(0, str(HERE.parent))
 import market as M  # noqa: E402
 import sale as S  # noqa: E402
 import store as ST  # noqa: E402
+
+# A reclaim key has to be a real x-only public key: Levo refuses a sale whose
+# reclaim path could never be signed. This is the key of the secret 0x2222...22.
+RECLAIM_XONLY = "466d7fcae563e5cb09a0d1870bb580344804617879a14949cf22285f1bae3f27"
+# A taproot treasury is an output key, so it too has to be a point: the key of
+# the secret 0x1111...11.
+TREASURY_PROG = "4f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa"
 import tiers as T  # noqa: E402
 
 USDX = "2a515539da5e6a60caa7766ecd65bac0c10d15717ddd2088844ba58f4d04b9de"
@@ -38,8 +45,8 @@ def test_round_trip(t):
     pr = p.list_project("02" + "11" * 32, {"slug": "one", "name": "One", "ticker": "ONE",
                                          "links": {"Site": "https://example.test"}, "decimals": 2},
                         {"token_asset": "aa" * 32, "payment_asset": USDX, "price_num": 1, "price_den": 4,
-                         "treasury_prog": "11" * 32, "min_lot": 100, "close_locktime": 2_000_000_000,
-                         "reclaim_xonly": "22" * 32, "total_atoms": 10_000})
+                         "treasury_prog": TREASURY_PROG, "min_lot": 100, "close_locktime": 2_000_000_000,
+                         "reclaim_xonly": RECLAIM_XONLY, "total_atoms": 10_000})
     sale = pr.sale
     sale.confirm_lock("ab" * 32, 1, sale.script_pubkey, 10_000, "aa" * 32)
     sale.funding["height"] = 95
