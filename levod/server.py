@@ -47,6 +47,10 @@ import watcher as W       # noqa: E402
 
 MAX_BODY = 256 * 1024
 WATCHER_RPC_TIMEOUT = 300         # a UTXO-set scan on a big chain takes a while
+# The chains whose tokens are worth something. Everything else is a test
+# chain, including one this build has never heard of.
+MAINNET_CHAINS = ("sequentia", "main")
+
 BUSY_WAIT_SECONDS = 5            # how long a request waits for a free handler
 MAX_HANDLERS = 64                 # concurrent requests before the rest wait
 # Polls that must fail in a row before health calls the watcher broken. One is
@@ -102,6 +106,19 @@ class App:
         self.store = ST.Store()
         payment_asset = os.environ.get("LEVOD_PAYMENT_ASSET", M.DEFAULT_PAYMENT_ASSET).lower()
         payment_label = os.environ.get("LEVOD_PAYMENT_LABEL", "USDX")
+        # Every amount of the payment asset is displayed and typed through
+        # this. Eight is what Elements issues by default and what the testnet's
+        # USDX uses; an asset with another precision would be quoted a hundred
+        # times wrong in both directions.
+        try:
+            payment_decimals = int(os.environ.get("LEVOD_PAYMENT_DECIMALS", "8"))
+        except ValueError:
+            payment_decimals = 8
+            _log_warning("LEVOD_PAYMENT_DECIMALS is not a number; using 8")
+        if not 0 <= payment_decimals <= 8:
+            payment_decimals = 8
+            _log_warning("LEVOD_PAYMENT_DECIMALS is out of range; using 8")
+        self.payment_decimals = payment_decimals
         self._chain = None
         self._stake_label_env = os.environ.get("LEVOD_STAKE_LABEL")
         # levod is often started beside the node it reads, and wins the race.
@@ -114,6 +131,7 @@ class App:
         # wrong sends tokens nowhere. The chain the node reports decides it
         # unless an operator says otherwise.
         self._hrp_env = os.environ.get("LEVOD_HRP")
+        self._warned_hrp = False
         self.explorer_url = os.environ.get("LEVOD_EXPLORER_URL", "").rstrip("/")
         self.site_links = _site_links(os.environ.get("LEVOD_LINKS"))
         # Where this Levo's own source is. A visitor is told to run a command
@@ -122,13 +140,17 @@ class App:
         self.source_url = (os.environ.get("LEVOD_SOURCE_URL")
                            or "https://github.com/ConcatenaLabs/levo").rstrip("/")
         self.rails = R.Rails(payment_asset, payment_label,
-                             R.NodeRateSource(self.node))
+                             R.NodeRateSource(
+                                 self.node,
+                                 btc_label=os.environ.get("LEVOD_BTC_RATE_LABEL")
+                                 or R.BTC_RATE_LABEL))
         self.watcher = None
         self.operators = _accounts(os.environ.get("LEVOD_OPERATORS"))
         self.market = M.Platform(self.store, self.reader, self.rails, self.node,
                                  hrp=lambda: self.hrp, payment_asset=payment_asset,
                                  payment_label=payment_label,
                                  stake_label=self.stake_label,
+                                 payment_decimals=self.payment_decimals,
                                  operators=self.operators,
                                  on_stale=lambda: self.watcher and self.watcher.nudge())
         watch_node = self.node.with_timeout(WATCHER_RPC_TIMEOUT) \
@@ -171,7 +193,20 @@ class App:
         which is asked for until it answers: a levod started while its node was
         down would otherwise encode every address with the wrong prefix for the
         life of the process, and a later restart would silently fix it."""
-        return self._hrp_env or ADDR.hrp_for(self.chain)
+        known = ADDR.hrp_for(self.chain, default=None)
+        if self._hrp_env:
+            return self._hrp_env
+        if known:
+            return known
+        # A chain this build has never heard of. Guessing would encode every
+        # address with the wrong prefix, so it says so once and uses the
+        # testnet prefix, which is what a new chain is nine times in ten.
+        if not self._warned_hrp:
+            self._warned_hrp = True
+            _log_warning("the node reports the chain %r, which has no address "
+                         "prefix here; using tb. Set LEVOD_HRP."
+                         % (self.chain or "unknown"))
+        return "tb"
 
     @property
     def chain(self):
@@ -200,10 +235,15 @@ class App:
         return {
             "chain": self.chain,
             "hrp": self.hrp,
-            "testnet": self.chain != "sequentia",
+            # Every chain but the one mainnet. A deployment on a chain this
+            # build does not know is a test chain until it says otherwise,
+            # because telling a visitor that play money is real is the worse
+            # mistake of the two.
+            "testnet": self.chain not in MAINNET_CHAINS,
             "explorer_url": self.explorer_url,
             "payment": {"asset": self.rails.payment_asset,
-                        "label": self.rails.payment_label, "decimals": 8},
+                        "label": self.rails.payment_label,
+                        "decimals": self.payment_decimals},
             "stake": {"label": self.stake_label, "decimals": 8},
             "staking_floor_atoms": T.POS_MIN_STAKE_ATOMS,
             "first_tier_atoms": first.min_stake_atoms,
@@ -271,10 +311,24 @@ class Handler(BaseHTTPRequestHandler):
         return peer
 
     def handle_one_request(self):
-        # The slot is taken BEFORE the request line is read, so nothing about
-        # the request is known here yet -- not even whether one was sent.
-        # BaseHTTPRequestHandler's reply helpers all need a parsed request, so
-        # the refusal is written out as bytes and the connection closed.
+        # Wait for a byte before taking a slot.
+        #
+        # A browser opens several connections and keeps them open; taking a
+        # slot the moment one is accepted meant a handful of idle tabs could
+        # hold every slot levod has, and real requests -- an uptime check
+        # included -- waited behind connections that had sent nothing. Peeking
+        # first costs one blocking read on a socket that already has its own
+        # timeout, and after it the slot is held only while a request is
+        # actually being served.
+        try:
+            self.rfile.peek(1) if hasattr(self.rfile, "peek") else None
+        except Exception:
+            self.close_connection = True
+            return
+        # The slot is taken before the request line is PARSED, so nothing about
+        # the request is known here yet. BaseHTTPRequestHandler's reply helpers
+        # all need a parsed request, so the refusal is written as bytes and the
+        # connection closed.
         acquired = self.app.handlers.acquire(timeout=BUSY_WAIT_SECONDS) if self.app else True
         if not acquired:
             body = b'{"error": "levod is busy; try again in a moment"}'
@@ -356,6 +410,11 @@ class Handler(BaseHTTPRequestHandler):
             body = json.loads(data.decode("utf-8"))
         except (UnicodeDecodeError, ValueError):
             raise ValueError("the request body is not valid JSON")
+        except RecursionError:
+            # A body nested a few thousand deep exhausts the parser's stack.
+            # That is a malformed request, not a fault in levod, and answering
+            # it with a traceback per attempt is a log flood anyone can start.
+            raise ValueError("the request body is nested too deeply")
         if not isinstance(body, dict):
             raise ValueError("the request body must be a JSON object")
         return body
@@ -606,14 +665,19 @@ class Handler(BaseHTTPRequestHandler):
 
         if method == "GET" and parts == ["me", "projects"]:
             acct = self._require_account()
-            return self._json(200, {"projects": app.market.projects_of(acct)})
+            return self._json(200, app.market.projects_of(
+                acct, limit=_int_param(query, "limit"),
+                offset=_int_param(query, "offset") or 0))
 
         if method == "GET" and parts == ["me", "positions"]:
             acct = self._require_account()
             standing = app.reader.standing(acct)
             tier = app.policy.for_stake(standing["stake_atoms"])
-            return self._json(200, {"positions": app.market.positions(acct, tier),
-                                    "tier": tier.to_json()})
+            page = app.market.positions(acct, tier,
+                                        limit=_int_param(query, "limit"),
+                                        offset=_int_param(query, "offset") or 0)
+            page["tier"] = tier.to_json()
+            return self._json(200, page)
 
         # -- linking a staking key --------------------------------------------
         if method == "POST" and parts == ["stake", "challenge"]:
@@ -689,7 +753,9 @@ class Handler(BaseHTTPRequestHandler):
             # account has committed. The issuer and an operator can read it;
             # nobody else, because it names accounts and amounts.
             acct = self._require_account()
-            return self._json(200, app.market.sale_ledger(acct, parts[1]))
+            return self._json(200, app.market.sale_ledger(
+                acct, parts[1], limit=_int_param(query, "limit"),
+                offset=_int_param(query, "offset") or 0))
 
         if method == "GET" and len(parts) == 3 and parts[0] == "projects" \
                 and parts[2] == "fee":

@@ -249,7 +249,17 @@ def from_script_pubkey(spk, hrp="tb"):
     return encode_segwit(hrp, witver, prog)
 
 
-def hrp_for(chain):
-    return {"sequentia": "bc", "main": "bc", "test": "tb",
-            "testnet": "tb", "regtest": "ert",
-            "elementsregtest": "ert"}.get(str(chain).lower(), "tb")
+# The address prefix each chain Levo knows uses. Sequentia's unblinded
+# addresses are Bitcoin's own format, so its prefixes are Bitcoin's.
+CHAIN_HRP = {"sequentia": "bc", "main": "bc", "test": "tb", "testnet": "tb",
+             "regtest": "ert", "elementsregtest": "ert"}
+
+
+def hrp_for(chain, default="tb"):
+    """The address prefix for a chain by name.
+
+    A chain nobody named here gets `default`, and the caller decides what that
+    is: guessing "tb" for an unknown mainnet-like chain would encode every
+    address on it with a testnet prefix, and a wallet would refuse them all.
+    """
+    return CHAIN_HRP.get(str(chain).lower(), default)

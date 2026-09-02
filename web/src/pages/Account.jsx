@@ -153,7 +153,7 @@ function MyProjects() {
           </div>
           {p.sale && (p.sale.status === 'draft' || p.sale.status === 'ghost') && (
             <p className="small dim" style={{ margin: '.5rem 0 0' }}>
-              {p.sale.status === 'ghost' ? 'The lock was undone by a reorg. ' : ''}Lock the tokens on the sale's page to open it.
+              {p.sale.status === 'ghost' ? 'The chain does not have the funding you locked: it never reached a block, or a reorg took the block that held it. ' : ''}Lock the tokens on the sale's page to open it.
             </p>
           )}
           {p.sale && p.sale.strays && p.sale.strays.length > 0 && (

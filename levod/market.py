@@ -44,6 +44,11 @@ TXID_RE = re.compile(r"^[0-9a-f]{64}$")
 ASSET_RE = re.compile(r"^[0-9a-fA-F]{64}$")
 MAX_LINKS = 8
 MAX_INPUTS = 32                  # more than any wallet needs for one purchase
+# How many of a claimed purchase's outputs are looked at when asking whether
+# the node has ever heard of it. A buy pays the treasury, re-rests the
+# remainder, and delivers the buyer's tokens, so anything real is in the first
+# few.
+OUTPUTS_LOOKED_AT = 4
 # Measured against the builder's own vsize for a buy (one covenant input, the
 # treasury credit, the remainder, the buyer's tokens, change and the fee) and
 # for a reclaim, rounded up so an advised fee is never under the relay floor.
@@ -56,6 +61,7 @@ SALE_SORTS = ("new", "closing", "progress")
 DEFAULT_PAGE = 50                # listings a request returns when it asks for no size
 MAX_PAGE = 200                   # the most one request will return
 MAX_STRAYS_KEPT = 20             # foreign outputs kept when a state file is read
+PURCHASES_SHOWN = 20             # purchases carried inline with a position
 MAX_PURCHASES_PER_ACCOUNT = 64   # ledger entries one account keeps per sale
 MAX_DRAFTS = 3                   # unfunded listings one account may hold at once
 DEFAULT_PAYMENT_ASSET = "2a515539da5e6a60caa7766ecd65bac0c10d15717ddd2088844ba58f4d04b9de"
@@ -190,7 +196,7 @@ class Project:
 class Platform:
     def __init__(self, store, stake_reader, rails=None, rpc=None, hrp="tb",
                  payment_asset=None, payment_label=None, stake_label="SEQ",
-                 on_stale=None, operators=()):
+                 on_stale=None, operators=(), payment_decimals=8):
         self.store = store
         self.stake = stake_reader
         self.rails = rails
@@ -202,6 +208,9 @@ class Platform:
         self.payment_asset = (payment_asset or (rails.payment_asset if rails else None)
                               or DEFAULT_PAYMENT_ASSET).lower()
         self.payment_label = payment_label or (rails.payment_label if rails else None) or "USDX"
+        # How many places the payment asset divides into. Every message that
+        # quotes a price or a cap reads atoms through it.
+        self.payment_decimals = int(8 if payment_decimals is None else payment_decimals)
         self.stake_label = stake_label
         # Accounts that may flag or hide a listing on this Levo. Empty by
         # default: nobody has that power unless the operator grants it to a
@@ -223,7 +232,8 @@ class Platform:
     def _make_sale(self, p, terms, created_at=None):
         return S.Sale(p.slug, terms, p.issuer_account, created_at,
                       token_label=p.ticker, token_decimals=p.decimals,
-                      payment_label=self.payment_label)
+                      payment_label=self.payment_label,
+                      payment_decimals=self.payment_decimals)
 
     def _load(self):
         """Read the state file, or refuse to start.
@@ -282,6 +292,13 @@ class Platform:
         self.stake.links.load(self.store.data.get("stake_links"))
 
     def save(self):
+        """Write the platform to disk.
+
+        The lock is held while the state is assembled and dropped before the
+        bytes go to the disk. A save with a thousand listings on a busy disk is
+        the longest thing levod does, and holding the lock across it would park
+        every purchase, lock and listing behind an fsync.
+        """
         with self.lock:
             out = {}
             for slug, p in self.projects.items():
@@ -301,7 +318,8 @@ class Platform:
                 out[slug] = d
             self.store.data["projects"] = out
             self.store.data["stake_links"] = self.stake.links.to_json()
-            self.store.save()
+            payload = self.store.snapshot()
+        self.store.write(payload)
 
     # --- chain context ------------------------------------------------------
 
@@ -1080,27 +1098,33 @@ class Platform:
             self.save()
             return p
 
-    def projects_of(self, account):
+    def projects_of(self, account, limit=None, offset=0):
         h = self.height()
         out = []
         with self.lock:
-            mine = sorted(self.projects.values(), key=lambda x: -x.created_at)
-        for p in mine:
-            if p.issuer_account != account:
-                continue
+            mine = sorted((p for p in self.projects.values()
+                           if p.issuer_account == account),
+                          key=lambda x: -x.created_at)
+        total = len(mine)
+        offset = max(0, int(offset or 0))
+        limit = DEFAULT_PAGE if limit is None else max(1, min(int(limit), MAX_PAGE))
+        for p in mine[offset:offset + limit]:
             d = p.to_json(height=h)
             if p.sale:
                 d["address"] = self.sale_address(p.sale)
                 d["lock"] = self.lock_instructions(p) if p.sale.status in (S.DRAFT, S.GHOST) else None
             out.append(d)
-        return out
+        return {"projects": out, "total": total, "offset": offset, "limit": limit}
 
-    def positions(self, account, tier):
+    def positions(self, account, tier, limit=None, offset=0):
         """What this account has put into each sale, and what it may still put."""
         h = self.height()
         out = []
         with self.lock:
             everything = sorted(self.projects.values(), key=lambda x: -x.created_at)
+        offset = max(0, int(offset or 0))
+        limit = DEFAULT_PAGE if limit is None else max(1, min(int(limit), MAX_PAGE))
+        seen = 0
         for p in everything:
             sale = p.sale
             if sale is None:
@@ -1108,6 +1132,11 @@ class Platform:
             committed = sale.allocations.get(account, 0)
             purchases = [e for e in sale.purchases.get(account, []) if not e.get("voided")]
             if not committed and not purchases:
+                continue
+            seen += 1
+            if seen <= offset:
+                continue
+            if len(out) >= limit:
                 continue
             out.append({
                 "slug": p.slug, "name": p.name, "ticker": p.ticker,
@@ -1117,9 +1146,13 @@ class Platform:
                 "tokens_atoms": sum(int(e["token_atoms"]) for e in purchases),
                 "cap_atoms": tier.cap_atoms,
                 "allowance_remaining_atoms": sale.allowance_for(account, tier),
-                "purchases": purchases,
+                # The newest first, and only a page of them: an account that has
+                # bought a hundred times does not need all hundred to see where
+                # it stands, and the whole ledger for one sale is its own route.
+                "purchases": purchases[-PURCHASES_SHOWN:][::-1],
+                "purchases_total": len(purchases),
             })
-        return out
+        return {"positions": out, "total": seen, "offset": offset, "limit": limit}
 
     def sale_address(self, sale):
         return ADDR.from_script_pubkey(sale.script_pubkey, self.hrp)
@@ -1174,26 +1207,35 @@ class Platform:
     def _node_has_seen(self, txid):
         """Whether the node knows this transaction at all.
 
-        Absence of an answer is NOT absence of the transaction: without
-        `-txindex` a node cannot find one that is confirmed and fully spent.
-        So this says yes on any evidence and no only when both places that can
-        answer answered and had nothing.
+        Absence of an answer is NOT absence of the transaction, and most nodes
+        cannot answer directly: without `-txindex`, `getrawtransaction` fails
+        for anything that is not in the mempool, confirmed or invented alike.
+        So the question is asked three ways, and only a no from all of them
+        counts: is it in the mempool, does it still have an unspent output, and
+        does the node happen to have an index that knows it.
+
+        A purchase leaves the buyer their own tokens, so "some output of it is
+        unspent" is true of every recent one. The only real purchase this
+        refuses is one whose every output has already been spent, and the buyer
+        of that one has moved their tokens on.
         """
         if self.rpc is None:
             return True
-        seen = False
         try:
             if txid in (self.rpc.call("getrawmempool") or []):
                 return True
-            seen = True
-        except Exception:
-            pass
-        try:
-            if self.rpc.call("getrawtransaction", txid, True):
-                return True
         except Exception:
             return True                 # cannot tell: do not refuse a real buy
-        return not seen
+        for vout in range(OUTPUTS_LOOKED_AT):
+            try:
+                if self.rpc.txout(txid, vout) is not None:
+                    return True
+            except Exception:
+                return True
+        try:
+            return bool(self.rpc.call("getrawtransaction", txid, True))
+        except Exception:
+            return False                # no index, no mempool, nothing unspent
 
     def check_fee_asset(self, asset, fee_atoms):
         """Refuse a fee in an asset this node will not take.
@@ -1317,7 +1359,7 @@ class Platform:
                             "blinded": blinded})
         return checked
 
-    def sale_ledger(self, account, slug):
+    def sale_ledger(self, account, slug, limit=None, offset=0):
         """Every purchase Levo recorded against this sale.
 
         The chain is reconcilable by anyone: the sale address is unblinded and
@@ -1337,10 +1379,16 @@ class Platform:
         for acct, rows in sale.purchases.items():
             for e in rows:
                 entries.append(dict(e, account=acct))
-        entries.sort(key=lambda e: e.get("at") or 0)
+        entries.sort(key=lambda e: e.get("at") or 0, reverse=True)
+        total = len(entries)
+        offset = max(0, int(offset or 0))
+        limit = DEFAULT_PAGE if limit is None else max(1, min(int(limit), MAX_PAGE))
         return {
             "slug": slug,
-            "purchases": entries,
+            "purchases": entries[offset:offset + limit],
+            "total": total,
+            "offset": offset,
+            "limit": limit,
             "committed_atoms": dict(sale.allocations),
             "buyers": len([a for a, rows in sale.purchases.items() if rows]),
             "what_this_is": "Levo's own record, which is what the per-buyer "

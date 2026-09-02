@@ -98,6 +98,18 @@ class Store:
         self.data.setdefault("projects", {})
         self.data.setdefault("stake_links", {})
 
+    def snapshot(self):
+        """The bytes to write, made while the caller still holds its lock.
+
+        Serialising is the part that has to see a state nobody is changing;
+        writing is not, and it is the slow half.
+        """
+        return json.dumps(self.data, indent=2, sort_keys=True).encode()
+
+    def write(self, payload):
+        """Put an already-serialised state on disk, atomically."""
+        return self._write(payload)
+
     def save(self):
         """Write via a temp file and rename, so an interrupted save cannot
         truncate the state that was already good.
@@ -109,12 +121,15 @@ class Store:
         the health endpoint reads, and `dirty` is what makes the watcher try
         the write again on its next poll.
         """
+        return self._write(self.snapshot())
+
+    def _write(self, payload):
         tmp = None
         try:
             self.path.parent.mkdir(parents=True, exist_ok=True)
             fd, tmp = tempfile.mkstemp(dir=str(self.path.parent), prefix=".levo-", suffix=".tmp")
-            with os.fdopen(fd, "w") as f:
-                json.dump(self.data, f, indent=2, sort_keys=True)
+            with os.fdopen(fd, "wb") as f:
+                f.write(payload)
                 f.flush()
                 os.fsync(f.fileno())
             os.replace(tmp, self.path)

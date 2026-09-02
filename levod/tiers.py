@@ -66,7 +66,10 @@ class Tier:
         }
 
 
-# Cap figures are payment-asset atoms (USDX, 8 dp), per sale.
+# Cap figures are payment-asset atoms, per sale. The defaults below are
+# written in whole units of an asset with eight places, which is what Elements
+# issues by default; a deployment whose payment asset divides differently sets
+# its own table with LEVOD_TIERS, whose `cap` is in whole units either way.
 USDX_ATOMS = 100_000_000
 
 # The default thresholds are shares of the 400,000,000 SEQ supply, which is

@@ -44,9 +44,11 @@ export default function LockPanel({ project, onLocked }) {
       <h3>{ghost ? 'Lock the tokens again' : 'Lock the tokens'}</h3>
       {ghost ? (
         <p className="small dim">
-          The output that funded this sale was undone by a Bitcoin-driven reorg, so
-          the tokens are back in your wallet. Send them to the same sale address again
-          and confirm the new lock.
+          The chain does not have the output that funded this sale: either it never
+          reached a block, or a Bitcoin-driven reorg took the block that held it.
+          Either way the tokens are yours again -- check your wallet, and if the old
+          transaction is still sitting there unconfirmed, abandon it first. Then send
+          them to the same sale address and confirm the new lock.
         </p>
       ) : (
         <p className="small dim">
@@ -91,7 +93,20 @@ export default function LockPanel({ project, onLocked }) {
           </div>
         </div>
       </details>
-      {error && <Notice kind="bad" style={{ marginBottom: '1rem' }}>{error}</Notice>}
+      {error && (
+        <Notice kind="bad" style={{ marginBottom: '1rem' }}>
+          {error}
+          {/^an output of/i.test(error) && (
+            <div className="small" style={{ marginTop: '.5rem' }}>
+              The sale wants the whole allocation in one output. Send the
+              difference to the same address and the two will not merge, so the
+              way out is to send the full amount again in a single output and
+              confirm that one. Whatever is left over at the address is yours to
+              take back with your reclaim key after the close.
+            </div>
+          )}
+        </Notice>
+      )}
       <div className="btn-row">
         <button className="btn btn-primary" onClick={() => confirm(null, false)} aria-disabled={busy}>
           {busy ? 'Looking on chain…' : 'Look for my tokens on chain'}

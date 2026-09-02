@@ -74,8 +74,8 @@ export const api = {
   tiers: () => call('GET', '/tiers'),
   rails: () => call('GET', '/rails'),
   me: () => call('GET', '/me'),
-  myProjects: () => call('GET', '/me/projects'),
-  myPositions: () => call('GET', '/me/positions'),
+  myProjects: (params) => call('GET', '/me/projects' + query(params)),
+  myPositions: (params) => call('GET', '/me/positions' + query(params)),
 
   authChallenge: () => call('POST', '/auth/challenge'),
   authVerify: (message, signature, address) =>
@@ -100,5 +100,6 @@ export const api = {
   fee: (slug, params) => call('GET', '/projects/' + slug + '/fee' + query(params)),
   checkOutputs: (outputs) => call('POST', '/outputs/check', { outputs }),
   flag: (slug, payload) => call('POST', '/projects/' + slug + '/flag', payload),
+  purchases: (slug, params) => call('GET', '/projects/' + slug + '/purchases' + query(params)),
   watcher: () => call('GET', '/watcher'),
 }

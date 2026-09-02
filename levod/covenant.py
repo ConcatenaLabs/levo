@@ -13,10 +13,16 @@ two leaves:
            and therefore committed inside the taproot output key. A buyer can
            satisfy those terms; nobody can alter them. A partial buy must re-pay
            the unsold remainder to the IDENTICAL covenant, so the sale keeps
-           resting until it sells out or closes.
+           resting until it sells out or the project takes it back.
 
-  RECLAIM  after the close locktime, the project sweeps whatever did not sell,
-           under its own signature.
+  RECLAIM  from the close locktime on, the project sweeps whatever did not
+           sell, under its own signature.
+
+The close opens the reclaim path; it does not shut the sell path. This leaf
+carries no locktime of its own, so a buyer who builds the transaction can still
+fill a sale after its close, right up until the project reclaims. Levo stops
+PLANNING purchases at the close, which is a different thing from the chain
+refusing them.
 
 Three consequences carry the whole platform, and all three are consensus rules
 rather than Levo's promises:
