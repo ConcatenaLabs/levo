@@ -445,6 +445,7 @@ class Handler(BaseHTTPRequestHandler):
                 "watcher": {"running": bool(w._thread and w._thread.is_alive()),
                             "last_run_age_seconds": int(age) if age is not None else None,
                             "reconciling": not failing,
+                            "unverified_sales": list(w.unverified),
                             "last_error": w.last_error},
             })
 
@@ -470,9 +471,16 @@ class Handler(BaseHTTPRequestHandler):
                 "interval_seconds": w.interval,
                 "last_run": w.last_run,
                 "last_error": w.last_error,
-                "what_it_does": "reconciles every sale against the UTXO set, so "
-                                "a purchase made without Levo still moves the "
-                                "sale and a reorged lock stops being investable",
+                "unverified_sales": list(w.unverified),
+                "what_it_does": "reconciles every sale against the UTXO set and "
+                                "the mempool, so a purchase made without Levo "
+                                "still moves the sale and a reorged lock stops "
+                                "being investable. It ends a sale only on "
+                                "evidence the chain gives.",
+                "unverified_means": "a sale whose funding this levod cannot "
+                                    "place in the chain, which happens to state "
+                                    "restored from a backup. Such a sale is left "
+                                    "exactly as it was rather than guessed at.",
             })
 
         # -- auth -------------------------------------------------------------

@@ -80,6 +80,10 @@ class Watcher:
         self._miss_height = {}
         self._round = 0
         self.confirm_misses = 2
+        # Sales whose funding this levod cannot place in the chain: state
+        # restored from a backup taken before locks were dated. They are left
+        # exactly as they were, and named here so an operator can see why.
+        self.unverified = []
         self._stop = threading.Event()
         self._wake = threading.Event()
         self._thread = None
@@ -193,11 +197,15 @@ class Watcher:
 
         if changed or dirty:
             self.market.save()
+        self.unverified = sorted(
+            slug for slug, p in sales
+            if (p.sale.funding or {}).get("unverifiable"))
         self.last_run = time.time()
         self.last_error = "; ".join(errors) if errors else None
         if errors:
             self.log("watcher: " + self.last_error)
-        return {"checked": len(sales), "changed": changed, "scanned": scanned}
+        return {"checked": len(sales), "changed": changed, "scanned": scanned,
+                "unverified": list(self.unverified)}
 
     @contextmanager
     def _held(self):
@@ -456,16 +464,44 @@ class Watcher:
                         return False        # the chain no longer reaches that height
                     return None
         if f.get("seen_height") is None and not f.get("mined"):
-            # The watcher has never once seen this outpoint unspent, and it is
-            # not there now. Levo verifies a lock against the chain before it
-            # accepts one and dates it then, so an outpoint with no date at all
-            # is one that went away between being accepted and being looked at
-            # -- a reorg, or a funding that was only ever in the mempool.
-            return False
+            # Undated: state written before Levo dated its locks, or restored
+            # from a backup taken then. The funding may be perfectly real and
+            # long since spent. Look for it in the recent chain, and if it is
+            # not there, say so rather than guessing -- calling a sold-out sale
+            # a ghost wipes every buyer's allocation, and that is a far worse
+            # answer than an old sale that sits unverified.
+            return self._mined_recently(sale, chain)
         # Seen, but never in a block. Look for the funding transaction in the
         # blocks since; a transaction in no block and no mempool was never
         # made, which is the one case that is genuinely a ghost.
         return self._mined_since(sale, chain)
+
+    def _mined_recently(self, sale, chain):
+        """Look back over the recent chain for a funding this watcher never
+        saw. True when it is there; None -- never False -- when it is not.
+
+        Asked once per sale. Nothing about an old, undated funding changes from
+        one poll to the next, and the search reads a block at a time.
+        """
+        f = sale.funding or {}
+        tip = chain.get("height")
+        txid = f.get("txid")
+        if not txid or tip is None or f.get("unverifiable"):
+            return None
+        try:
+            for h in range(int(tip), max(1, int(tip) - BLOCK_SEARCH_LIMIT) - 1, -1):
+                block = self.rpc.call("getblock", self.rpc.call("getblockhash", h), 1) or {}
+                if txid in (block.get("tx") or []):
+                    self._remember_height(sale, h)
+                    return True
+        except Exception:
+            return None
+        f["unverifiable"] = True
+        self.log("watcher: %s: its funding %s:%s is in none of the last %d blocks "
+                 "and this levod never saw it. The sale is left exactly as it was; "
+                 "it is not called a ghost on a guess."
+                 % (sale.project_id, txid, f.get("vout"), BLOCK_SEARCH_LIMIT))
+        return None
 
     def _mined_since(self, sale, chain):
         f = sale.funding or {}
@@ -551,6 +587,7 @@ class Watcher:
                 keep = {"ancestor_height": anc_h, "ancestor_block": anc_b}
             elif old.get("mined"):
                 keep = {"mined": True}
+        keep.pop("unverifiable", None)      # it is right here; nothing is unverified
         keep.update({"txid": txid, "vout": int(vout), "atoms": atoms})
         sale.funding = keep
         sale.locked_atoms = atoms
@@ -682,6 +719,7 @@ class Watcher:
             sale.funding["height"] = height
             sale.funding["block"] = block
             sale.funding.pop("seen_height", None)
+            sale.funding.pop("unverifiable", None)
             return True
         except Exception:
             return False

@@ -329,6 +329,16 @@ export default function ProjectDetail() {
                   </table>
                 </Notice>
               )}
+              {sale.funding && sale.funding.unverifiable && (
+                <Notice kind="bad" style={{ marginTop: '1rem' }}>
+                  <strong>Levo cannot place this sale's funding in the chain.</strong>{' '}
+                  Its own record of where the tokens were locked was lost, and the
+                  transaction is in none of the recent blocks it can see. The sale
+                  is shown exactly as it was last known, which may be out of date.
+                  Rebuild the address from the terms above and look it up yourself
+                  before acting on anything here.
+                </Notice>
+              )}
               {sale.strays && sale.strays.length > 0 && (
                 <Notice kind="bad" style={{ marginTop: '1rem' }}>
                   <strong>Other assets are resting at the sale address.</strong> They are not
