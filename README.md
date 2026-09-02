@@ -125,7 +125,7 @@ chain; after the close, `bin/levo reclaim` sweeps what did not sell.
 | `bin/levo` | A CLI that runs the whole flow against your own node. |
 | `web/` | The single-page app: Vite and React, plain CSS, fonts served from the app itself. |
 | `contrib/` | The systemd unit, an environment file to fill in, and a backup timer for the state file. |
-| `doc/` | The design notes worth keeping outside the code. |
+| `doc/` | The design notes worth keeping outside the code, and `doc/api.md`, the HTTP API. |
 
 ## Running it
 
@@ -240,8 +240,13 @@ or when it runs but every poll is failing -- a watcher that reconciles nothing
 leaves sold-out sales showing as open.
 
 An operator named in `LEVOD_OPERATORS` can hide a listing from the board and
-put a notice on its page. That reaches the page and nothing else: the sale is a
-covenant on a public chain, and anyone holding its terms can still buy from it.
+put a notice on its page, from the sale's own page or with `bin/levo flag`.
+That reaches the page and nothing else: the sale is a covenant on a public
+chain, and anyone holding its terms can still buy from it.
+
+`contrib/README.md` carries the upgrade and the restore, both as commands. The
+upgrade reinstalls the systemd units, because a unit change in this repo
+reaches the box nowhere else.
 
 ## Configuration
 
@@ -261,7 +266,7 @@ covenant on a public chain, and anyone holding its terms can still buy from it.
 | `LEVOD_EXPLORER_URL` | — | An esplora-style explorer base (`.../tx/`, `.../address/`, `.../asset/`), for links. |
 | `LEVOD_LINKS` | — | JSON of label to URL for the rest of the deployment (wallet, faucet, staking pools), shown on the site. |
 | `LEVOD_WATCH_SECONDS` | `60` | How often the watcher reconciles. |
-| `LEVOD_AUTH_PER_MINUTE` / `LEVOD_WRITES_PER_MINUTE` | `30` / `120` | Per-client limits on sign-in and listing calls. |
+| `LEVOD_AUTH_PER_MINUTE` / `LEVOD_WRITES_PER_MINUTE` / `LEVOD_READS_PER_MINUTE` | `30` / `120` / `600` | Per-client limits on signing in, on the calls that write, and on reads. Health is never limited. |
 | `LEVOD_VERBOSE` | — | Log every request, including successful health checks and asset fetches. |
 | `LEVOD_CHAIN` | — | What to call the chain when the node cannot be asked. levod asks the node and keeps asking until it answers, so this is only a fallback. |
 | `LEVOD_ORIGIN` | the request's `Host` | The address this Levo is reached at. It is named in the statement a wallet is asked to sign, so behind a proxy set it to the public URL. |

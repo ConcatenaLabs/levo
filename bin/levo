@@ -18,6 +18,7 @@ the transaction, signs your inputs with your wallet, and broadcasts.
     levo buy <slug> --tokens 100            buy, end to end
     levo reclaim <slug> --to <address>      sweep what did not sell, after close
     levo withdraw <slug>                    remove an unfunded listing of yours
+    levo flag <slug> --notice "..."         operator: a notice on a listing
 
 Every command talks to a levod over HTTP and to your node over JSON-RPC. It
 never sends a key anywhere: signing happens in your own wallet, locally.
@@ -275,14 +276,21 @@ def _payment_label(p):
 # --- commands -----------------------------------------------------------------
 
 def cmd_sales(args):
-    r = api("GET", "/api/projects")
+    r = api("GET", "/api/projects?status=%s&limit=%d&offset=%d"
+            % (args.status, args.limit, args.offset))
     if not r["projects"]:
-        print("nothing is listed")
+        print("nothing is listed" if args.status == "all"
+              else "nothing is listed with status %s" % args.status)
         return
+    shown = len(r["projects"])
+    total = r.get("total", shown)
     for p in r["projects"]:
         s = p.get("sale") or {}
         status = (s.get("status") or "-").replace("_", " ")
         print("%-20s %-6s %-10s %s" % (p["slug"], p["ticker"], status, p.get("address") or ""))
+    if total > args.offset + shown:
+        print("\n%d of %d shown. --offset %d for the next page."
+              % (shown, total, args.offset + shown))
 
 
 def cmd_show(args):
@@ -345,7 +353,24 @@ def cmd_verify(args):
     else:
         print("funding        none published; the sale is a draft")
     print("internal key   NUMS (no key path)")
-    print("RESULT         %s" % ("OK: the tokens are locked under exactly these terms" if okay
+    # The address is made of some of the terms and not others, and saying "these
+    # terms" without that distinction claims the chain enforces an amount it
+    # never sees.
+    print("committed      %s" % ", ".join(C.COMMITTED_TERMS))
+    print("not committed  %s -- Levo checked the amount for sale against the"
+          % ", ".join(C.PUBLISHED_TERMS))
+    print("               chain when it accepted the lock; the covenant sells")
+    print("               whatever it holds")
+    if f and okay:
+        held = atoms(out.get("value", 0))
+        want = int(sale["terms"].get("total_atoms") or 0)
+        sold = int(sale.get("sold_atoms") or 0)
+        if want and held + sold < want:
+            print("NOTE: the covenant holds %s and Levo records %s sold, which is "
+                  "less than the %s this sale published"
+                  % (U.fmt(held), U.fmt(sold), U.fmt(want)))
+    print("RESULT         %s" % ("OK: the covenant at this address enforces exactly "
+                                 "the committed terms above" if okay
                                  else "FAILED: do not buy from this listing"))
     return 0 if okay else 1
 
@@ -485,12 +510,22 @@ def cmd_buy(args):
     print("buying %s %s for %s" % (args.tokens, p["ticker"], U.fmt(plan["payment_atoms"], 8, _payment_label(p))))
 
     pay_asset = sale["terms"]["payment_asset"]
+    fee_asset = args.fee_asset or pay_asset
     fee_atoms = int(args.fee) if args.fee is not None else int(
         plan.get("fee", {}).get("suggested_atoms") or 0)
     if fee_atoms <= 0:
         raise Fail("this levod could not suggest a fee (its node did not answer "
                    "with an exchange rate); pass --fee with a number of atoms")
-    ins, _ = unblinded_inputs(pay_asset, plan["payment_atoms"] + fee_atoms)
+    if fee_asset == pay_asset:
+        ins, _ = unblinded_inputs(pay_asset, plan["payment_atoms"] + fee_atoms)
+    else:
+        # Fees are payable in any asset the network accepts, so the fee may
+        # come from outputs of its own. They are separate inputs: a purchase
+        # spends the payment asset, and this spends whatever pays the fee.
+        ins, _ = unblinded_inputs(pay_asset, plan["payment_atoms"])
+        fee_ins, _ = unblinded_inputs(fee_asset, fee_atoms)
+        seen = {(i["txid"], i["vout"]) for i in ins}
+        ins = ins + [i for i in fee_ins if (i["txid"], i["vout"]) not in seen]
 
     dest = args.to or node("getnewaddress", "levo-buy")
     change = args.change or dest
@@ -498,7 +533,7 @@ def cmd_buy(args):
     built = api("POST", "/api/projects/%s/transaction" % args.slug, {
         "token_atoms": token_atoms,
         "buyer": {"token_address": dest, "change_address": change,
-                  "inputs": ins, "fee_atoms": fee_atoms, "fee_asset": pay_asset}}, tok)
+                  "inputs": ins, "fee_atoms": fee_atoms, "fee_asset": fee_asset}}, tok)
 
     signed = node("signrawtransactionwithwallet", built["unsigned_tx_hex"])
     if not signed.get("complete"):
@@ -509,7 +544,9 @@ def cmd_buy(args):
                    % (check[0].get("reject-reason") if check else "unknown"))
     if args.dry_run:
         print("would broadcast %s (accepted by testmempoolaccept, %s fee)"
-              % (built["txid"], U.fmt(fee_atoms, 8, _payment_label(p))))
+              % (built["txid"], U.fmt(fee_atoms, 8,
+                                      _payment_label(p) if fee_asset == pay_asset
+                                      else fee_asset[:8])))
         return
     txid = node("sendrawtransaction", signed["hex"])
     print("bought. %s" % txid)
@@ -581,6 +618,28 @@ def cmd_reclaim(args):
     print("reclaimed. %s" % node("sendrawtransaction", hexed))
 
 
+def cmd_flag(args):
+    """Take a listing off the board, or put a notice on its page.
+
+    An operator's reach is the page and nothing else: the sale is a covenant on
+    a public chain, and anyone holding its terms can still buy from it.
+    """
+    tok = sign_in()
+    body = {}
+    if args.hide:
+        body["hidden"] = True
+    if args.show:
+        body["hidden"] = False
+    if args.notice is not None:
+        body["notice"] = args.notice
+    if not body:
+        raise Fail("say what to change: --hide, --show, or --notice \"...\"")
+    r = api("POST", "/api/projects/%s/flag" % args.slug, body, tok)
+    print("%s: %s%s" % (r["slug"], "off the board" if r["hidden"] else "on the board",
+                        ", notice: %s" % r["notice"] if r.get("notice") else ""))
+    print(r["reaches"])
+
+
 def cmd_withdraw(args):
     tok = sign_in()
     api("DELETE", "/api/projects/%s" % args.slug, token=tok)
@@ -592,7 +651,8 @@ def main():
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest="cmd", required=True)
 
-    sub.add_parser("sales").set_defaults(fn=cmd_sales)
+    sl = sub.add_parser("sales")
+    sl.set_defaults(fn=cmd_sales)
     sh = sub.add_parser("show"); sh.add_argument("slug"); sh.set_defaults(fn=cmd_show)
     vf = sub.add_parser("verify"); vf.add_argument("slug"); vf.set_defaults(fn=cmd_verify)
     sub.add_parser("whoami").set_defaults(fn=cmd_whoami)
@@ -603,6 +663,19 @@ def main():
     ln.add_argument("--address", help="a legacy address of that key in your wallet, to sign with")
     ln.add_argument("--wif", help="or the key's WIF, to sign with signmessagewithprivkey")
     ln.set_defaults(fn=cmd_link)
+
+    sl.add_argument("--status", default="all",
+                    choices=["all", "open", "draft", "finished"],
+                    help="which sales to list (default: all)")
+    sl.add_argument("--limit", type=int, default=50, help="how many to show")
+    sl.add_argument("--offset", type=int, default=0, help="where to start")
+
+    fg = sub.add_parser("flag", help="operator: hide a listing or put a notice on it")
+    fg.add_argument("slug")
+    fg.add_argument("--hide", action="store_true", help="take it off the board")
+    fg.add_argument("--show", action="store_true", help="put it back")
+    fg.add_argument("--notice", help="a line shown at the top of its page")
+    fg.set_defaults(fn=cmd_flag)
 
     cr = sub.add_parser("create")
     cr.add_argument("file", nargs="?", help="a JSON file holding {project, terms}")
@@ -622,7 +695,8 @@ def main():
     b = sub.add_parser("buy")
     b.add_argument("slug"); b.add_argument("--tokens", required=True)
     b.add_argument("--rail", default="usdx")
-    b.add_argument("--fee", type=int, help="fee in atoms of the payment asset (default: levod's suggestion)")
+    b.add_argument("--fee", type=int, help="fee in atoms of the fee asset (default: levod's suggestion)")
+    b.add_argument("--fee-asset", help="asset to pay the fee in (default: the sale's payment asset)")
     b.add_argument("--to"); b.add_argument("--change")
     b.add_argument("--dry-run", action="store_true")
     b.set_defaults(fn=cmd_buy)
