@@ -123,6 +123,16 @@ def tiers_from_env(env=None):
     if tiers[0].min_stake_atoms != 0:
         raise ValueError("the lowest tier must start at 0 stake, so that every "
                          "visitor lands somewhere")
+    for t in tiers:
+        if t.cap_atoms < 0 or t.min_stake_atoms < 0:
+            raise ValueError("LEVOD_TIERS tier %r has a negative threshold or cap" % t.name)
+    for a, b in zip(tiers, tiers[1:]):
+        if b.min_stake_atoms == a.min_stake_atoms:
+            raise ValueError("LEVOD_TIERS has two tiers at %s SEQ; each threshold "
+                             "must be distinct" % (b.min_stake_atoms / SEQ_ATOMS))
+        if b.cap_atoms < a.cap_atoms:
+            raise ValueError("LEVOD_TIERS tier %r has a smaller cap than the tier "
+                             "below it; more stake must never buy less" % b.name)
     return tiers
 
 
@@ -137,6 +147,13 @@ class TierPolicy:
             if stake_atoms >= t.min_stake_atoms:
                 best = t
         return best
+
+    def listing_tier(self):
+        """The lowest tier that may list a project."""
+        for t in self.tiers:
+            if t.may_list:
+                return t
+        return self.tiers[-1]
 
     def next_tier(self, stake_atoms):
         """The tier above the current one, or None at the top."""
@@ -161,18 +178,28 @@ class StakeLinks:
     def __init__(self):
         self._by_account = {}      # account pubkey -> set of staker pubkeys
         self._owner = {}           # staker pubkey -> account pubkey
+        self.dirty = False         # a link moved outside an explicit link call
+
+    def owner_of(self, staker_pubkey):
+        return self._owner.get(str(staker_pubkey).lower())
+
+    PURPOSE = "Link this staking key to a Levo account."
+
+    @staticmethod
+    def binding_lines(account_pubkey, staker_pubkey):
+        """The lines that make a link statement bind: both parties, by name."""
+        return ["Account: %s" % account_pubkey, "Staking key: %s" % staker_pubkey]
 
     @staticmethod
     def binding_statement(account_pubkey, staker_pubkey, nonce):
-        return (
-            "Levo\n\n"
-            "Link this staking key to a Levo account.\n"
-            "This signature proves you control the stake. It authorises no "
-            "payment and moves no funds.\n\n"
-            "Account: %s\n"
-            "Staking key: %s\n"
-            "Nonce: %s\n"
-        ) % (account_pubkey, staker_pubkey, nonce)
+        """The statement shape a challenge issues for a link, for callers that
+        compose one without a Challenges instance (tests, documentation)."""
+        return "\n".join(
+            ["Levo", "", StakeLinks.PURPOSE,
+             "This signature proves you control this wallet. It authorises no "
+             "payment and moves no funds.", ""]
+            + StakeLinks.binding_lines(account_pubkey, staker_pubkey)
+            + ["Nonce: %s" % nonce])
 
     def link(self, account_pubkey, staker_pubkey):
         """Attach a proven staker key. One key, one account.
@@ -228,6 +255,13 @@ class StakeReader:
         total = 0
         keys = list(self.links.keys_for(account_pubkey))
         if account_pubkey in weights and account_pubkey not in keys:
+            # Signing in with a staking key proves control of it as surely as
+            # a link statement does. If the key was linked to another account
+            # before, the newest proof wins and the key moves, so one stake
+            # never counts for two accounts at once.
+            if self.links.owner_of(account_pubkey) not in (None, account_pubkey):
+                self.links.link(account_pubkey, account_pubkey)
+                self.links.dirty = True
             keys.insert(0, account_pubkey)
         for k in keys:
             entry = weights.get(k) or {}
@@ -250,11 +284,15 @@ class StakeReader:
             "next_tier": nxt.to_json() if nxt else None,
             "to_next_atoms": (nxt.min_stake_atoms - total) if nxt else 0,
             "keys": detail,
+            "staking_available": by_controller is not None,
             "counts_delegated_stake": by_controller,
             "delegation_note": (
                 "Stake delegated to a pool counts for you: delegation lends "
                 "block-signing rights, never the coins."
                 if by_controller else
+                "This chain has no proof of stake, so there is no stake to "
+                "count and every account is a visitor here."
+                if by_controller is None else
                 "This node reports stake by signer, so a stake you have "
                 "delegated to a pool will not be counted here. It is not lost; "
                 "the node needs a build that can report weight by controller."),
