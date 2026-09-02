@@ -36,6 +36,14 @@ export function compact(atoms, decimals = 8) {
   return n.toLocaleString('en-US', { maximumFractionDigits: 2 })
 }
 
+// The same amount with no thousands separators: what goes into a command, a
+// form field or anything else that will be read by a machine. `amount` groups
+// digits for a human eye, and a grouped number in a shell command is a command
+// that does not run.
+export function plain(atoms, decimals = 8) {
+  return amount(atoms, decimals, decimals).replace(/,/g, '')
+}
+
 // A decimal string typed by a person, to atoms. null when it is not a number
 // or carries more decimals than the asset has.
 export function toAtoms(text, decimals = 8) {

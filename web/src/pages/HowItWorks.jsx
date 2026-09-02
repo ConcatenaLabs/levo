@@ -39,8 +39,8 @@ export default function HowItWorks() {
       </p>
       <p>
         <strong>To list:</strong> a tier that may list; an issued asset, registered so
-        wallets show its name; the whole allocation in a wallet you can send from; a
-        an address for the treasury, which is where buyers' payments land; and a
+        wallets show its name; the whole allocation in a wallet you can send from; an
+        address for the treasury, which is where buyers' payments land; and a
         reclaim key you can sign with outside a browser wallet, because reclaiming
         means signing a bare hash rather than a transaction a wallet would recognise.
         <span className="mono"> levo keygen</span> makes one.
