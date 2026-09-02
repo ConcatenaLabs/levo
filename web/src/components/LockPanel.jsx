@@ -17,6 +17,13 @@ export default function LockPanel({ project, onLocked }) {
   const [error, setError] = useState(null)
   const [busy, setBusy] = useState(false)
   const [manual, setManual] = useState(false)
+  // The whole command, with nothing elided: a truncated asset id in a command
+  // is a command that cannot be run.
+  const lockCommand = 'sequentia-cli -named sendtoaddress' +
+    ' address=' + project.address +
+    ' amount=' + amount(sale.terms.total_atoms, decimals) +
+    ' assetlabel=' + sale.terms.token_asset +
+    ' fee_asset_label=<the asset you pay fees in>'
 
   async function confirm(e, named) {
     if (e) e.preventDefault()
@@ -62,10 +69,26 @@ export default function LockPanel({ project, onLocked }) {
         wrap it in a confidential address, because tokens locked into a confidential
         output can never be sold.
       </p>
-      <p className="small dim">
-        With a node: <span className="mono">bin/levo lock {project.slug}</span>, or{' '}
-        <span className="mono">sequentia-cli -named sendtoaddress address={project.address} amount={amount(sale.terms.total_atoms, decimals)} assetlabel={sale.terms.token_asset.slice(0, 8)}… fee_asset_label=&lt;asset&gt;</span>.
-      </p>
+      <details className="small dim" style={{ marginBottom: '1rem' }}>
+        <summary style={{ cursor: 'pointer' }}>Send it from a node instead</summary>
+        <p style={{ marginTop: '.6rem' }}>
+          <span className="mono">levo lock {project.slug}</span> sends the tokens and
+          confirms the lock in one step. To do it by hand, the command is below; it
+          names the asset by its id, because a label only exists on a node that was
+          told about it.
+        </p>
+        <div className="field" style={{ marginBottom: 0 }}>
+          <label htmlFor="lockcmd">
+            Command <Copy value={lockCommand} label="Copy the command" />
+          </label>
+          <textarea id="lockcmd" className="mono" rows={4} readOnly value={lockCommand}
+                    onFocus={(e) => e.target.select()} />
+          <div className="hint">
+            Replace the fee asset with one your node accepts fees in, and use the
+            wallet that holds the tokens.
+          </div>
+        </div>
+      </details>
       {error && <Notice kind="bad" style={{ marginBottom: '1rem' }}>{error}</Notice>}
       <div className="btn-row">
         <button className="btn btn-primary" onClick={() => confirm(null, false)} disabled={busy}>

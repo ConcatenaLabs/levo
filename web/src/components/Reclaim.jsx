@@ -1,7 +1,7 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { api } from '../lib/api'
 import { useStore } from '../lib/store'
-import { amount, capitalise } from '../lib/format'
+import { amount, capitalise, toAtoms } from '../lib/format'
 import { Copy, Notice } from './ui'
 
 // After the close, whatever did not sell is the project's to sweep. The
@@ -10,13 +10,32 @@ import { Copy, Notice } from './ui'
 // it, and neither can anyone else.
 
 export default function Reclaim({ project }) {
-  const { payment } = useStore()
+  const { payment, config } = useStore()
   const sale = project.sale
   const decimals = project.decimals ?? 8
-  const [form, setForm] = useState({ dest: '', inputs: '', fee: '100000' })
+  const [form, setForm] = useState({ dest: '', inputs: '', fee: '' })
   const [built, setBuilt] = useState(null)
   const [error, setError] = useState(null)
   const [busy, setBusy] = useState(false)
+  const [advice, setAdvice] = useState(null)
+  const hrp = config.hrp || 'tb'
+  const inputCount = form.inputs.split(/\s+/).filter(Boolean).length
+
+  // What this node will relay a reclaim of this shape for. A fee typed from
+  // memory is how a transaction ends up under the floor and simply never
+  // confirms, with nothing to say why.
+  useEffect(() => {
+    let alive = true
+    api.fee(project.slug, { kind: 'reclaim', inputs: Math.max(1, inputCount) })
+      .then((f) => {
+        if (!alive) return
+        setAdvice(f)
+        setForm((cur) => (cur.fee ? cur : { ...cur, fee: f.suggested_atoms
+          ? amount(f.suggested_atoms, payment.decimals) : '' }))
+      })
+      .catch(() => {})
+    return () => { alive = false }
+  }, [project.slug, inputCount, payment.decimals])
 
   async function build(e) {
     e.preventDefault()
@@ -27,10 +46,14 @@ export default function Reclaim({ project }) {
         if (!txid || vout === undefined || !/^\d+$/.test(vout)) throw new Error('Fee inputs look like txid:vout, one per line.')
         return { txid: txid.trim(), vout: Number(vout) }
       })
-      if (!/^\d+$/.test(form.fee || '')) throw new Error('The fee is a whole number of ' + payment.label + ' atoms.')
+      const feeAtoms = toAtoms(form.fee, payment.decimals)
+      if (feeAtoms === null || feeAtoms <= 0n) {
+        throw new Error('Enter the fee in ' + payment.label + ', with at most ' +
+                        payment.decimals + ' decimal places.')
+      }
       setBuilt(await api.reclaim(project.slug, {
         destination_address: form.dest.trim(),
-        fee_inputs, fee_atoms: Number(form.fee),
+        fee_inputs, fee_atoms: Number(feeAtoms),
       }))
     } catch (e) { setError(capitalise(e.message)) } finally { setBusy(false) }
   }
@@ -48,7 +71,7 @@ export default function Reclaim({ project }) {
           <label htmlFor="rdest">Where the tokens go</label>
           <input id="rdest" className="mono" value={form.dest} required
                  onChange={(e) => setForm({ ...form, dest: e.target.value })}
-                 placeholder="tb1… address" />
+                 placeholder={hrp + '1… address'} />
         </div>
         <div className="field">
           <label htmlFor="rin">Outputs to pay the fee from</label>
@@ -61,9 +84,17 @@ export default function Reclaim({ project }) {
           </div>
         </div>
         <div className="field">
-          <label htmlFor="rfee">Fee, in {payment.label} atoms</label>
-          <input id="rfee" className="mono" inputMode="numeric" value={form.fee} required
-                 onChange={(e) => setForm({ ...form, fee: e.target.value })} />
+          <label htmlFor="rfee">Fee, in {payment.label}</label>
+          <input id="rfee" className="mono" inputMode="decimal" value={form.fee} required
+                 onChange={(e) => setForm({ ...form, fee: e.target.value })}
+                 placeholder={advice && advice.suggested_atoms
+                   ? amount(advice.suggested_atoms, payment.decimals) : ''} />
+          {advice && advice.min_atoms && (
+            <div className="hint">
+              This node relays a reclaim of about {advice.vsize_estimate} vB for{' '}
+              {amount(advice.min_atoms, payment.decimals)} {payment.label} or more.
+            </div>
+          )}
         </div>
         <button className="btn btn-primary btn-sm" disabled={busy || !form.dest.trim()}>
           {busy ? 'Building…' : 'Build the reclaim'}
@@ -74,7 +105,7 @@ export default function Reclaim({ project }) {
         <div style={{ marginTop: '1rem' }}>
           <Notice style={{ marginBottom: '1rem' }}>
             The quickest way to finish: from your node, run{' '}
-            <span className="mono">bin/levo reclaim {project.slug} --to {form.dest.trim()} --reclaim-key &lt;32-byte hex&gt;</span>.
+            <span className="mono">levo reclaim {project.slug} --to {form.dest.trim()} --reclaim-key &lt;32-byte hex&gt;</span>.
             It signs the sighash below with your key, adds the witness, signs your fee
             inputs and broadcasts. Nothing below needs Levo.
           </Notice>

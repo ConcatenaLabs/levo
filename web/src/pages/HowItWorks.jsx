@@ -7,7 +7,10 @@ export default function HowItWorks() {
   usePageTitle('How it works')
   const { tiers, config, payment, stake, links } = useStore()
   const first = tiers && tiers.tiers.length > 1 ? tiers.tiers[1] : null
+  const firstAtoms = first ? first.min_stake_atoms : config.first_tier_atoms
   const floor = compact(config.staking_floor_atoms)
+  const hrp = config.hrp || 'tb'
+  const source = config.source_url
   const wallet = links.Wallet || links.wallet
   const faucet = links.Faucet || links.faucet
   return (
@@ -26,17 +29,21 @@ export default function HowItWorks() {
         <strong>To buy:</strong> a Levo account, which is a key you can sign with
         {wallet ? <> (the <a href={wallet} target="_blank" rel="noopener noreferrer">browser extension</a>, or any wallet that signs messages)</> : ' (a browser extension, or any wallet that signs messages)'};
         staked Sequence under a key you can prove you control, at or above the first
-        tier; and unblinded {payment.label} to pay with{config.testnet && faucet ? <> (on the testnet, <a href={faucet} target="_blank" rel="noopener noreferrer">the faucet</a> hands both out)</> : ''}.
-        The browser extension signs and broadcasts the purchase in place. A node
-        signs it with <span className="mono">signrawtransactionwithwallet</span>, or
-        lets <span className="mono">bin/levo buy</span> do the whole purchase.
+        tier; and unblinded {payment.label} to pay with -- unblinded meaning the
+        amount is written on the chain in the clear, which is how Sequentia pays
+        by default{config.testnet && faucet ? <> (on the testnet, <a href={faucet} target="_blank" rel="noopener noreferrer">the faucet</a> hands both out)</> : ''}.
+        A browser extension that can sign a transaction a website built does the
+        whole purchase in place. A node signs it with{' '}
+        <span className="mono">signrawtransactionwithwallet</span>, or{' '}
+        <span className="mono">levo buy</span> does the lot.
       </p>
       <p>
         <strong>To list:</strong> a tier that may list; an issued asset, registered so
         wallets show its name; the whole allocation in a wallet you can send from; a
-        taproot address for the treasury; and a reclaim key you can sign with outside a
-        browser wallet, because reclaiming means signing a raw sighash.
-        <span className="mono"> bin/levo keygen</span> makes one.
+        an address for the treasury, which is where buyers' payments land; and a
+        reclaim key you can sign with outside a browser wallet, because reclaiming
+        means signing a bare hash rather than a transaction a wallet would recognise.
+        <span className="mono"> levo keygen</span> makes one.
       </p>
 
       <h3 style={{ margin: '2.5rem 0 .75rem' }}>Signing in</h3>
@@ -79,11 +86,9 @@ export default function HowItWorks() {
         </table>
       )}
       <p style={{ marginTop: '1.25rem' }}>
-        {first && config.first_tier_is_chain_floor
+        {config.first_tier_is_chain_floor
           ? 'The first tier begins at ' + floor + ' ' + stake.label + ' because that is the chain\'s own blocksigner floor. Below it, consensus ignores a staker\'s weight entirely. Levo did not invent a threshold; it borrowed the one already being enforced.'
-          : first
-            ? 'The first tier begins at ' + compact(first.min_stake_atoms) + ' ' + stake.label + ' on this deployment. The chain\'s own blocksigner floor is ' + floor + ' ' + stake.label + ', below which consensus ignores a staker\'s weight entirely.'
-            : ''}
+          : 'The first tier begins at ' + compact(firstAtoms) + ' ' + stake.label + ' on this deployment. The chain\'s own blocksigner floor is ' + floor + ' ' + stake.label + ', below which consensus ignores a staker\'s weight entirely.'}
         {' '}The thresholds are Levo's configuration; the stake behind each key is read
         from the chain.
       </p>
@@ -122,12 +127,11 @@ export default function HowItWorks() {
         is take the tokens by any other route.
       </p>
       <p>
-        Tier caps are different, and it would be dishonest to present them
-        otherwise. The sell condition has a floor but no ceiling, and it is
-        permissionless by design: anyone able to build the transaction can buy,
-        whether or not they came through Levo. Caps are Levo's allocation
-        policy, applied to every purchase it plans. They are not a consensus
-        rule, and every cap the API returns says so.
+        Tier caps are different. The sell condition has a minimum lot and no
+        maximum, and it takes no signature: anyone who can build the transaction
+        can buy, whether or not they came through Levo. A cap is Levo's own
+        allocation policy, applied to the purchases Levo plans. Nothing on chain
+        enforces it, and a sale can be filled without Levo at all.
       </p>
 
       <h3 style={{ margin: '2.5rem 0 .75rem' }}>Paying</h3>
@@ -161,9 +165,58 @@ export default function HowItWorks() {
         is move tokens. Every sale publishes the terms its address was derived
         from: rebuild the address from them, compare it with the address the
         funding output pays, and you have checked the only thing that matters
-        without trusting the server about it. <span className="mono">bin/levo verify &lt;sale&gt;</span>
+        without trusting the server about it. <span className="mono">levo verify &lt;sale&gt;</span>
         {' '}does that on your own node.
       </p>
+
+      <h3 style={{ margin: '2.5rem 0 .75rem' }}>The levo command</h3>
+      <p>
+        <span className="mono">levo</span> is a command-line client for everything
+        on this site: it lists sales, rebuilds a sale address from its terms and
+        compares it with the chain, and drives a purchase, a lock or a reclaim
+        against your own Sequentia node. It holds no keys of its own -- your node's
+        wallet signs, on your machine.
+        {source ? <> It lives in <a href={source} target="_blank" rel="noopener noreferrer">
+          the Levo repository</a> at <span className="mono">bin/levo</span>.</> : null}
+        {' '}Point it at this site by setting{' '}
+        <span className="mono">LEVO_URL</span>, and it needs Python 3 and{' '}
+        <span className="mono">sequentia-cli</span> on your path.
+      </p>
+
+      <h3 style={{ margin: '2.5rem 0 .75rem' }}>Words this page uses</h3>
+      <dl className="glossary">
+        <dt>Atom</dt>
+        <dd>
+          The smallest unit an asset has, the way a satoshi is Bitcoin's. Every
+          amount the chain holds is a whole number of atoms; the decimals a page
+          shows are a display of that number.
+        </dd>
+        <dt>Covenant</dt>
+        <dd>
+          An output whose spending conditions are a program rather than a
+          signature. A Levo sale is one: the conditions are compiled from the
+          terms, so the address itself is the promise.
+        </dd>
+        <dt>Taproot</dt>
+        <dd>
+          The output type those conditions live in ({hrp}1p… addresses). A sale
+          uses one with no usable key path, so the only ways to spend it are the
+          two conditions it publishes.
+        </dd>
+        <dt>Unblinded</dt>
+        <dd>
+          An output whose asset and amount are written on chain in the clear.
+          Sequentia is unblinded by default; confidentiality is something you turn
+          on per payment. A covenant can only read what is in the clear, so a
+          confidential output can neither fund a sale nor pay for one.
+        </dd>
+        <dt>Sighash</dt>
+        <dd>
+          The hash a signature is made over. A reclaim is signed as a bare hash
+          because the key that signs it is the project's own, held outside any
+          wallet that would recognise the transaction.
+        </dd>
+      </dl>
 
       <div className="btn-row" style={{ marginTop: '2.5rem' }}>
         <Link className="btn btn-primary" to="/projects">See the sales</Link>

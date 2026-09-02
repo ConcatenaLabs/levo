@@ -58,6 +58,16 @@ async function call(method, path, body) {
   return data
 }
 
+// A query string from an object, leaving out what was not asked for.
+function query(params) {
+  const q = new URLSearchParams()
+  for (const [k, v] of Object.entries(params || {})) {
+    if (v !== undefined && v !== null && v !== '') q.set(k, String(v))
+  }
+  const text = q.toString()
+  return text ? '?' + text : ''
+}
+
 export const api = {
   health: () => call('GET', '/health'),
   config: () => call('GET', '/config'),
@@ -76,7 +86,7 @@ export const api = {
     call('POST', '/stake/link', { message, signature, staker_pubkey }),
   stakeUnlink: (staker_pubkey) => call('POST', '/stake/unlink', { staker_pubkey }),
 
-  projects: () => call('GET', '/projects'),
+  projects: (params) => call('GET', '/projects' + query(params)),
   project: (slug) => call('GET', '/projects/' + slug),
   createProject: (project, terms) => call('POST', '/projects', { project, terms }),
   updateProject: (slug, meta) => call('PATCH', '/projects/' + slug, meta),
@@ -87,5 +97,7 @@ export const api = {
   confirm: (slug, payload) => call('POST', '/projects/' + slug + '/confirm', payload),
   transaction: (slug, payload) => call('POST', '/projects/' + slug + '/transaction', payload),
   reclaim: (slug, payload) => call('POST', '/projects/' + slug + '/reclaim', payload),
+  fee: (slug, params) => call('GET', '/projects/' + slug + '/fee' + query(params)),
+  flag: (slug, payload) => call('POST', '/projects/' + slug + '/flag', payload),
   watcher: () => call('GET', '/watcher'),
 }

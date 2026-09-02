@@ -82,9 +82,12 @@ export function isHeightClose(locktime) {
 export function closeLabel(locktime) {
   if (!locktime) return 'not set'
   if (isHeightClose(locktime)) return 'block ' + Number(locktime).toLocaleString('en-US')
-  return new Date(Number(locktime) * 1000).toLocaleDateString('en-US', {
-    year: 'numeric', month: 'short', day: 'numeric', timeZone: 'UTC',
-  }) + ' UTC'
+  // A close is a moment, not a day: a sale closing at 00:30 and one closing at
+  // 23:30 are a day apart and would otherwise read the same.
+  return new Date(Number(locktime) * 1000).toLocaleString('en-US', {
+    year: 'numeric', month: 'short', day: 'numeric',
+    hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'UTC',
+  }).replace(',', '') + ' UTC'
 }
 
 // How far away the close is: "in 46 days", "in about 1,400 blocks (a day)".
@@ -118,4 +121,25 @@ export function timeLabel(unix) {
   return new Date(Number(unix) * 1000).toLocaleString('en-US', {
     year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', timeZone: 'UTC',
   }) + ' UTC'
+}
+
+// The scriptPubKey a sale's treasury credit pays: taproot, or the version-0
+// output most wallets hand out. The version is part of the terms, because it
+// is part of what the covenant was compiled from.
+export function treasurySpk(terms) {
+  if (!terms || !terms.treasury_prog) return ''
+  return (Number(terms.treasury_ver ?? 1) === 1 ? '5120' : '0014') + terms.treasury_prog
+}
+
+// What a tier lets you do, from the tier itself. An operator's blurb is
+// flavour on top; the figures and the units come from the deployment, so a
+// card can never quote a ticker the chain does not use.
+export function tierSays(tier, paymentLabel) {
+  if (!tier) return ''
+  const cap = big(tier.cap_atoms)
+  const lines = cap > 0n
+    ? ['Up to ' + amount(cap, 8) + ' ' + paymentLabel + ' in any one sale.']
+    : ['This tier cannot buy.']
+  if (tier.may_list) lines.push('May list a project.')
+  return lines.join(' ')
 }

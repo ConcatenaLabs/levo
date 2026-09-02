@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { amount, compact, toAtoms, atomsArg, closeLabel, closeIn, isHeightClose, pricePerToken,
+import { amount, compact, toAtoms, atomsArg, closeLabel, closeIn, isHeightClose, pricePerToken, treasurySpk,
          capitalise, big } from '../src/lib/format.js'
 import { xFor, yFor } from '../src/lib/beam.js'
 import { addressOf, encodeSegwit } from '../src/lib/bech32.js'
@@ -40,7 +40,7 @@ test('closes: heights below 500,000,000, times above, shown in UTC', () => {
   assert.equal(isHeightClose(499999999), true)
   assert.equal(isHeightClose(500000000), false)
   assert.equal(closeLabel(120000), 'block 120,000')
-  assert.equal(closeLabel(1792307521), 'Oct 18, 2026 UTC')
+  assert.equal(closeLabel(1792307521), 'Oct 18 2026, 07:12 UTC')
   assert.equal(closeIn(120000, 118600), 'in about 1,400 blocks (23 hours)')
   assert.equal(closeIn(120000, 118560), 'in about 1,440 blocks (1 day)')
   assert.equal(closeIn(120000, 120000), 'closed')
@@ -83,4 +83,17 @@ test('bech32m encodes a taproot program and bech32 a v0 one', () => {
   assert.equal(encodeSegwit('bc', 1, '79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798'),
                'bc1p0xlxvlhemja6c4dqv22uapctqupfhlxm9h8z3k2e72q4k9hcz7vqzk5jj0')
   assert.equal(addressOf('6a04deadbeef'), null)
+})
+
+test('a treasury scriptPubKey follows the version in the terms', () => {
+  assert.equal(treasurySpk({ treasury_prog: 'aa'.repeat(32) }), '5120' + 'aa'.repeat(32))
+  assert.equal(treasurySpk({ treasury_prog: 'bb'.repeat(32), treasury_ver: 1 }), '5120' + 'bb'.repeat(32))
+  assert.equal(treasurySpk({ treasury_prog: 'cc'.repeat(20), treasury_ver: 0 }), '0014' + 'cc'.repeat(20))
+  assert.equal(treasurySpk(null), '')
+})
+
+test('a close says the time of day, not just the date', () => {
+  const label = closeLabel(2000000000)
+  assert.match(label, /\d\d:\d\d UTC$/)
+  assert.equal(closeLabel(900000), 'block 900,000')
 })

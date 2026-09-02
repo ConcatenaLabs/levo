@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { api } from '../lib/api'
 import { useStore } from '../lib/store'
-import { amount, atomsArg, capitalise, compact, toAtoms } from '../lib/format'
+import { amount, atomsArg, capitalise, toAtoms } from '../lib/format'
 import { Notice, usePageTitle } from '../components/ui'
 import SignIn from '../components/SignIn'
 import Beam from '../components/Beam'
@@ -32,8 +32,13 @@ export default function Launch() {
     e.preventDefault()
     setError(null); setInvalid({}); setBusy(true)
     try {
-      const decimals = Number(form.decimals)
-      if (!Number.isInteger(decimals) || decimals < 0 || decimals > 8) throw bad('decimals', 'Decimals is a whole number from 0 to 8.')
+      // An empty field is not zero decimals. Reading it as one would list the
+      // token at 1 atom per unit and quote every amount 100,000,000 times off.
+      const typed = String(form.decimals ?? '').trim()
+      const decimals = Number(typed)
+      if (!/^\d+$/.test(typed) || !Number.isInteger(decimals) || decimals < 0 || decimals > 8) {
+        throw bad('decimals', 'Decimals is a whole number from 0 to 8. It is how many places the token divides into, and it cannot be changed after the lock.')
+      }
       const total = toAtoms(form.total, decimals)
       const minLot = toAtoms(form.min_lot, decimals)
       const priceAtoms = toAtoms(form.price, payment.decimals)
@@ -80,7 +85,11 @@ export default function Launch() {
       <div className="wrap section" style={{ maxWidth: 640 }}>
         <div className="section-head">
           <h1 className="h2">Launch a project</h1>
-          <p>Listing is open to a tier that may list. Sign in and Levo will tell you where you stand.</p>
+          <p>
+            Listing a sale needs staked Sequence: the more you have committed to
+            the chain, the more Levo lets you do here. Sign in with your wallet
+            and the next screen says exactly where you stand and what is missing.
+          </p>
         </div>
         <div className="card"><SignIn /></div>
       </div>
@@ -119,9 +128,9 @@ export default function Launch() {
       <Notice style={{ marginTop: '1.5rem' }}>
         <strong>Before you start you need:</strong> an issued asset, registered so
         wallets show its name; the whole allocation in a wallet you can send from; a
-        taproot (<span className="mono">{config.hrp}1p…</span>) address for the treasury; and
-        a reclaim key you can sign with outside a browser wallet.{' '}
-        <span className="mono">bin/levo keygen</span> makes one; keep its secret offline.
+        an address for the treasury, which is where buyers' payments land; and a
+        reclaim key you can sign with outside a browser wallet.{' '}
+        <span className="mono">levo keygen</span> makes one; keep its secret offline.
       </Notice>
 
       <form onSubmit={submit} style={{ marginTop: '2rem' }} noValidate>
@@ -214,7 +223,9 @@ export default function Launch() {
           <input id="treasury" className="mono" value={form.treasury_address} onChange={set('treasury_address')}
                  placeholder={config.hrp + '1p…'} required aria-invalid={invalid.treasury || undefined} />
           <div className="hint">
-            Where buyers' {payment.label} is paid: any taproot address from your wallet.
+            Where buyers' {payment.label} is paid: any address your wallet gives you,
+            <span className="mono"> {config.hrp}1q…</span> or <span className="mono">{config.hrp}1p…</span>.
+            It is compiled into the covenant, so it cannot be changed after the lock.
             The covenant checks every payment lands here. Because this is your own key,
             you can always buy your own sale out at the published price.
           </div>

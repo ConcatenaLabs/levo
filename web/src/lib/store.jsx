@@ -11,7 +11,7 @@ const DEFAULT_CONFIG = {
   payment: { asset: '', label: 'USDX', decimals: 8 },
   stake: { label: 'SEQ', decimals: 8 },
   staking_floor_atoms: 4000000000000, first_tier_atoms: 4000000000000,
-  first_tier_is_chain_floor: true, links: {},
+  first_tier_is_chain_floor: true, links: {}, source_url: '',
 }
 
 export function StoreProvider({ children }) {

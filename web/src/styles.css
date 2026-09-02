@@ -401,7 +401,8 @@ input[type="date"]::-webkit-calendar-picker-indicator { filter: invert(.85); }
 
 .stat { border-left: 2px solid var(--line); padding-left: .9rem; }
 .stat b { display: block; font-family: var(--mono); font-size: 1.4rem; font-weight: 500; overflow-wrap: anywhere; }
-.stat span { font-size: .78rem; color: var(--muted); letter-spacing: .04em; text-transform: uppercase; font-family: var(--mono); }
+.stat span { display: block; font-size: .78rem; color: var(--muted); letter-spacing: .04em; text-transform: uppercase; font-family: var(--mono); }
+.stat span + span { text-transform: none; letter-spacing: 0; margin-top: .15rem; }
 
 .kv { display: flex; justify-content: space-between; gap: 1rem; padding: .45rem 0; font-size: .9rem; border-bottom: 1px solid var(--line-soft); }
 .kv:last-child { border-bottom: 0; }
@@ -480,9 +481,95 @@ input[type="date"]::-webkit-calendar-picker-indicator { filter: invert(.85); }
     --ink: #111; --ink-dim: #333; --muted: #555;
     --brass: #7a5f10; --brass-dim: #b09a55; --verdigris: #2b6f66; --verdigris-dim: #9fc7c1;
   }
-  body::before, .nav, .footer, .rail-pick, .btn, .copy, .skip, .banner { display: none !important; }
+  body::before, .nav, .footer, .rail-pick, .btn, .copy, .skip, .banner,
+  .board-filters, .pager { display: none !important; }
+  /* A printed sale page is a record of the terms, not a form. Anything that
+     asks for input is left out, and the terms come first rather than after a
+     column of controls that cannot be used on paper. */
+  form, textarea, input, select, details > summary, .meter { display: none !important; }
   .split { grid-template-columns: 1fr; }
+  .split > .sticky { order: 2; }
+  .split > :first-child { order: 1; }
   .sticky { position: static; }
   .card, .notice { border-color: #bbb; break-inside: avoid; }
+  .card:empty, .notice:empty { display: none; }
+  .terms, .outputs { break-inside: auto; }
+  .terms th, .terms td { break-inside: avoid; }
   a { text-decoration: none; }
+  /* On paper a link is only useful if its address is on the page. */
+  .prose a[href^="http"]::after, p a[href^="http"]::after {
+    content: " (" attr(href) ")";
+    font-size: .8em;
+    color: #555;
+    word-break: break-all;
+  }
 }
+
+/* Text for a screen reader and nothing else: a live region that says what the
+   page is doing, and labels that a sighted reader gets from the layout. */
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* The board's own controls: which sales, in what order, and a search. */
+.board-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: .75rem 1.5rem;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 1.25rem;
+}
+.chips { display: flex; flex-wrap: wrap; gap: .4rem; }
+.chip {
+  font: inherit;
+  font-size: .85rem;
+  padding: .35rem .8rem;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: transparent;
+  color: var(--ink-dim);
+  cursor: pointer;
+}
+.chip:hover { color: var(--ink); border-color: var(--ink-dim); }
+.chip.on { color: var(--ground); background: var(--ink); border-color: var(--ink); }
+.board-controls { display: flex; gap: .5rem; flex-wrap: wrap; }
+.board-controls input, .board-controls select {
+  font: inherit;
+  font-size: .9rem;
+  padding: .4rem .6rem;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  color: var(--ink);
+}
+.pager {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 1rem;
+  margin-top: 1.5rem;
+}
+
+/* A short glossary: a term, then what it means. */
+.glossary { margin: 0; max-width: 68ch; }
+.glossary dt {
+  font-family: var(--display);
+  font-weight: 600;
+  margin-top: 1.1rem;
+}
+.glossary dd { margin: .25rem 0 0; color: var(--ink-dim); }
+
+/* Focus moves here on every client-side navigation, so the ring that would
+   draw a box round the whole page is suppressed; the heading is what the
+   reader hears and sees. */
+main#main:focus { outline: none; }
