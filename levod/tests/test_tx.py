@@ -226,3 +226,128 @@ def test_set_witness_replaces_one_input_and_leaves_the_rest(t):
         t.ok(False, "should refuse an input index that does not exist")
     except TX.BuildError:
         t.ok(True, "refuses an input index that does not exist")
+
+
+def test_reclaim_builds_what_the_project_signs(t):
+    """A reclaim hands back the sighash, the leaf and the control block, and
+    never a signature: the key is the project's. The witness assembled from a
+    signature over that sighash is what the CLI puts on the wire."""
+    import secp256k1 as K
+    sec = 0x2222222222222222222222222222222222222222222222222222222222222222
+    xonly = K.xonly_pubkey(sec).hex()
+    terms = C.SaleTerms(GOLD, USDX, 1, 4, "11" * 32, 50 * 10**8, 100, xonly, 100_000 * 10**8)
+    s = S.Sale("t", terms, "issuer")
+    s.confirm_lock("ab" * 32, 0, s.script_pubkey, 100_000 * 10**8, GOLD)
+    fee_inputs = [{"txid": "cd" * 32, "vout": 1, "asset": USDX, "value_atoms": 5000,
+                   "script_pubkey": "0014" + "cc" * 20}]
+    r = TX.build_reclaim(s, "5120" + "dd" * 32, fee_inputs, 1000, USDX, "ee" * 32)
+    t.ok("signature" not in r, "levod signs nothing")
+    t.eq(r["signs_with"], xonly, "it names the key that must sign")
+    t.eq(r["locktime"], 100, "the locktime is the close")
+    t.eq(len(r["sighash"]), 64, "a 32-byte sighash")
+    sig = K.schnorr_sign(bytes.fromhex(r["sighash"]), sec)
+    t.ok(TX.check_reclaim_signature(s, r["sighash"], sig), "a signature by the reclaim key checks")
+    t.ok(not TX.check_reclaim_signature(s, r["sighash"], K.schnorr_sign(bytes.fromhex(r["sighash"]), sec + 1)),
+         "one by another key does not")
+    stack = TX.reclaim_witness(s, sig)
+    t.eq([len(x) for x in stack][0], 64, "the witness starts with the signature")
+    t.eq(stack[1], s.cov.reclaim_leaf, "then the leaf")
+    finished = TX.set_witness(r["unsigned_tx_hex"], 0, stack)
+    t.ok(len(finished) > len(r["unsigned_tx_hex"]), "and the witness fits into the transaction")
+    try:
+        TX.build_reclaim(s, "5120" + "dd" * 32, fee_inputs, 1000, USDX, "ee" * 32, locktime=99)
+        t.ok(False, "a locktime before the close is refused")
+    except TX.BuildError:
+        t.ok(True, "a locktime before the close is refused")
+    s.locked_atoms = 0
+    try:
+        TX.build_reclaim(s, "5120" + "dd" * 32, fee_inputs, 1000, USDX, "ee" * 32)
+        t.ok(False, "an empty covenant has nothing to reclaim")
+    except TX.BuildError:
+        t.ok(True, "an empty covenant has nothing to reclaim")
+
+
+def test_a_fee_in_the_sale_token_never_lands_at_output_one_on_a_full_buy(t):
+    """The sell leaf reads any token-asset output at index 1 as a remainder that
+    must rest at the covenant. Paying the fee in the token would put one
+    there; the builder refuses unless payment-asset change can take the slot."""
+    s = _sale(total=100 * 10**8, min_lot=100 * 10**8)
+    plan = s.plan_buy("b", T.TierPolicy().for_stake(TOP), token_atoms=100 * 10**8)
+    tok_in = {"txid": "ef" * 32, "vout": 0, "asset": GOLD, "value_atoms": 5000,
+              "script_pubkey": "0014" + "cc" * 20}
+    pay_in = {"txid": "cd" * 32, "vout": 1, "asset": USDX, "value_atoms": 25 * 10**8,
+              "script_pubkey": "0014" + "cc" * 20}
+    try:
+        TX.build_buy(s, plan, _buyer(inputs=[pay_in, tok_in], fee_asset=GOLD, fee_atoms=5000))
+        t.ok(False, "a token fee with no other change is refused")
+    except TX.BuildError as e:
+        t.ok("sale token" in str(e), "a token fee with no other change is refused with the reason")
+    built = TX.build_buy(s, plan, _buyer(inputs=[dict(pay_in, value_atoms=30 * 10**8), tok_in],
+                                         fee_asset=GOLD, fee_atoms=4000))
+    t.eq(built["outputs"][1]["asset"], USDX, "payment change takes output 1")
+    roles = [o["role"] for o in built["outputs"]]
+    t.ok("your tokens" in roles and roles.count("your tokens") == 1, "exactly one output is the buyer's tokens")
+    t.ok("your change" in roles, "token change is labelled as change")
+    t.ok(built["pset"], "a PSET comes with it")
+
+
+def test_the_pset_matches_the_transaction(t):
+    import pset as P
+    s = _sale()
+    plan = s.plan_buy("b", T.TierPolicy().for_stake(TOP), token_atoms=1000 * 10**8)
+    built = TX.build_buy(s, plan, _buyer(inputs=[{"txid": "cd" * 32, "vout": 1, "asset": USDX,
+                                                  "value_atoms": 1000 * 10**8,
+                                                  "script_pubkey": "0014" + "cc" * 20}]))
+    maps = P.parse_maps(built["pset"])
+    g, i0, i1 = maps[0], maps[1], maps[2]
+    t.eq(len(maps), 1 + 2 + len(built["outputs"]), "one map per input and output")
+    t.ok(any(k == b"\x08" for k, _ in i0), "the covenant input carries its final witness")
+    t.ok(not any(k == b"\x08" for k, _ in i1), "the buyer's input is left to the wallet")
+    t.ok(any(k == b"\x01" for k, _ in i1), "and carries the output it spends")
+    built2 = TX.build_buy(s, plan, _buyer(inputs=[{"txid": "cd" * 32, "vout": 1, "asset": USDX,
+                                                   "value_atoms": 1000 * 10**8}]))
+    t.eq(built2["pset"], None, "without the spent script there is no PSET, and the hex still stands")
+
+
+def test_reclaim_locktime_kinds_must_match_the_close(t):
+    import secp256k1 as K
+    xonly = K.xonly_pubkey(5).hex()
+    terms = C.SaleTerms(GOLD, USDX, 1, 4, "11" * 32, 50 * 10**8, 100, xonly, 100_000 * 10**8)
+    s = S.Sale("t", terms, "issuer")
+    s.confirm_lock("ab" * 32, 0, s.script_pubkey, 100_000 * 10**8, GOLD)
+    fee_inputs = [{"txid": "cd" * 32, "vout": 1, "asset": USDX, "value_atoms": 5000,
+                   "script_pubkey": "0014" + "cc" * 20}]
+    try:
+        TX.build_reclaim(s, "5120" + "dd" * 32, fee_inputs, 1000, USDX, "ee" * 32, locktime=1_700_000_000)
+        t.ok(False, "a time locktime on a height-closed sale is refused")
+    except TX.BuildError as e:
+        t.ok("block height" in str(e), "a time locktime on a height-closed sale is refused", str(e))
+    try:
+        TX.build_reclaim(s, "", fee_inputs, 1000, USDX, "ee" * 32)
+        t.ok(False, "an empty destination is refused")
+    except TX.BuildError:
+        t.ok(True, "an empty destination is refused, since it would be a fee output")
+
+
+def test_set_witness_walks_confidential_outputs(t):
+    """A wallet may add a blinded change output. The walker has to step over
+    33-byte commitments and 1-byte nulls, or the witness lands mid-proof."""
+    tx = TX.Transaction()
+    tx.vin.append(TX.TxIn("ab" * 32, 0))
+    tx.vin.append(TX.TxIn("cd" * 32, 1))
+    tx.vout.append(TX.TxOut(USDX, 5, "5120" + "11" * 32))
+    raw = bytearray(tx.serialize(with_witness=False))
+    # Splice a confidential output in by hand: asset commitment, value
+    # commitment, nonce commitment, empty script.
+    conf = (b"\x0a" + b"\x11" * 32 + b"\x08" + b"\x22" * 32 + b"\x02" + b"\x33" * 32 + b"\x00")
+    n_out_pos = 4 + 1 + 1 + 2 * (32 + 4 + 1 + 4)
+    raw[n_out_pos] = 2
+    body = bytes(raw[:-4]) + conf + bytes(raw[-4:])
+    stack = [b"\x01", b"\x51"]
+    out = TX.set_witness(body.hex(), 1, stack)
+    t.ok(out.endswith((b"\x00\x00" + b"\x02\x01\x01\x01\x51" + b"\x00" + b"\x00\x00" * 2).hex()),
+         "the witness for input 1 is written after input 0's empty witness")
+    # And back through a witnessed transaction: replacing again keeps the layout.
+    again = TX.set_witness(out, 0, [b"\x02"])
+    t.ok(again.endswith((b"\x00\x00" + b"\x02\x01\x01\x01\x51" + b"\x00" + b"\x00\x00" * 2).hex()),
+         "input 1's witness survives a later write to input 0")

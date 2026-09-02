@@ -186,6 +186,21 @@ def build_reclaim_leaf(close_locktime, reclaim_xonly):
 
 # --- Levo's view of a sale --------------------------------------------------
 
+def _int(v, name):
+    """A whole number, given as an int or a decimal string. Strings are
+    accepted because JavaScript cannot carry an atom count above 2**53 as a
+    number, and a sale's size can be larger than that."""
+    if isinstance(v, bool):
+        raise ValueError("%s must be a whole number" % name)
+    if isinstance(v, int):
+        return v
+    if isinstance(v, str) and v.strip().lstrip("-").isdigit():
+        return int(v.strip())
+    if isinstance(v, float) and v.is_integer():
+        return int(v)
+    raise ValueError("%s must be a whole number of atoms" % name)
+
+
 def _hex32(v, name):
     if isinstance(v, (bytes, bytearray)):
         v = bytes(v).hex()
@@ -209,13 +224,13 @@ class SaleTerms:
                  total_atoms=None):
         self.token_asset = _hex32(token_asset, "token_asset")
         self.payment_asset = _hex32(payment_asset, "payment_asset")
-        self.price_num = int(price_num)
-        self.price_den = int(price_den)
+        self.price_num = _int(price_num, "price_num")
+        self.price_den = _int(price_den, "price_den")
         self.treasury_prog = _hex32(treasury_prog, "treasury_prog")
-        self.min_lot = int(min_lot)
-        self.close_locktime = int(close_locktime)
+        self.min_lot = _int(min_lot, "min_lot")
+        self.close_locktime = _int(close_locktime, "close_locktime")
         self.reclaim_xonly = _hex32(reclaim_xonly, "reclaim_xonly")
-        self.total_atoms = int(total_atoms) if total_atoms is not None else None
+        self.total_atoms = _int(total_atoms, "total_atoms") if total_atoms is not None else None
         self._validate()
 
     def _validate(self):
@@ -228,7 +243,16 @@ class SaleTerms:
         if self.close_locktime < 1:
             raise ValueError("close_locktime must be set; a sale with no close "
                              "could never be reclaimed")
+        if self.close_locktime > 0xffffffff:
+            # nLockTime is 32 bits. A larger operand compiles into the reclaim
+            # leaf and can never be satisfied: the tokens could be sold but
+            # never taken back.
+            raise ValueError("close_locktime must be a block height or a unix "
+                             "time no larger than 4294967295")
         if self.total_atoms is not None:
+            if self.total_atoms < self.min_lot:
+                raise ValueError("total_atoms must be at least the minimum lot, "
+                                 "or the sale could never be bought")
             self.assert_no_overflow(self.total_atoms)
 
     def assert_no_overflow(self, locked_atoms):
@@ -267,6 +291,12 @@ class SaleTerms:
 
     @classmethod
     def from_json(cls, d):
+        if not isinstance(d, dict):
+            raise ValueError("terms must be an object")
+        for k in ("token_asset", "payment_asset", "price_num", "price_den",
+                  "treasury_prog", "min_lot", "close_locktime", "reclaim_xonly"):
+            if d.get(k) is None:
+                raise ValueError("the terms are missing %s" % k)
         return cls(d["token_asset"], d["payment_asset"], d["price_num"],
                    d["price_den"], d["treasury_prog"], d["min_lot"],
                    d["close_locktime"], d["reclaim_xonly"], d.get("total_atoms"))
