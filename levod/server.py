@@ -598,11 +598,12 @@ class Handler(BaseHTTPRequestHandler):
                 "last_run": w.last_run,
                 "last_error": w.last_error,
                 "unverified_sales": list(w.unverified),
-                "what_it_does": "reconciles every sale against the UTXO set and "
-                                "the mempool, so a purchase made without Levo "
-                                "still moves the sale and a reorged lock stops "
+                "what_it_does": "reads every sale from the chain -- the UTXO "
+                                "set and the mempool -- so a purchase made "
+                                "without Levo still moves the sale, and a "
+                                "funding the chain no longer has stops the sale "
                                 "being investable. It ends a sale only on "
-                                "evidence the chain gives.",
+                                "evidence, never on silence.",
                 "unverified_means": "a sale whose funding this levod cannot "
                                     "place in the chain, which happens to state "
                                     "restored from a backup. Such a sale is left "

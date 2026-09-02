@@ -152,20 +152,22 @@ def test_damage_inside_the_state_file_stops_the_service_too(t):
 def test_every_route_is_documented(t):
     """Documentation ships with the change. A route nobody wrote down is one an
     integrator has to read Python to find, and then depends on whatever they
-    inferred."""
-    import re
+    inferred.
+
+    The routes come from the server's own table rather than from a regex over
+    its source, and each one has to appear in the reference as itself: matching
+    on the last word of a path passed for almost anything, which is how this
+    check quietly stopped checking.
+    """
+    import server as SRV
     root = HERE.parent.parent
-    server = (root / "levod" / "server.py").read_text()
     doc = (root / "doc" / "api.md").read_text()
-    routes = set()
-    for m in re.finditer(r'parts == \[([^\]]+)\]', server):
-        routes.add("/api/" + "/".join(p.strip().strip('"') for p in m.group(1).split(",")))
-    for m in re.finditer(r'if action == "(\w+)"', server):
-        routes.add("/api/projects/<slug>/" + m.group(1))
-    for m in re.finditer(r'parts\[2\] == "(\w+)"', server):
-        routes.add("/api/projects/<slug>/" + m.group(1))
-    missing = sorted(r for r in routes if r not in doc and r.split("/")[-1] not in doc)
-    t.eq(missing, [], "every route levod serves is in doc/api.md")
+    missing = []
+    for shape, _methods in SRV.API_METHODS:
+        route = "/api/" + "/".join("<slug>" if part == "*" else part for part in shape)
+        if route not in doc:
+            missing.append(route)
+    t.eq(sorted(missing), [], "every route levod serves is in doc/api.md")
 
 
 def test_a_sale_that_no_longer_derives_its_own_address_stops_the_service(t):

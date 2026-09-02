@@ -256,6 +256,24 @@ def payment_label():
     return (config().get("payment") or {}).get("label") or "the payment asset"
 
 
+def resolve_asset(name):
+    """An asset id from what a person typed. A label is what a wallet shows, so
+    it is what they will type; the node's own table says which id it means."""
+    text = str(name or "").strip()
+    if len(text) == 64 and all(c in "0123456789abcdefABCDEF" for c in text):
+        return text.lower()
+    try:
+        labels = node("dumpassetlabels") or {}
+    except Exception:
+        labels = {}
+    for label, asset_id in labels.items():
+        if str(label).lower() == text.lower():
+            return str(asset_id).lower()
+    raise Fail("%r is neither a 64-character asset id nor a label your node "
+               "knows. `sequentia-cli dumpassetlabels` lists the labels it has."
+               % text)
+
+
 def _units(atoms, decimals=8):
     """Atoms as the decimal string a node's RPC expects, exactly."""
     atoms = int(atoms)
@@ -510,7 +528,9 @@ def cmd_buy(args):
     print("buying %s %s for %s" % (args.tokens, p["ticker"], U.fmt(plan["payment_atoms"], 8, _payment_label(p))))
 
     pay_asset = sale["terms"]["payment_asset"]
-    fee_asset = args.fee_asset or pay_asset
+    # A person types a label, because that is what a wallet shows them. levod
+    # resolves one too, but the input selection below needs the id.
+    fee_asset = resolve_asset(args.fee_asset) if args.fee_asset else pay_asset
     fee_atoms = int(args.fee) if args.fee is not None else int(
         plan.get("fee", {}).get("suggested_atoms") or 0)
     if fee_atoms <= 0:
@@ -575,7 +595,8 @@ def cmd_reclaim(args):
     if fee_atoms <= 0:
         raise Fail("this levod could not suggest a fee (its node did not answer "
                    "with an exchange rate); pass --fee with a number of atoms")
-    fee_asset = args.fee_asset or sale["terms"]["payment_asset"]
+    fee_asset = (resolve_asset(args.fee_asset) if args.fee_asset
+                 else sale["terms"]["payment_asset"])
     ins, _ = unblinded_inputs(fee_asset, fee_atoms)
     r = api("POST", "/api/projects/%s/reclaim" % args.slug, {
         "destination_address": dest,

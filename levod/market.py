@@ -1359,6 +1359,20 @@ class Platform:
                             "blinded": blinded})
         return checked
 
+    def _issuer_standing(self, account):
+        """The listing account's stake and tier, or nothing if the chain cannot
+        be asked. Never a reason to fail a page: this is context, not a term."""
+        out = {"account": account, "stake_atoms": None, "tier": None}
+        try:
+            standing = self.stake.standing(account)
+        except Exception:
+            return out
+        out["stake_atoms"] = standing.get("stake_atoms")
+        tier = standing.get("tier") or {}
+        out["tier"] = tier.get("name")
+        out["may_list"] = bool(tier.get("may_list"))
+        return out
+
     def sale_ledger(self, account, slug, limit=None, offset=0):
         """Every purchase Levo recorded against this sale.
 
@@ -1401,6 +1415,11 @@ class Platform:
     def project_detail(self, slug):
         p = self._project(slug)
         d = p.to_json(height=self.height())
+        # Who is selling, in the only terms Levo can vouch for: what the chain
+        # says their account has staked. It is the whole basis of the tier that
+        # let them list, and a buyer deciding whether to send money to a
+        # stranger has nothing else here to go on.
+        d["issuer"] = self._issuer_standing(p.issuer_account)
         if p.sale:
             d["address"] = self.sale_address(p.sale)
             d["verify"] = {
