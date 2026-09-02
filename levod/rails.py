@@ -25,21 +25,24 @@ have swapped BTC for a stablecoin at a quoted rate, which is not a loss and not
 a position anybody else controls. A buyer who wants the consensus guarantee end
 to end, with nothing between the legs, pays in USDX to begin with.
 
-Rates come from the chain's own `getfeeexchangerates` -- the table the network
-uses to price fees in any asset. Using it here means Levo cannot quote a rate
-the chain itself disagrees with, and there is no private price feed to trust or
-to manipulate.
+Rates come from the fee exchange-rate table of the node Levo reads: the same
+table that node's mempool uses to price a fee paid in any asset. That table is
+the node operator's policy, not a consensus fact, so a BTC quote is Levo's
+quote. It is published with its source and its expiry so a buyer can check it
+against their own wallet before swapping.
 """
 
 import time
 
+import units as U
+
 USDX = "usdx"
 BTC = "btc"
 
-# The chain prices assets against a reference unit of 1e-8 of a US dollar, so a
-# rate of 1e8 is one dollar. SBTC is pegged bitcoin (1:1 BTC held by the
-# sbtc-bridge reserve); its fee-rate row is the network's own view of the BTC
-# price.
+# The rate table prices assets against a reference unit of 1e-8 of a US
+# dollar, so a rate of 1e8 is one dollar. SBTC is pegged bitcoin (1:1 BTC held
+# by the sbtc-bridge reserve); its row is the node's price for a bitcoin, which
+# is the only bitcoin price the table carries.
 BTC_RATE_LABEL = "SBTC"
 
 
@@ -76,7 +79,12 @@ class NodeRateSource:
                 % (self.btc_label, payment_label))
         # Both rates are reference units per whole unit, scaled by 1e8, so the
         # ratio is whole payment units per BTC; multiply out to atoms.
-        return int(btc) * 100_000_000 // int(pay)
+        per_btc = int(btc) * 100_000_000 // int(pay)
+        if per_btc <= 0:
+            raise RailUnavailable(
+                "the node's rate table prices %s below one atom per bitcoin, "
+                "so no BTC amount can be quoted" % payment_label)
+        return per_btc
 
 
 class Rails:
@@ -100,6 +108,7 @@ class Rails:
         ok, why = self._btc_ready()
         return [
             {"id": USDX, "label": self.payment_label, "available": True,
+             "asset": self.payment_asset,
              "settles": "inside the covenant",
              "atomic": "end to end, enforced by consensus",
              "steps": 1},
@@ -117,7 +126,8 @@ class Rails:
         of the covenant's payment asset."""
         payment_atoms = int(payment_atoms)
         now = int(time.time())
-        if rail in (USDX, None, "", self.payment_label.lower()):
+        rail = str(rail or "").strip().lower()
+        if rail in (USDX, "", self.payment_label.lower()):
             return {
                 "rail": USDX, "send_asset": self.payment_asset,
                 "send_label": self.payment_label,
@@ -142,14 +152,20 @@ class Rails:
             "send_btc": sats / 100_000_000,
             "delivers_atoms": payment_atoms,
             "rate": {"payment_atoms_per_btc": per_btc,
-                     "source": "the chain's own getfeeexchangerates"},
+                     "source": "the fee exchange-rate table of the node Levo reads "
+                               "(getfeeexchangerates): the operator's table, not a "
+                               "consensus price"},
             "taken_at": now, "expires_at": now + self.quote_ttl,
             "steps": [
-                "swap %d sats for %d atoms of %s over Lightning, using your "
-                "wallet's own swap rail" % (sats, payment_atoms, self.payment_label),
+                "swap %s BTC for %s over Lightning in your own wallet's swap"
+                % (_btc(sats), U.fmt(payment_atoms, 8, self.payment_label)),
                 "fill the covenant with that %s, which is the step that hands "
                 "you your tokens" % self.payment_label,
             ],
-            "note": "Levo takes no custody of either leg. Between them you hold "
-                    "%s, which is a swap you could stop at." % self.payment_label,
+            "note": "Levo takes no custody of either step. Between them you hold "
+                    "%s, and you can stop there." % self.payment_label,
         }
+
+
+def _btc(sats):
+    return U.fmt(int(sats), 8)

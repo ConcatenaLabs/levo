@@ -10,7 +10,8 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 sys.path.insert(0, str(HERE.parent))
 
-MODULES = ["test_crypto", "test_covenant", "test_tiers", "test_tx", "test_watcher"]
+MODULES = ["test_crypto", "test_auth", "test_covenant", "test_address", "test_pset",
+           "test_tiers", "test_rails", "test_rpc", "test_store", "test_tx", "test_watcher"]
 
 
 class T:
