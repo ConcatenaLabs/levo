@@ -70,3 +70,6 @@ def test_hrp_for_chain(t):
     t.eq(A.hrp_for("test"), "tb", "testnet")
     t.eq(A.hrp_for("sequentia"), "bc", "mainnet")
     t.eq(A.hrp_for("elementsregtest"), "ert", "regtest")
+    t.eq(A.hrp_for("some-new-chain"), "tb", "an unknown chain gets the default")
+    t.eq(A.hrp_for("some-new-chain", default=None), None,
+         "and a caller that would rather know says so")

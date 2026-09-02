@@ -93,6 +93,7 @@ class Watcher:
         self._misses = {}
         self._miss_height = {}
         self._search_after = {}       # sale -> the poll a failed block walk may retry at
+        self._blocks = {}             # block hashes and heights, for one poll
         self._round = 0
         self.confirm_misses = 2
         # Sales whose funding this levod cannot place in the chain: state
@@ -152,6 +153,10 @@ class Watcher:
         buyer's purchase must not wait behind it.
         """
         self._round += 1
+        # Sales confirmed in the same block ask for the same hash, and a poll
+        # over a thousand of them asked a thousand times. The memo lives for
+        # one poll, so a reorg between polls is still seen.
+        self._blocks = {}
         sales = self._sales()
         if not sales:
             self.last_run = time.time()
@@ -441,8 +446,15 @@ class Watcher:
                 # from a transaction that can still be dropped.
                 return False
 
+        # A remainder the covenant left is always at least the minimum lot: the
+        # sell leaf refuses to leave less behind. So a smaller output of the
+        # sale token at the sale address is not the sale -- it is something
+        # somebody sent there -- and adopting it would leave the sale resting
+        # on an amount no purchase can ever take, reading almost sold out for
+        # ever. One atom would do it.
         resting = [u for u in found.get(spk, [])
                    if u["asset"] == sale.terms.token_asset
+                   and u["atoms"] >= sale.terms.min_lot
                    and not (sale.funding and u["txid"] == sale.funding.get("txid")
                             and u["vout"] == sale.funding.get("vout"))]
 
@@ -532,7 +544,7 @@ class Watcher:
                      (f.get("ancestor_height"), f.get("ancestor_block"))):
             if b and h is not None:
                 try:
-                    if self.rpc.call("getblockhash", int(h)) == b:
+                    if self._block_at(h) == b:
                         return True
                 except Exception:
                     tip = chain.get("height")
@@ -799,7 +811,14 @@ class Watcher:
         # exists to tell a project that something is there, and a hundred lines
         # of dust say that no better than twenty do. The largest are kept,
         # because those are the ones worth sweeping.
-        others = [u for u in at_address if u["asset"] != sale.terms.token_asset]
+        # Anything at the address the covenant cannot sell: another asset, or
+        # an amount of the sale token below the minimum lot, which the sell
+        # leaf would refuse to leave behind and so can only have been sent.
+        others = [u for u in at_address
+                  if u["asset"] != sale.terms.token_asset
+                  or (u["atoms"] < sale.terms.min_lot
+                      and not (sale.funding and u["txid"] == sale.funding.get("txid")
+                               and u["vout"] == sale.funding.get("vout")))]
         others.sort(key=lambda u: -u["atoms"])
         strays = [{"txid": u["txid"], "vout": u["vout"], "asset": u["asset"],
                    "atoms": u["atoms"]}
@@ -842,7 +861,7 @@ class Watcher:
             best = out.get("bestblock")
             if best:
                 try:
-                    tip = int((self.rpc.call("getblockheader", best) or {}).get("height"))
+                    tip = self._header_height(best)
                 except Exception:
                     tip = None
             if tip is None:
@@ -852,6 +871,22 @@ class Watcher:
             return self._remember_height(sale, tip - conf + 1)
         except Exception:
             return False               # best effort; absence just means we ask later
+
+    def _block_at(self, height):
+        """The hash at a height, asked for once per poll."""
+        height = int(height)
+        if height not in self._blocks:
+            self._blocks[height] = self.rpc.call("getblockhash", height)
+        return self._blocks[height]
+
+    def _header_height(self, block_hash):
+        """The height of a block, asked for once per poll. The tip is the same
+        block for every sale in a poll, so this is one call, not one a sale."""
+        key = ("h", block_hash)
+        if key not in self._blocks:
+            self._blocks[key] = int(
+                (self.rpc.call("getblockheader", block_hash) or {}).get("height"))
+        return self._blocks[key]
 
     def _remember_height(self, sale, height):
         """Record the block at this height as this output's block, and say
@@ -863,7 +898,7 @@ class Watcher:
             return False
         try:
             height = int(height)
-            block = self.rpc.call("getblockhash", height)
+            block = self._block_at(height)
             if not block:
                 return False
             with self._held():

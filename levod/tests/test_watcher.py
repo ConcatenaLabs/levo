@@ -909,3 +909,75 @@ def test_a_change_of_state_is_recorded(t):
     t.eq(s.status, S.SOLD_OUT, "the sale sold out")
     t.ok(any("-> sold_out" in m for m in said), "and the change was recorded", said)
     t.ok(any("block 95" in m for m in said), "with the evidence behind it", said)
+
+
+def test_one_atom_at_the_sale_address_cannot_become_the_sale(t):
+    """The sell leaf refuses to leave less than the minimum lot behind, so a
+    smaller output of the sale token at the sale address was sent there by
+    somebody. Adopting it would leave the sale resting on an amount no purchase
+    can take, reading almost sold out for ever -- for the price of one atom."""
+    s = _sale()
+    rpc = FakeRPC()
+    rpc.blocks[95] = "block-95"
+    rpc.txouts[("ab" * 32, 0)] = {"value": TOTAL / 1e8, "confirmations": 6}
+    _watch(s, rpc).poll()
+    del rpc.txouts[("ab" * 32, 0)]                       # the sale sold out
+    rpc.unspents = [{"txid": "de" * 32, "vout": 0, "scriptPubKey": s.script_pubkey,
+                     "amount": 0.00000001, "asset": GOLD}]      # one atom, from anyone
+    _settle(s, rpc)
+    t.eq(s.status, S.SOLD_OUT, "the sale is still sold out")
+    t.ok(s.locked_atoms != 1, "and does not claim to hold one atom")
+
+
+def test_dust_of_the_sale_token_is_reported_as_a_stray(t):
+    s = _sale()
+    rpc = FakeRPC()
+    rpc.blocks[95] = "block-95"
+    rpc.txouts[("ab" * 32, 0)] = {"value": TOTAL / 1e8, "confirmations": 6}
+    rpc.unspents = [
+        {"txid": "ab" * 32, "vout": 0, "scriptPubKey": s.script_pubkey,
+         "amount": TOTAL / 1e8, "asset": GOLD},
+        {"txid": "de" * 32, "vout": 0, "scriptPubKey": s.script_pubkey,
+         "amount": 0.00000001, "asset": GOLD},
+    ]
+    w = _watch(s, rpc)
+    w._round = 9
+    w.poll()
+    t.eq(s.locked_atoms, TOTAL, "the sale holds what it was funded with")
+    t.eq([(x["txid"], x["atoms"]) for x in s.strays], [("de" * 32, 1)],
+         "and the dust is reported as something resting there, not as the sale")
+
+
+def test_a_poll_asks_the_chain_for_each_block_once(t):
+    """Sales confirmed in the same block, and every sale's view of the tip, are
+    the same question. A thousand sales asked it a thousand times."""
+    sales = {}
+    for i in range(6):
+        s = _sale()
+        s.funding["txid"] = "%02x" % i * 32
+        sales["s%d" % i] = P(s)
+        sales["s%d" % i].slug = "s%d" % i
+
+    class Counting(FakeRPC):
+        hashes = 0
+        headers = 0
+
+        def call(self, method, *params):
+            if method == "getblockhash":
+                Counting.hashes += 1
+            if method == "getblockheader":
+                Counting.headers += 1
+                return {"height": self.height}
+            return super().call(method, *params)
+
+    rpc = Counting()
+    rpc.blocks[95] = "block-95"
+    for i in range(6):
+        rpc.txouts[("%02x" % i * 32, 0)] = {"value": TOTAL / 1e8, "confirmations": 6,
+                                            "bestblock": "tip"}
+    w = W.Watcher(FakeMarket(sales), rpc, interval=1)
+    w.poll()
+    t.ok(Counting.hashes <= 2, "one poll asks for a block hash once, not once a sale",
+         Counting.hashes)
+    t.ok(Counting.headers <= 1, "and reads the tip's header once", Counting.headers)
+    t.eq([p.sale.status for p in sales.values()], [S.LIVE] * 6, "every sale is live")

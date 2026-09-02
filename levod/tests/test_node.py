@@ -639,7 +639,7 @@ def run(ok, rig):
     watch.poll()
     ok.eq(SW.sale.status, S.SOLD_OUT, "two moves between two polls is a sell-out, not a ghost")
     ok.eq(SW.sale.sold_atoms, SW.sale.terms.total_atoms, "with everything sold")
-    mine_ = [q for q in plat.positions("buyer", tier) if q["slug"] == "swift"]
+    mine_ = [q for q in plat.positions("buyer", tier)["positions"] if q["slug"] == "swift"]
     ok.eq(len(mine_), 1, "and the buyer keeps their allocation in it")
     ok.eq(mine_[0]["tokens_atoms"], first_buy, "for the tokens they bought")
 

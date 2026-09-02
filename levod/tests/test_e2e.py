@@ -447,6 +447,7 @@ def run(d):
     ok.ok("ticker" in (r.get("error") or ""), "saying why", r.get("error"))
     code, r = req("GET", "/api/me/projects", token=issuer_tok)
     ok.eq([p["slug"] for p in r["projects"]], ["helios"], "the issuer sees their project")
+    ok.eq(r["total"], 1, "and how many there are in all")
     ok.ok(r["projects"][0]["lock"] is not None, "with lock instructions while it is a draft")
     code, r = req("PATCH", "/api/projects/helios", {"summary": "Edited.", "links": {}}, token=buyer_tok)
     ok.eq(code, 403, "a stranger cannot edit a project")
@@ -685,6 +686,8 @@ def run(d):
     ok.eq(code, 200, "recording the same purchase again is accepted")
     ok.eq(r.get("already_recorded"), True, "and says it was already there")
     code, r = req("GET", "/api/me/positions", token=buyer_tok)
+    ok.ok(r["total"] >= 1, "positions say how many there are", r["total"])
+    ok.ok(r["limit"] and r["limit"] <= 200, "and come back a page at a time", r["limit"])
     pos = r["positions"][0]
     ok.eq(pos["slug"], "helios", "positions list the sale")
     ok.eq(len(pos["purchases"]), 2, "with both purchases")
@@ -856,6 +859,7 @@ def run(d):
     code, r = req("GET", "/api/projects/helios/purchases", token=issuer_tok)
     ok.eq(code, 200, "the issuer can read what Levo recorded for its own sale")
     ok.ok(len(r["purchases"]) >= 1, "with the purchases in it", len(r["purchases"]))
+    ok.ok(r["total"] >= len(r["purchases"]), "and a total to page through", r["total"])
     ok.ok(all("account" in e and "txid" in e for e in r["purchases"]),
           "each naming the account and the transaction")
     ok.ok("chain" in r["what_this_is"], "and saying what it is not")

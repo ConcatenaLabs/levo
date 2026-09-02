@@ -53,7 +53,7 @@ function Terms({ project, sale }) {
 function NotOpen({ sale }) {
   const text = {
     draft: 'The project has not locked its tokens yet, so there is nothing to buy. It can lock them at any time.',
-    ghost: 'The output that funded this sale was undone by a Bitcoin-driven reorg. It is not funded and cannot be bought until the project locks its tokens again.',
+    ghost: 'The chain does not have the output that funded this sale: either it never reached a block, or a Bitcoin-driven reorg took the block that held it. The sale is not funded and cannot be bought until the project locks its tokens again.',
     sold_out: 'Every token in this sale has been sold.',
     reclaimed: 'This sale closed and the project has taken back what did not sell.',
     closed: 'This sale is closed. Levo no longer plans purchases from it.',
@@ -232,6 +232,7 @@ export default function ProjectDetail() {
   const [notFound, setNotFound] = useState(false)
   const [withdrawError, setWithdrawError] = useState(null)
   const [withdrawn, setWithdrawn] = useState(false)
+  const [confirmWithdraw, setConfirmWithdraw] = useState(false)
   usePageTitle(project ? project.name + ' (' + project.ticker + ')' : 'Sale')
 
   const load = () => {
@@ -439,7 +440,29 @@ export default function ProjectDetail() {
               <EditPanel project={project} onSaved={setProject} />
               {needsLock && (
                 <div style={{ marginTop: '.75rem' }}>
-                  <button className="btn btn-sm btn-ghost" onClick={withdraw}>Withdraw this listing</button>
+                  {!confirmWithdraw ? (
+                    <button className="btn btn-sm btn-ghost"
+                            onClick={() => setConfirmWithdraw(true)}>
+                      Withdraw this listing
+                    </button>
+                  ) : (
+                    <Notice kind="bad">
+                      <strong>Withdrawing deletes the terms.</strong> The sale
+                      address is made of them, so anything already sent there can
+                      only be recovered with your reclaim key after the close —
+                      and rebuilding the address needs these exact values. Copy
+                      them first if you have sent anything.
+                      <div className="btn-row" style={{ marginTop: '.75rem' }}>
+                        <button className="btn btn-sm" onClick={withdraw}>
+                          Withdraw it anyway
+                        </button>
+                        <button className="btn btn-sm btn-ghost"
+                                onClick={() => setConfirmWithdraw(false)}>
+                          Keep it
+                        </button>
+                      </div>
+                    </Notice>
+                  )}
                   {withdrawError && <Notice kind="bad" style={{ marginTop: '.5rem' }}>{withdrawError}</Notice>}
                 </div>
               )}

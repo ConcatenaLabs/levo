@@ -54,7 +54,9 @@ removes it.
 **`GET /api/me/projects`** (session) → the caller's own listings, each with its
 lock instructions while it is still a draft. **`GET /api/me/positions`**
 (session) → what the caller has bought in each sale, what it has committed
-against its cap, and what it may still commit.
+against its cap, and what it may still commit. Both take `limit` and `offset`
+and answer with `total`, and a position carries its most recent purchases with
+`purchases_total` beside them.
 
 ## The board
 
@@ -101,7 +103,8 @@ transaction, the `sighash` to sign with the reclaim key, the leaf and the
 control block. levod never sees a key.
 
 **`GET /api/projects/<slug>/purchases`** (session, the issuer or an operator) →
-Levo's own ledger for that sale, and what each account has committed.
+Levo's own ledger for that sale, newest first, with `limit`, `offset` and
+`total`, and what each account has committed.
 
 ## Buying
 
@@ -140,7 +143,8 @@ endpoint to point an uptime check at.
 it cannot place in the chain.
 
 **`GET /api/config`**, **`GET /api/tiers`**, **`GET /api/rails`** → the labels,
-prefixes, links, tier table and payment rails this deployment runs with. They
+prefixes, links, tier table and payment rails this deployment runs with,
+including how many decimal places the payment asset divides into. They
 change rarely and may be held for half a minute.
 
 **`POST /api/projects/<slug>/flag`** `{hidden?, notice?}` (session, an account

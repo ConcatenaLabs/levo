@@ -7,7 +7,7 @@ import { closeIn, closeLabel, compact, priceLabel } from '../lib/format'
 
 export const STATUS_LABEL = {
   live: 'open', partial: 'open', sold_out: 'sold out', draft: 'not funded',
-  closed: 'closed', ghost: 'not funded (reorg)', reclaimed: 'reclaimed',
+  closed: 'closed', ghost: 'not funded', reclaimed: 'reclaimed',
 }
 
 export function Status({ sale }) {
