@@ -1,0 +1,101 @@
+import { useState } from 'react'
+import { api } from '../lib/api'
+import { useStore } from '../lib/store'
+import { amount, capitalise } from '../lib/format'
+import { Copy, Hex, Notice } from './ui'
+
+// Funding a sale is the project sending its tokens to the sale address and
+// telling Levo where they landed. Levo can usually find them itself; the
+// outpoint form is for a lock that is not confirmed yet.
+
+export default function LockPanel({ project, onLocked }) {
+  const { explorer } = useStore()
+  const sale = project.sale
+  const decimals = project.decimals ?? 8
+  const ghost = sale.status === 'ghost'
+  const [lock, setLock] = useState({ txid: '', vout: '0' })
+  const [error, setError] = useState(null)
+  const [busy, setBusy] = useState(false)
+  const [manual, setManual] = useState(false)
+
+  async function confirm(e, named) {
+    if (e) e.preventDefault()
+    setError(null); setBusy(true)
+    try {
+      const r = named
+        ? await api.lock(project.slug, lock.txid.trim(), Number(lock.vout))
+        : await api.lock(project.slug)
+      onLocked && onLocked(r)
+    } catch (err) {
+      setError(capitalise(err.message))
+    } finally { setBusy(false) }
+  }
+
+  return (
+    <div className="card">
+      <h3>{ghost ? 'Lock the tokens again' : 'Lock the tokens'}</h3>
+      {ghost ? (
+        <p className="small dim">
+          The output that funded this sale was undone by a Bitcoin-driven reorg, so
+          the tokens are back in your wallet. Send them to the same sale address again
+          and confirm the new lock.
+        </p>
+      ) : (
+        <p className="small dim">
+          Send exactly {amount(sale.terms.total_atoms, decimals)} {project.ticker} to the
+          address below, in one output, from a wallet you control. Until that output
+          exists and matches your terms, the sale stays a draft and nobody can buy.
+        </p>
+      )}
+      <div className="field">
+        <label htmlFor="lockaddr">Sale address</label>
+        <div id="lockaddr" className="hex small">
+          <Hex value={project.address} href={explorer('address', project.address)} />
+        </div>
+      </div>
+      <div className="kv"><span>Amount</span><b>{amount(sale.terms.total_atoms, decimals)} {project.ticker}</b></div>
+      <div className="kv"><span>Asset</span><b>{sale.terms.token_asset.slice(0, 12)}… <Copy value={sale.terms.token_asset} label="Copy the asset id" /></b></div>
+      <p className="small dim" style={{ marginTop: '.75rem' }}>
+        Send nothing but this token to this address. The sell leaf does not check what
+        asset it spends, so anything else resting here can be taken by anyone at the
+        sale's price. The address is unblinded, so the output will be explicit; do not
+        wrap it in a confidential address, because tokens locked into a confidential
+        output can never be sold.
+      </p>
+      <p className="small dim">
+        With a node: <span className="mono">bin/levo lock {project.slug}</span>, or{' '}
+        <span className="mono">sequentia-cli -named sendtoaddress address={project.address} amount={amount(sale.terms.total_atoms, decimals)} assetlabel={sale.terms.token_asset.slice(0, 8)}… fee_asset_label=&lt;asset&gt;</span>.
+      </p>
+      {error && <Notice kind="bad" style={{ marginBottom: '1rem' }}>{error}</Notice>}
+      <div className="btn-row">
+        <button className="btn btn-primary" onClick={() => confirm(null, false)} disabled={busy}>
+          {busy ? 'Looking on chain…' : 'Look for my tokens on chain'}
+        </button>
+        <button type="button" className="btn btn-ghost btn-sm" onClick={() => setManual((m) => !m)}>
+          {manual ? 'Hide' : 'Name the outpoint instead'}
+        </button>
+      </div>
+      {manual && (
+        <form onSubmit={(e) => confirm(e, true)} style={{ marginTop: '1rem' }}>
+          <p className="small dim">
+            The scan sees confirmed outputs only. A lock that is still in the mempool
+            can be confirmed by its transaction id and output index.
+          </p>
+          <div className="field">
+            <label htmlFor="txid">Funding transaction id</label>
+            <input id="txid" className="mono" value={lock.txid} required
+                   onChange={(e) => setLock({ ...lock, txid: e.target.value })} />
+          </div>
+          <div className="field">
+            <label htmlFor="vout">Output index</label>
+            <input id="vout" className="mono" inputMode="numeric" value={lock.vout} required
+                   onChange={(e) => setLock({ ...lock, vout: e.target.value })} />
+          </div>
+          <button className="btn btn-primary btn-sm" disabled={busy || !lock.txid.trim()}>
+            {busy ? 'Checking the chain…' : 'Confirm the lock'}
+          </button>
+        </form>
+      )}
+    </div>
+  )
+}

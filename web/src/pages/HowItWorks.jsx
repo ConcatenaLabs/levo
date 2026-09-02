@@ -1,18 +1,42 @@
 import { Link } from 'react-router-dom'
 import { useStore } from '../lib/store'
+import { usePageTitle } from '../components/ui'
 import { amount, compact } from '../lib/format'
 
 export default function HowItWorks() {
-  const { tiers } = useStore()
+  usePageTitle('How it works')
+  const { tiers, config, payment, stake, links } = useStore()
+  const first = tiers && tiers.tiers.length > 1 ? tiers.tiers[1] : null
+  const floor = compact(config.staking_floor_atoms)
+  const wallet = links.Wallet || links.wallet
+  const faucet = links.Faucet || links.faucet
   return (
     <div className="wrap section" style={{ maxWidth: 820 }}>
       <p className="eyebrow">How it works</p>
-      <h2>What Levo does, and what it cannot do</h2>
-      <p style={{ marginTop: '1.25rem' }}>
+      <h1 className="h2">What Levo does, and what it cannot do</h1>
+      <p>
         Levo is two things: a set of allocation rules, and a place to find
         sales that use them. It is not a custodian. Knowing exactly where the
         line falls is the difference between trusting a covenant and trusting
         an operator, so this page draws it plainly.
+      </p>
+
+      <h3 style={{ margin: '2.5rem 0 .75rem' }}>What you need</h3>
+      <p>
+        <strong>To buy:</strong> a Levo account, which is a key you can sign with
+        {wallet ? <> (the <a href={wallet} target="_blank" rel="noopener noreferrer">browser extension</a>, or any wallet that signs messages)</> : ' (a browser extension, or any wallet that signs messages)'};
+        staked Sequence under a key you can prove you control, at or above the first
+        tier; and unblinded {payment.label} to pay with{config.testnet && faucet ? <> (on the testnet, <a href={faucet} target="_blank" rel="noopener noreferrer">the faucet</a> hands both out)</> : ''}.
+        The browser extension signs and broadcasts the purchase in place. A node
+        signs it with <span className="mono">signrawtransactionwithwallet</span>, or
+        lets <span className="mono">bin/levo buy</span> do the whole purchase.
+      </p>
+      <p>
+        <strong>To list:</strong> a tier that may list; an issued asset, registered so
+        wallets show its name; the whole allocation in a wallet you can send from; a
+        taproot address for the treasury; and a reclaim key you can sign with outside a
+        browser wallet, because reclaiming means signing a raw sighash.
+        <span className="mono"> bin/levo keygen</span> makes one.
       </p>
 
       <h3 style={{ margin: '2.5rem 0 .75rem' }}>Signing in</h3>
@@ -21,17 +45,20 @@ export default function HowItWorks() {
         it, and Levo recovers the key from the signature. That key is who you
         are. There is no password to steal, no account to create, and no
         signature Levo can produce on your behalf. The challenge names the site,
-        carries a single-use nonce, and says in its own text that it authorises
-        no payment.
+        carries a single-use nonce, says in its own text that it authorises no
+        payment, and must be signed exactly as issued: a signature over any
+        other text signs nobody in.
       </p>
 
       <h3 style={{ margin: '2.5rem 0 .75rem' }}>Tiers</h3>
       <p>
         Your tier comes from Sequence staked under keys you have proven you
-        control. Proving a key means signing a statement that names both the key
-        and your account, so a signature collected for one purpose cannot be
-        replayed to attach the same stake somewhere else. One key counts for one
-        account.
+        control. Signing in with a staking key proves it. Proving another key
+        means signing a statement that names both the key and your account, so a
+        signature collected for one purpose cannot be replayed to attach the
+        same stake somewhere else. One key counts for one account: the newest
+        proof of control holds it. A stake delegated to a pool still counts for
+        the person who owns it.
       </p>
       {tiers && (
         <table className="terms" style={{ marginTop: '1.25rem' }}>
@@ -40,9 +67,9 @@ export default function HowItWorks() {
               <tr key={t.level}>
                 <th>{t.name}</th>
                 <td>
-                  {t.min_stake_atoms === 0 ? 'no stake' : compact(t.min_stake_atoms) + ' SEQ staked'}
-                  <div className="dim small" style={{ fontFamily: 'var(--body)' }}>
-                    {t.cap_atoms ? amount(t.cap_atoms) + ' USDX per sale' : 'no allocation'}
+                  {t.min_stake_atoms === 0 ? 'no stake' : compact(t.min_stake_atoms) + ' ' + stake.label + ' staked'}
+                  <div className="dim small prose">
+                    {t.cap_atoms ? 'up to ' + amount(t.cap_atoms, payment.decimals) + ' ' + payment.label + ' per sale' : 'cannot buy'}
                     {t.may_list ? ' · may list a project' : ''}
                   </div>
                 </td>
@@ -52,10 +79,13 @@ export default function HowItWorks() {
         </table>
       )}
       <p style={{ marginTop: '1.25rem' }}>
-        The first tier begins at 40,000 SEQ because that is the chain's own
-        blocksigner floor. Below it, consensus ignores a staker's weight
-        entirely. Levo did not invent a threshold; it borrowed the one already
-        being enforced.
+        {first && config.first_tier_is_chain_floor
+          ? 'The first tier begins at ' + floor + ' ' + stake.label + ' because that is the chain\'s own blocksigner floor. Below it, consensus ignores a staker\'s weight entirely. Levo did not invent a threshold; it borrowed the one already being enforced.'
+          : first
+            ? 'The first tier begins at ' + compact(first.min_stake_atoms) + ' ' + stake.label + ' on this deployment. The chain\'s own blocksigner floor is ' + floor + ' ' + stake.label + ', below which consensus ignores a staker\'s weight entirely.'
+            : ''}
+        {' '}The thresholds are Levo's configuration; the stake behind each key is read
+        from the chain.
       </p>
 
       <h3 style={{ margin: '2.5rem 0 .75rem' }}>A sale</h3>
@@ -69,20 +99,27 @@ export default function HowItWorks() {
         the project or from Levo, provided the same transaction pays the
         treasury at least the agreed price for what is taken. A partial buy has
         to return the unsold remainder to the identical address, so the sale
-        keeps resting until it sells out or closes. Payment and delivery are
+        keeps resting until it sells out or is reclaimed. Payment and delivery are
         therefore the same transaction: there is no state where the project has
         been paid and the buyer has not been delivered.
       </p>
       <p>
-        <strong>Reclaiming.</strong> After the close date the project sweeps
-        whatever did not sell, under its own signature.
+        <strong>Reclaiming.</strong> From the close date on, the project may sweep
+        whatever did not sell, under its own signature. The close opens that path;
+        it does not shut the selling path, so a buyer who builds the transaction can
+        still fill a sale after its close, until the project reclaims. Levo stops
+        planning purchases at the close.
       </p>
 
       <h3 style={{ margin: '2.5rem 0 .75rem' }}>What is enforced, and by whom</h3>
       <p>
-        The covenant enforces the price, the treasury that gets paid, the token
-        being sold, the minimum lot, and the close date. Once a sale is funded
-        none of those can be changed, by the project or by us.
+        The covenant enforces the price, the treasury that gets paid, the token a
+        remainder must be, the minimum lot, and the earliest moment the project can
+        reclaim. Once a sale is funded none of those can be changed, by the project
+        or by Levo. One consequence is worth stating: the treasury is the project's
+        own key, so a project can always buy its own sale out at the published
+        price, on chain and in the open, for the cost of the fee. What it cannot do
+        is take the tokens by any other route.
       </p>
       <p>
         Tier caps are different, and it would be dishonest to present them
@@ -95,23 +132,26 @@ export default function HowItWorks() {
 
       <h3 style={{ margin: '2.5rem 0 .75rem' }}>Paying</h3>
       <p>
-        USDX settles inside the covenant, which is what makes a purchase atomic
-        end to end. BTC is native Bitcoin on the parent chain, not a token on
+        {payment.label} settles inside the covenant, which is what makes a purchase
+        atomic end to end. BTC is native Bitcoin on the parent chain, not a token on
         Sequentia and not a pegged claim on one, so a Sequentia covenant cannot
-        read a Bitcoin output. A BTC purchase settles in two linked legs instead:
-        the buyer pays over Lightning, and the same preimage releases the leg
-        that fills the covenant. Atomic per leg, with the preimage holding the
-        seam. If you want the consensus guarantee with nothing at the seam, pay
-        in USDX.
+        read a Bitcoin output. A BTC purchase is two separate steps instead. First
+        your wallet swaps BTC for {payment.label} over Lightning, at a rate Levo
+        quotes from the fee exchange-rate table of the node it reads. Then you fill
+        the covenant with that {payment.label}, exactly as a {payment.label} buyer
+        does. Each step is atomic on its own, but nothing ties them together:
+        between them you hold {payment.label}, and you can stop there. Levo never
+        holds either side. If you want the consensus guarantee end to end, pay in
+        {' '}{payment.label}.
       </p>
 
       <h3 style={{ margin: '2.5rem 0 .75rem' }}>If Bitcoin reorgs</h3>
       <p>
         Sequentia follows its Bitcoin anchor, so a funding transaction can be
         un-made after a sale was already showing as open. Levo does not treat
-        that as a brief loss of confirmation. The sale is not funded, it goes
-        back to being a draft, and it stops being investable until it is locked
-        again.
+        that as a brief loss of confirmation. The sale shows as not funded again,
+        nothing can be bought, and it reopens when the project locks its tokens at
+        the same address a second time.
       </p>
 
       <h3 style={{ margin: '2.5rem 0 .75rem' }}>Checking Levo's work</h3>
@@ -119,13 +159,14 @@ export default function HowItWorks() {
         A hostile or broken Levo could show a sale that is not funded, quote a
         price that is not the covenant's, or hide a listing. What it cannot do
         is move tokens. Every sale publishes the terms its address was derived
-        from: rebuild the address from them, compare it to the funded output,
-        and you have checked the only thing that matters without trusting the
-        server about it.
+        from: rebuild the address from them, compare it with the address the
+        funding output pays, and you have checked the only thing that matters
+        without trusting the server about it. <span className="mono">bin/levo verify &lt;sale&gt;</span>
+        {' '}does that on your own node.
       </p>
 
-      <div style={{ display: 'flex', gap: '.75rem', marginTop: '2.5rem', flexWrap: 'wrap' }}>
-        <Link className="btn btn-primary" to="/projects">See open sales</Link>
+      <div className="btn-row" style={{ marginTop: '2.5rem' }}>
+        <Link className="btn btn-primary" to="/projects">See the sales</Link>
         <Link className="btn btn-ghost" to="/account">Check your tier</Link>
       </div>
     </div>

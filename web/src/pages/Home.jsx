@@ -1,12 +1,19 @@
 import { Link } from 'react-router-dom'
 import { useStore } from '../lib/store'
 import Beam from '../components/Beam'
+import { Notice, usePageTitle } from '../components/ui'
 import { compact } from '../lib/format'
 
 export default function Home() {
-  const { tiers, standing, signedIn } = useStore()
+  usePageTitle('')
+  const { tiers, standing, signedIn, loading, config, payment, stake, links } = useStore()
   const list = tiers ? tiers.tiers : null
-  const stake = standing ? standing.stake_atoms : 0
+  const stakeAtoms = standing ? standing.stake_atoms : 0
+  const first = list && list.length > 1 ? list[1] : null
+  const floor = compact(config.staking_floor_atoms)
+  const wallet = links.Wallet || links.wallet
+  const faucet = links.Faucet || links.faucet
+  const pools = links['Staking pools'] || links.pools
 
   return (
     <>
@@ -20,11 +27,11 @@ export default function Home() {
           from the moment they are locked to the moment they reach a buyer.
         </p>
         <div className="hero-actions">
-          <Link className="btn btn-primary" to="/projects">See open sales</Link>
+          <Link className="btn btn-primary" to="/projects">See the sales</Link>
           <Link className="btn btn-ghost" to="/how-it-works">How a sale settles</Link>
         </div>
 
-        {list && (
+        {list ? (
           <div className="hero-beam">
             <div className="hero-beam-head">
               <p className="eyebrow" style={{ margin: 0 }}>
@@ -33,13 +40,16 @@ export default function Home() {
               <p className="small dim" style={{ margin: 0 }}>
                 {signedIn
                   ? standing.next_tier
-                    ? compact(standing.to_next_atoms) + ' SEQ more reaches ' + standing.next_tier.name
+                    ? compact(standing.to_next_atoms) + ' ' + stake.label + ' more reaches ' + standing.next_tier.name
                     : 'Top tier. Listing is open to you.'
                   : 'Sign in to see your own position on the beam.'}
               </p>
             </div>
-            <Beam tiers={list} stakeAtoms={stake} showMarker={signedIn} />
+            <Beam tiers={list} stakeAtoms={stakeAtoms} showMarker={signedIn}
+                  paymentLabel={payment.label} stakeLabel={stake.label} />
           </div>
+        ) : !loading && (
+          <Notice style={{ marginTop: '2rem' }}>The tier table could not be loaded right now.</Notice>
         )}
       </header>
 
@@ -57,9 +67,9 @@ export default function Home() {
             <h3>Tokens are locked, not promised</h3>
             <p className="small dim" style={{ marginBottom: 0 }}>
               A project funds a covenant address derived from its published
-              terms. Until that output exists and matches, the sale is a draft.
-              The address is the terms, so a lock that verifies is proof rather
-              than a claim.
+              terms. Until that output exists and matches, the sale is not
+              funded and nothing can be bought. The address is the terms, so a
+              lock that verifies is proof rather than a claim.
             </p>
           </div>
           <div className="card">
@@ -71,12 +81,13 @@ export default function Home() {
             </p>
           </div>
           <div className="card">
-            <h3>A live sale cannot be changed</h3>
+            <h3>The terms cannot change</h3>
             <p className="small dim" style={{ marginBottom: 0 }}>
-              The price, the treasury, the token and the close date are compiled
-              into the covenant and committed in its address. The project cannot
-              reprice, redirect or withdraw a sale once it is funded. Neither
-              can we.
+              The price, the treasury, the token and the reclaim date are
+              compiled into the covenant and committed in its address. Tokens
+              leave it only at that price to that treasury, or back to the
+              project after the close. Neither the project nor Levo can change
+              the terms a buyer sees.
             </p>
           </div>
         </div>
@@ -88,10 +99,16 @@ export default function Home() {
             <div className="section-head">
               <h2>Tiers</h2>
               <p>
-                The first tier starts where the chain's own does. Below 40,000
-                staked SEQ, consensus ignores a staker entirely, so Levo does
-                too. Only staked SEQ counts, and only for keys you have proven
-                you control.
+                {first && config.first_tier_is_chain_floor
+                  ? 'The first tier starts where the chain\'s own does: ' + floor + ' staked ' + stake.label +
+                    ', the floor below which consensus ignores a staker entirely.'
+                  : first
+                    ? 'The first tier opens at ' + compact(first.min_stake_atoms) + ' staked ' + stake.label +
+                      '. The chain\'s own blocksigner floor is ' + floor + '.'
+                    : ''}
+                {' '}Every proven key's stake adds to your total, and the total decides
+                the tier. Only staked Sequence counts, and only for keys you have
+                proven you control.
               </p>
             </div>
             {list && (
@@ -101,7 +118,7 @@ export default function Home() {
                     <div style={{ display: 'flex', justifyContent: 'space-between', gap: '1rem', alignItems: 'baseline', flexWrap: 'wrap' }}>
                       <h3>{t.name}</h3>
                       <span className="num small dim">
-                        {compact(t.min_stake_atoms)} SEQ staked
+                        {compact(t.min_stake_atoms)} {stake.label} staked
                       </span>
                     </div>
                     <p className="small dim" style={{ margin: '.5rem 0 0' }}>{t.blurb}</p>
@@ -124,6 +141,17 @@ export default function Home() {
                 large unstaked balance confers nothing here. The tier is a claim
                 about committed stake, not about wealth.
               </p>
+            </div>
+            <div className="card" style={{ marginTop: '1rem' }}>
+              <h3>Getting started</h3>
+              <ol className="small dim" style={{ paddingLeft: '1.1rem', margin: 0 }}>
+                <li>Get a Sequentia wallet{wallet ? <>: <a href={wallet} target="_blank" rel="noopener noreferrer">the browser extension or web wallet</a></> : ''}.</li>
+                {config.testnet && faucet && (
+                  <li>Get testnet {stake.label} and {payment.label} from <a href={faucet} target="_blank" rel="noopener noreferrer">the faucet</a>.</li>
+                )}
+                <li>Stake {first ? compact(first.min_stake_atoms) : floor} {stake.label}{pools ? <>, or delegate to <a href={pools} target="_blank" rel="noopener noreferrer">a pool</a></> : ''}. Delegated stake still counts for you.</li>
+                <li><Link to="/account">Sign in</Link> with the staking key, and your tier is on the first screen.</li>
+              </ol>
             </div>
           </div>
         </div>
