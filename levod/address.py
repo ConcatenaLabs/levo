@@ -67,6 +67,99 @@ def encode_segwit(hrp, witver, witprog):
     return hrp + "1" + "".join(CHARSET[d] for d in data + checksum)
 
 
+def _bech32_verify(hrp, data):
+    """Which checksum a bech32 string carries: 'bech32', 'bech32m' or None."""
+    const = _polymod(_hrp_expand(hrp) + data)
+    if const == 1:
+        return "bech32"
+    if const == BECH32M_CONST:
+        return "bech32m"
+    return None
+
+
+# The confidential (blech32) prefixes on the chains Levo runs on. A covenant
+# reads the outputs it checks, so nothing it builds can be addressed to one.
+CONFIDENTIAL_HRPS = ("tsqb", "sqb", "el", "lq", "tlq")
+
+
+def decode(addr):
+    """(hrp, witness version, program bytes) for a bech32 or bech32m address.
+
+    Raises ValueError with a reason a user can act on: a confidential
+    address, a checksum that does not match, a program of the wrong length,
+    or something that is not an address at all.
+    """
+    a = str(addr or "").strip()
+    if not a:
+        raise ValueError("no address given")
+    if a != a.lower() and a != a.upper():
+        raise ValueError("an address is all lowercase or all uppercase, not mixed")
+    a = a.lower()
+    pos = a.rfind("1")
+    if pos < 1 or pos + 7 > len(a) or len(a) > 90:
+        raise ValueError("%r is not a bech32 address" % addr)
+    hrp, body = a[:pos], a[pos + 1:]
+    if hrp in CONFIDENTIAL_HRPS:
+        raise ValueError(
+            "%s is a confidential address. Everything a sale covenant touches "
+            "has to be explicit, so use an unblinded address (the same wallet "
+            "has one; on the Sequentia testnet it begins tb1)" % addr)
+    if any(c not in CHARSET for c in body):
+        raise ValueError("%r is not a bech32 address" % addr)
+    data = [CHARSET.index(c) for c in body]
+    kind = _bech32_verify(hrp, data)
+    if kind is None:
+        raise ValueError("%s has a bad checksum; check it for a typo" % addr)
+    witver = data[0]
+    prog = _convertbits(data[1:-6], 5, 8, False)
+    if prog is None or witver > 16:
+        raise ValueError("%s is not a valid witness address" % addr)
+    if witver == 0 and kind != "bech32":
+        raise ValueError("%s is a version-0 program with a bech32m checksum" % addr)
+    if witver != 0 and kind != "bech32":
+        pass
+    if witver != 0 and kind != "bech32m":
+        raise ValueError("%s is a version-%d program with a bech32 checksum" % (addr, witver))
+    if len(prog) not in (20, 32) if witver == 0 else not 2 <= len(prog) <= 40:
+        raise ValueError("%s carries a witness program of the wrong length" % addr)
+    return hrp, witver, bytes(prog)
+
+
+def to_script_pubkey(addr, hrp=None):
+    """The scriptPubKey bytes an address stands for.
+
+    `hrp`, when given, is the chain's unblinded prefix, and an address from a
+    different chain is refused: sending a purchase's tokens to a Bitcoin
+    address that happens to share the format would burn them.
+    """
+    got_hrp, witver, prog = decode(addr)
+    if hrp and got_hrp != hrp:
+        raise ValueError(
+            "%s is a %s address, but this chain's addresses begin %s1"
+            % (addr, got_hrp, hrp))
+    ver_byte = 0 if witver == 0 else 0x50 + witver
+    return bytes([ver_byte, len(prog)]) + prog
+
+
+def taproot_program(addr, hrp=None):
+    """The 32-byte program of a taproot (witness v1) address, as hex.
+
+    The treasury of a sale is a v1 program: the sell leaf pins a 32-byte
+    scriptPubKey program, so a v0 address cannot be a treasury.
+    """
+    got_hrp, witver, prog = decode(addr)
+    if hrp and got_hrp != hrp:
+        raise ValueError(
+            "%s is a %s address, but this chain's addresses begin %s1"
+            % (addr, got_hrp, hrp))
+    if witver != 1 or len(prog) != 32:
+        raise ValueError(
+            "%s is not a taproot address. The treasury has to be one, because "
+            "the covenant checks a 32-byte version-1 program; ask your wallet "
+            "for a taproot (bech32m, %s1p...) address" % (addr, got_hrp))
+    return prog.hex()
+
+
 def from_script_pubkey(spk, hrp="tb"):
     """The address for a witness scriptPubKey, or None if it is not one.
 

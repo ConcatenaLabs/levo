@@ -289,3 +289,50 @@ def test_an_old_node_says_so_rather_than_reporting_no_stake(t):
     st = T.StakeReader(rpc, T.StakeLinks()).standing(me)
     t.eq(st["counts_delegated_stake"], False, "flagged as the signer-keyed view")
     t.ok("delegated" in st["delegation_note"], "and explains what that costs")
+
+
+def test_tier_tables_are_checked_for_sense(t):
+    def bad(spec, needle):
+        try:
+            T.tiers_from_env({"LEVOD_TIERS": json.dumps(spec)})
+            t.ok(False, "refuses " + needle)
+        except ValueError as e:
+            t.ok(needle in str(e), "refuses " + needle, str(e))
+
+    import json
+    bad([{"name": "V", "min_stake": 0, "cap": 0}, {"name": "A", "min_stake": 10, "cap": 5, "may_list": True},
+         {"name": "B", "min_stake": 10, "cap": 6}], "distinct")
+    bad([{"name": "V", "min_stake": 0, "cap": 0}, {"name": "A", "min_stake": 10, "cap": -5, "may_list": True}],
+        "negative")
+    bad([{"name": "V", "min_stake": 0, "cap": 0}, {"name": "A", "min_stake": 10, "cap": 50, "may_list": True},
+         {"name": "B", "min_stake": 20, "cap": 40}], "smaller cap")
+
+
+def test_the_listing_tier_is_the_lowest_that_may_list(t):
+    import json
+    tiers = T.tiers_from_env({"LEVOD_TIERS": json.dumps([
+        {"name": "V", "min_stake": 0, "cap": 0},
+        {"name": "Mid", "min_stake": 10, "cap": 50, "may_list": True},
+        {"name": "Top", "min_stake": 20, "cap": 60}])})
+    p = T.TierPolicy(tiers)
+    t.eq(p.listing_tier().name, "Mid", "the tier named in a listing refusal is the one that may list")
+    t.eq(p.for_stake(20 * SEQ).may_list, False, "a higher tier without may_list cannot list")
+
+
+def test_signing_in_with_a_linked_key_moves_it(t):
+    """One stake, one account. If a staking key was linked to account X and
+    its holder then signs in with the key itself, the newest proof of control
+    wins: the key counts for the login and no longer for X."""
+    class RPC:
+        def controller_weights(self):
+            return {"02" + "aa" * 32: {"weight_atoms": FLOOR, "delegated": False, "signer": None}}, True
+
+    links = T.StakeLinks()
+    links.link("02" + "bb" * 32, "02" + "aa" * 32)
+    r = T.StakeReader(RPC(), links)
+    t.eq(r.standing("02" + "bb" * 32)["stake_atoms"], FLOOR, "the link counts for X at first")
+    st = r.standing("02" + "aa" * 32)
+    t.eq(st["stake_atoms"], FLOOR, "signing in with the key counts it for the login")
+    t.eq(links.owner_of("02" + "aa" * 32), "02" + "aa" * 32, "and the key moved")
+    t.eq(links.dirty, True, "which is flagged for saving")
+    t.eq(r.standing("02" + "bb" * 32)["stake_atoms"], 0, "so X no longer has it")

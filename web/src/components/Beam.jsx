@@ -1,66 +1,37 @@
 import { compact } from '../lib/format'
+import { xFor, yFor } from '../lib/beam'
 
 // Levo's one drawing: the rule itself, plotted.
 //
-// Stake runs left to right, the allowance ceiling steps up with it, and your
-// own stake sits on the step it has reached. It is a step function because that
-// is genuinely what the rule is -- allowance does not rise smoothly with stake,
-// it jumps at thresholds -- and drawing it any other way would flatter the
-// design at the cost of describing the thing wrongly.
+// Stake runs left to right, the cap steps up with it, and your own stake sits
+// on the step it has reached. It is a step function because that is genuinely
+// what the rule is -- the cap does not rise smoothly with stake, it jumps at
+// thresholds -- and drawing it any other way would flatter the design at the
+// cost of describing the thing wrongly.
 //
-// The x axis is piecewise: each tier occupies an equal span. A true linear axis
-// would collapse the lower tiers into the left edge, since the thresholds are
-// orders of magnitude apart.
+// The geometry lives in lib/beam.js so it can be tested without a browser.
 
-// Each tier owns an equal segment, INCLUDING the top one -- it is where the
-// people with the most stake actually sit, so a scale that gives it no width
-// draws everybody at the edge and shows the tier not at all.
-function xFor(stakeAtoms, stops) {
-  const segments = stops.length
-  const s = Number(stakeAtoms || 0)
-  let k = 0
-  for (let i = 0; i < stops.length; i++) if (s >= stops[i]) k = i
-  let f
-  if (k + 1 < stops.length) {
-    const lo = stops[k], hi = stops[k + 1]
-    f = hi > lo ? (s - lo) / (hi - lo) : 0
-  } else {
-    // Above the top threshold there is no next one to measure against, so
-    // position by how far past it the stake has gone, easing towards the end.
-    const lo = stops[k] || 1
-    f = Math.min(0.85, (s - lo) / (lo * 4))
-  }
-  return (k + Math.max(0, Math.min(1, f))) / segments
-}
-
-export default function Beam({ tiers, stakeAtoms = 0, compactMode = false, showMarker = true }) {
+export default function Beam({ tiers, stakeAtoms = 0, compactMode = false, showMarker = true,
+                               paymentLabel = 'USDX', stakeLabel = 'SEQ' }) {
   if (!tiers || tiers.length < 2) return null
 
   const W = 1000
   const H = compactMode ? 104 : 168
-  const padB = compactMode ? 26 : 34      // room for the threshold labels
-  const padT = compactMode ? 20 : 30      // headroom, so the top step is not flush
-  const n = tiers.length - 1
-  const stops = tiers.map((t) => t.min_stake_atoms)
-  const caps = tiers.map((t) => t.cap_atoms)
+  const padB = compactMode ? 14 : 18
+  const padT = compactMode ? 20 : 30
+  const stops = tiers.map((t) => Number(t.min_stake_atoms))
+  const caps = tiers.map((t) => Number(t.cap_atoms))
   const maxCap = Math.max(...caps, 1)
-
-  // A square-root height scale: the caps span two orders of magnitude, and on a
-  // linear scale the first tier's step would be invisible.
-  const yFor = (cap) => {
-    const top = padT
-    const bottom = H - padB
-    const f = Math.sqrt(cap / maxCap)
-    return bottom - f * (bottom - top)
-  }
 
   const seg = W / tiers.length
   const steps = tiers.map((t, i) => ({
-    i, x0: i * seg, x1: (i + 1) * seg, y: yFor(caps[i]), tier: t,
+    i, x0: i * seg, x1: (i + 1) * seg, y: yFor(caps[i], maxCap, padT, H - padB), tier: t,
   }))
 
   const stake = Number(stakeAtoms || 0)
-  const mx = xFor(stake, stops) * W
+  // Keep the marker inside the drawing: a zero stake sits at the very edge,
+  // and half a dot is not a position.
+  const mx = Math.min(W - 6, Math.max(6, xFor(stake, stops) * W))
   const reachedIndex = steps.reduce((acc, s, i) => (stake >= stops[i] ? i : acc), 0)
   const my = steps[reachedIndex].y
 
@@ -69,15 +40,21 @@ export default function Beam({ tiers, stakeAtoms = 0, compactMode = false, showM
 
   return (
     <div className={'beam' + (compactMode ? ' compact' : '')}>
+      <div className="beam-head">
+        <span>Stake, {stakeLabel} →</span>
+        <span>cap per sale, {paymentLabel}</span>
+      </div>
       <svg viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none"
-           role="img" aria-label="Allowance ceiling by amount staked">
+           role="img" aria-label={'Per-sale cap by amount staked: ' + tiers.map((t) =>
+             t.name + ' from ' + compact(t.min_stake_atoms) + ' ' + stakeLabel + ', up to ' +
+             compact(t.cap_atoms) + ' ' + paymentLabel).join('; ')}>
         {/* the ground the steps stand on */}
         <line x1="0" y1={H - padB} x2={W} y2={H - padB}
               stroke="var(--line)" strokeWidth="1" vectorEffect="non-scaling-stroke" />
         {/* filled area up to the reached step, so progress reads at a glance */}
-        {steps.slice(0, reachedIndex + 1).map((s) => (
+        {showMarker && steps.slice(0, reachedIndex + 1).map((s) => (
           <rect key={'f' + s.i} x={s.x0} y={s.y}
-                width={(s.i === reachedIndex ? mx : s.x1) - s.x0}
+                width={Math.max(0, (s.i === reachedIndex ? mx : s.x1) - s.x0)}
                 height={Math.max(0, H - padB - s.y)}
                 fill="var(--brass)" opacity="0.14" />
         ))}
@@ -109,26 +86,25 @@ export default function Beam({ tiers, stakeAtoms = 0, compactMode = false, showM
       {/* The step values live in HTML, not in the SVG: the geometry is scaled
           non-uniformly so the steps fill the width, and text inside it would be
           squashed with them. */}
-      <div className="beam-caps">
+      <div className="beam-caps" aria-hidden="true">
         {steps.map((s) => (
           s.tier.cap_atoms > 0 ? (
             <span key={'cap' + s.i} className="beam-cap"
                   style={{ left: (s.x0 / W) * 100 + '%',
-                           top: (s.y - (compactMode ? 15 : 19)) + 'px' }}>
+                           top: (s.y - (compactMode ? 15 : 19) + (compactMode ? 20 : 22)) + 'px' }}>
               {compact(s.tier.cap_atoms)}
             </span>
           ) : null
         ))}
       </div>
-      <div className="beam-cap-note">up to · USDX per sale</div>
-      <div className="beam-labels">
+      <div className="beam-labels" aria-hidden="true">
         {tiers.map((t, i) => (
           <div key={t.level}
-               className={'beam-label' + (stake >= t.min_stake_atoms ? ' reached' : '')}
+               className={'beam-label' + (stake >= Number(t.min_stake_atoms) ? ' reached' : '')}
                style={{ left: (i / tiers.length) * 100 + '%' }}>
             <b>{t.name}</b>
-            <span>{t.min_stake_atoms === 0 ? 'no stake'
-                                           : compact(t.min_stake_atoms) + ' SEQ'}</span>
+            <span>{Number(t.min_stake_atoms) === 0 ? 'no stake'
+                                                   : compact(t.min_stake_atoms) + ' ' + stakeLabel}</span>
           </div>
         ))}
       </div>

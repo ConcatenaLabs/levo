@@ -1,0 +1,22 @@
+[Unit]
+Description=Levo launchpad (levod)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# The checkout the box pulls from GitHub. Never edit source here.
+WorkingDirectory=/root/sequentia/levo
+# Every LEVOD_* setting, including the secret and the node credentials.
+EnvironmentFile=/etc/sequentia/levod.env
+ExecStart=/usr/bin/python3 /root/sequentia/levo/levod/server.py
+Restart=always
+RestartSec=5
+# levod saves on every mutation and stops cleanly on SIGTERM.
+KillSignal=SIGTERM
+TimeoutStopSec=20
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

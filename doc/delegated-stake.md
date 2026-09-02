@@ -33,18 +33,27 @@ Under that view:
 Delegation changes who signs blocks. It does not change who owns the coins, and
 Levo's tiers are about ownership.
 
-## Older nodes
+## Older nodes, and chains without staking
 
 `bycontroller` is a Sequentia RPC addition. Against a node without it, Levo
-falls back to the signer-keyed view and says so, in the API (
-`counts_delegated_stake: false`) and on the account page. It does not silently
+falls back to the signer-keyed view and says so, in the API
+(`counts_delegated_stake: false`) and on the account page. It does not silently
 report a delegator as having nothing: that would look like a lost stake rather
 than a node that cannot answer the question.
 
-## Proving a delegated stake
+On a chain with no proof of stake at all, the node has nobody to report, and
+Levo says that too (`staking_available: false`) rather than treating it as an
+outage: every account is a visitor there.
 
-Nothing changes. The controller key is still the one that has to sign, because
-it is still the key that owns the stake. A wallet that can sign with its
-staking key does this in one step -- see `signStakerMessage` in the browser
-extension -- and signing in with that key needs no linking at all, since the
-login has already proved it.
+## Proving a stake, and one key per account
+
+The controller key is still the one that has to sign, because it is still the
+key that owns the stake. A wallet that can sign with its staking key does this
+in one step -- see `signStakerMessage` in the browser extension -- and signing
+in with that key needs no linking at all, since the login has already proved
+it.
+
+One key counts for one account. Proving a key that another account had proven
+before moves it: the newest proof of control holds it, whether that proof was a
+link statement or a sign-in with the key itself. A stake can never be counted
+towards two accounts at once.

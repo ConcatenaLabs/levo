@@ -8,6 +8,11 @@ old bytes are not at the address the new bytes derive.
 
 If the upstream covenant genuinely changes, that is a migration -- existing
 sales must be closed out under the old bytes first -- not a vector refresh.
+
+The cases feed the RAW leaf builders with asset ids in WIRE order, exactly as
+`covenant._check_vectors` reads them back. The display-to-wire reversal that
+`SaleTerms` performs is a separate layer with its own tests, and keeping it out
+of the vectors is what lets the vectors pin the bytes and nothing else.
 """
 import json
 import sys
@@ -15,9 +20,11 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "levod"))
 import covenant as L  # noqa: E402
+import script as K  # noqa: E402
 
 CASES = [
-    # A plain USDX-priced sale.
+    # A plain USDX-priced sale. `payment` is USDX's DISPLAY id: the vector
+    # feeds it to the raw builder as given, so the leaf pins these bytes.
     dict(name="usdx-simple",
          token="aa" * 32,
          payment="2a515539da5e6a60caa7766ecd65bac0c10d15717ddd2088844ba58f4d04b9de",
@@ -37,14 +44,15 @@ CASES = [
 ]
 
 
-def main():
+def build(cases=CASES):
     out = {"note": "Frozen sale-covenant bytes. See tools/gen_vectors.py.",
            "cases": []}
-    for c in CASES:
-        terms = L.SaleTerms(c["token"], c["payment"], c["rate_num"], c["rate_den"],
-                            c["treasury_prog"], c["min_lot"], c["close_locktime"],
-                            c["reclaim_x"])
-        cov = L.derive(terms)
+    for c in cases:
+        sell = L.build_sell_leaf(bytes.fromhex(c["token"]), bytes.fromhex(c["payment"]),
+                                 c["rate_num"], c["rate_den"],
+                                 bytes.fromhex(c["treasury_prog"]), c["min_lot"])
+        reclaim = L.build_reclaim_leaf(c["close_locktime"], bytes.fromhex(c["reclaim_x"]))
+        tap = K.Taptree(K.NUMS, [("sell", sell), ("reclaim", reclaim)])
         out["cases"].append({
             "name": c["name"],
             "token": c["token"], "payment": c["payment"],
@@ -52,11 +60,16 @@ def main():
             "treasury_prog": c["treasury_prog"], "min_lot": c["min_lot"],
             "close_locktime": c["close_locktime"], "reclaim_x": c["reclaim_x"],
             "expect": {
-                "sell_leaf": cov.sell_leaf.hex(),
-                "reclaim_leaf": cov.reclaim_leaf.hex(),
-                "spk": cov.spk_hex,
+                "sell_leaf": sell.hex(),
+                "reclaim_leaf": reclaim.hex(),
+                "spk": tap.script_pubkey.hex(),
             },
         })
+    return out
+
+
+def main():
+    out = build()
     dest = Path(__file__).resolve().parent.parent / "levod" / "vectors.json"
     dest.write_text(json.dumps(out, indent=2) + "\n")
     print("wrote %s (%d cases)" % (dest, len(out["cases"])))

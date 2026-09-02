@@ -29,6 +29,7 @@ import hashlib
 import struct
 
 import covenant as C
+import pset as PSET
 import script as K
 import secp256k1 as S
 
@@ -275,23 +276,30 @@ def build_buy(sale, plan, buyer):
     # Output 2k+1: the remainder, or -- on a full buy -- something the covenant
     # will not mistake for one. If the token asset sat here on a full buy, the
     # leaf would read the buyer's own tokens as an unsold remainder and require
-    # them to be sitting at the covenant address.
+    # them to be sitting at the covenant address. So whatever goes here must
+    # not be the token: payment-asset change first, then a fee in another
+    # asset, and never token change or a token-denominated fee. It must also
+    # be explicit: the leaf inspects this output's asset, and a confidential
+    # asset aborts the script. Every output Levo builds is explicit.
+    non_token_change = [a for a in sorted(change) if a != terms.token_asset]
     if plan.remainder_atoms:
         tx.vout.append(TxOut(terms.token_asset, plan.remainder_atoms,
                              sale.cov.script_pubkey))
-    elif change:
-        asset = sorted(change)[0]
+    elif non_token_change:
+        asset = non_token_change[0]
         tx.vout.append(TxOut(asset, change.pop(asset), change_spk))
-    elif fee_out is not None:
+    elif fee_out is not None and fee_asset != terms.token_asset:
         tx.vout.append(fee_out)
         fee_out = None
     else:
         raise BuildError(
             "a full buy needs a second output that is not the sale token, so "
             "the covenant does not read your tokens as an unsold remainder. "
-            "Supply a change_script_pubkey or a fee.")
+            "Supply a change_script_pubkey with payment-asset change, or pay "
+            "the fee in an asset other than the sale token.")
 
     # The buyer's tokens, at index 2 or later, where the covenant does not look.
+    plan.token_spk = token_spk
     tx.vout.append(TxOut(terms.token_asset, plan.token_atoms, token_spk))
 
     for asset in sorted(change):
@@ -302,10 +310,24 @@ def build_buy(sale, plan, buyer):
 
     _assert_balanced(tx, sale, plan, supplied)
 
+    # The same transaction as a PSET, for wallets that sign documents rather
+    # than raw hex: the covenant's witness is already final, so the wallet
+    # signs the buyer's inputs and nothing else. It needs each spent output's
+    # script, which the node supplied when the inputs were verified; without
+    # that there is no PSET, and the raw transaction still stands.
+    pset_b64 = None
+    if all(i.get("script_pubkey") for i in ins):
+        spent = [{"asset": terms.token_asset, "atoms": sale.locked_atoms,
+                  "script_pubkey": sale.cov.script_pubkey}]
+        spent += [{"asset": str(i["asset"]).lower(), "atoms": int(i["value_atoms"]),
+                   "script_pubkey": i["script_pubkey"]} for i in ins]
+        pset_b64 = PSET.from_transaction(tx, spent)
+
     return {
         "unsigned_tx_hex": tx.hex(),
+        "pset": pset_b64,
         "txid": tx.txid(),
-        "vsize_estimate": _vsize(tx, len(ins)),
+        "vsize_estimate": _vsize(tx, ins),
         "inputs": [
             {"index": 0, "role": "the sale covenant",
              "outpoint": "%s:%d" % (funding["txid"], funding["vout"]),
@@ -333,7 +355,8 @@ def _role(n, o, sale, plan):
         return "unsold remainder, re-rested at the sale address"
     if o.is_fee:
         return "network fee"
-    if o.asset == sale.terms.token_asset:
+    if o.asset == sale.terms.token_asset and o.atoms == plan.token_atoms \
+            and o.script_pubkey == plan.token_spk:
         return "your tokens"
     return "your change"
 
@@ -358,16 +381,19 @@ def _assert_balanced(tx, sale, plan, supplied):
         raise BuildError("transaction does not balance: %s" % detail)
 
 
-def _vsize(tx, n_buyer_inputs):
+def _vsize(tx, buyer_inputs):
     """A weight estimate that accounts for the signatures still to be added.
 
     The covenant input's witness is already present; each buyer input still
-    needs a ~64-byte Schnorr signature (or a signature and a public key for a
-    v0 input), which the caller has to pay for.
+    needs its witness: a 64-byte Schnorr signature for a taproot input, or a
+    DER signature and a public key (about 108 bytes) for a v0 input. The spent
+    script says which, when the caller supplied it.
     """
     base = len(tx.serialize(with_witness=False))
     total = len(tx.serialize())
-    total += n_buyer_inputs * 66
+    for i in buyer_inputs if isinstance(buyer_inputs, list) else [{}] * int(buyer_inputs):
+        spk = str(i.get("script_pubkey") or "") if isinstance(i, dict) else ""
+        total += 66 if spk.startswith("51") else 108
     weight = base * 3 + total
     return (weight + 3) // 4
 
@@ -449,25 +475,40 @@ def _as_bytes(v):
 
 
 def build_reclaim(sale, destination_spk, fee_inputs, fee_atoms, fee_asset,
-                  genesis_hash, locktime=None, sign_with=None):
+                  genesis_hash, locktime=None):
     """Sweep whatever did not sell, after the sale's close.
 
-    The reclaim leaf is the one place in Levo where a covenant spend carries a
-    signature, so this is the only builder that can be asked to sign. Pass
-    `sign_with` (the reclaim private key as an int) to get a finished
-    transaction; leave it out to get the sighash and sign elsewhere, which is
-    what a project using a hardware signer will do.
+    The reclaim leaf is the one place where a covenant spend carries a
+    signature, and it is the project's to make: this returns the sighash, the
+    leaf and the control block, and the project signs the sighash with its
+    reclaim key wherever that key lives (`bin/levo reclaim` does it on the
+    project's own machine). levod never sees a key.
 
     The covenant holds the sale token and nothing else, so the fee has to come
     from somewhere: `fee_inputs` are the project's own outputs covering it.
     """
-    if not sale.funding:
+    if not sale.funding or sale.locked_atoms <= 0:
         raise BuildError("this sale holds nothing to reclaim")
+    if not destination_spk:
+        raise BuildError("say where the reclaimed tokens go: destination_address "
+                         "or destination_script_pubkey")
+    destination_spk = _need_spk(destination_spk, "destination_script_pubkey")
     lt = int(locktime if locktime is not None else sale.terms.close_locktime)
-    if lt < sale.terms.close_locktime:
+    close = sale.terms.close_locktime
+    if lt < close:
         raise BuildError(
             "locktime %d is before the sale's close of %d; the covenant would "
-            "reject it" % (lt, sale.terms.close_locktime))
+            "reject it" % (lt, close))
+    if (lt < 500_000_000) != (close < 500_000_000):
+        # CHECKLOCKTIMEVERIFY compares like with like: a height against a
+        # height, a time against a time. Mixing them passes no check and
+        # fails at the node, after the project has signed.
+        raise BuildError(
+            "the sale closes at a %s, so the reclaim's locktime must be a %s too"
+            % (("block height", "block height") if close < 500_000_000
+               else ("unix time", "unix time")))
+    if lt > 0xffffffff:
+        raise BuildError("locktime does not fit the transaction's 32-bit field")
 
     tx = Transaction(version=2, locktime=lt)
     # CHECKLOCKTIMEVERIFY only takes effect when the input's sequence is not
@@ -489,12 +530,11 @@ def build_reclaim(sale, destination_spk, fee_inputs, fee_atoms, fee_asset,
         raise BuildError("fee inputs bring %d atoms of %s but the fee is %d"
                          % (supplied.get(fee_asset.lower(), 0), fee_asset, fee_atoms))
 
-    tx.vout.append(TxOut(sale.terms.token_asset, sale.locked_atoms,
-                         _as_bytes(destination_spk)))
+    tx.vout.append(TxOut(sale.terms.token_asset, sale.locked_atoms, destination_spk))
     for asset, brought in sorted(supplied.items()):
         left = brought - (int(fee_atoms) if asset == fee_asset.lower() else 0)
         if left:
-            tx.vout.append(TxOut(asset, left, _as_bytes(destination_spk)))
+            tx.vout.append(TxOut(asset, left, destination_spk))
     if fee_atoms:
         tx.vout.append(TxOut(fee_asset, int(fee_atoms), b""))
 
@@ -515,14 +555,6 @@ def build_reclaim(sale, destination_spk, fee_inputs, fee_atoms, fee_asset,
         "note": "sign the sighash with the reclaim key (BIP340) and put "
                 "[signature, leaf, control block] in input 0's witness",
     }
-    if sign_with is not None:
-        sig = S.schnorr_sign(sighash, int(sign_with))
-        if not S.schnorr_verify(sighash, sig, bytes.fromhex(sale.terms.reclaim_xonly)):
-            raise BuildError(
-                "that key does not match the sale's reclaim key; the covenant "
-                "would reject this spend")
-        tx.vin[0].witness = sale.cov.reclaim_witness(sig)
-        result["signature"] = sig.hex()
     result["unsigned_tx_hex"] = tx.hex()
     result["txid"] = tx.txid()
     result["fee_inputs_still_to_sign"] = [
@@ -532,6 +564,21 @@ def build_reclaim(sale, destination_spk, fee_inputs, fee_atoms, fee_asset,
 
 
 # --- filling in a witness after the fact -------------------------------------
+
+def reclaim_witness(sale, signature):
+    """The witness stack for input 0 of a reclaim, given the project's BIP340
+    signature over the sighash: [signature, leaf, control block]. Verifies the
+    signature against the sale's reclaim key first, so a wrong key is caught
+    here rather than at relay."""
+    sig = bytes.fromhex(signature) if isinstance(signature, str) else bytes(signature)
+    return sale.cov.reclaim_witness(sig)
+
+
+def check_reclaim_signature(sale, sighash_hex, signature):
+    sig = bytes.fromhex(signature) if isinstance(signature, str) else bytes(signature)
+    return S.schnorr_verify(bytes.fromhex(sighash_hex), sig,
+                            bytes.fromhex(sale.terms.reclaim_xonly))
+
 
 def set_witness(tx_hex, index, stack):
     """Replace one input's witness in an already-serialised transaction.
@@ -546,8 +593,6 @@ def set_witness(tx_hex, index, stack):
     pos = 4                                        # version
     flags = raw[pos]
     pos += 1
-    if not flags & 1:
-        raise BuildError("that transaction has no witness section to fill")
 
     def rd(p):
         n = raw[p]
@@ -567,12 +612,31 @@ def set_witness(tx_hex, index, stack):
         pos += 4                                   # sequence
     n_out, pos = rd(pos)
     for _ in range(n_out):
-        pos += 33 if raw[pos] == 1 else 1          # asset
-        pos += 9 if raw[pos] == 1 else 33          # value
+        # Each confidential field is one byte when null, 33 bytes when it is
+        # a commitment, and for the value 9 bytes when explicit. Walking them
+        # the way the node does is what keeps a blinded change output from
+        # throwing the witness offsets off.
+        pos += 1 if raw[pos] == 0 else 33          # asset: null or 33 bytes
+        pos += {0: 1, 1: 9}.get(raw[pos], 33)      # value: null, explicit, or commitment
         pos += 1 if raw[pos] == 0 else 33          # nonce
         ln, pos = rd(pos)
         pos += ln                                  # scriptPubKey
     pos += 4                                       # locktime
+    if not 0 <= index < n_in:
+        raise BuildError("input %d is not in this transaction" % index)
+
+    empty_in = ser_string(b"") + ser_string(b"") + ser_string_vector([]) + ser_string_vector([])
+    empty_out = ser_string(b"") + ser_string(b"")
+    rebuilt = (ser_string(b"") + ser_string(b"")
+               + ser_string_vector(list(stack)) + ser_string_vector([]))
+
+    if not flags & 1:
+        # No witness section yet: a transaction nothing has signed. Add one,
+        # empty for every other input and output, with this input's stack.
+        body = raw[5:pos]
+        wit = b"".join(rebuilt if i == index else empty_in for i in range(n_in))
+        wit += empty_out * n_out
+        return (raw[:4] + b"\x01" + body + wit).hex()
 
     spans = []
     for _ in range(n_in):
@@ -586,9 +650,5 @@ def set_witness(tx_hex, index, stack):
                 ln, pos = rd(pos)
                 pos += ln
         spans.append((s0, pos))
-    if not 0 <= index < len(spans):
-        raise BuildError("input %d is not in this transaction" % index)
     a, b = spans[index]
-    rebuilt = (ser_string(b"") + ser_string(b"")
-               + ser_string_vector(list(stack)) + ser_string_vector([]))
     return (raw[:a] + rebuilt + raw[b:]).hex()

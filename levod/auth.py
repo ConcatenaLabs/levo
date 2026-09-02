@@ -15,14 +15,24 @@ not need to be told which key signed: it recovers the key from the signature,
 and that key is the account. Nothing is registered in advance, and a forged
 "login as someone else" would require forging a signature.
 
-Two rules keep the challenge honest:
+Three rules keep the challenge honest:
 
   * The challenge carries a random nonce and is single use. A signature captured
     off a user's screen cannot be replayed, because the nonce it names is spent
     the moment it is first redeemed.
-  * The challenge names the site and an expiry in its human-readable text. The
-    user is signing a statement they can read, not an opaque hash, so a hostile
-    site cannot get a Levo login signed by asking for "a test message".
+  * The signed text must be the text Levo issued, word for word. A hostile site
+    cannot obtain a Levo login by asking for a signature over "a test message"
+    with a nonce hidden in it: the nonce alone is not enough, the whole
+    statement has to match.
+  * The statement names the site, the purpose and an expiry in text the user
+    can read. What is signed is a sentence, not an opaque hash.
+
+One consequence of recovery is worth knowing: a valid signature over ANY text
+recovers to SOME key. If a wallet signs a version of the challenge whose bytes
+differ from what Levo issued (a trailing newline lost in a shell, a stray
+space), the signature is real but the recovered key belongs to nobody. Levo
+refuses a text that differs from the issued one, and lets a caller name the
+address it signed with so a mismatch is an error rather than a phantom account.
 """
 
 import base64
@@ -31,11 +41,10 @@ import hmac
 import json
 import os
 import secrets
-
+import struct
 import time
 
-
-
+import address as ADDR
 import secp256k1 as S
 
 MESSAGE_MAGIC = b"Bitcoin Signed Message:\n"
@@ -80,11 +89,11 @@ def recover_pubkey(message, signature_b64):
     not a well-formed recoverable signature over this exact message.
     """
     try:
-        raw = base64.b64decode(signature_b64, validate=True)
+        raw = base64.b64decode(str(signature_b64).strip(), validate=True)
     except Exception:
-        raise BadSignature("signature is not valid base64")
+        raise BadSignature("the signature is not valid base64")
     if len(raw) != 65:
-        raise BadSignature("recoverable signature must be 65 bytes, got %d" % len(raw))
+        raise BadSignature("a recoverable signature is 65 bytes; this one is %d" % len(raw))
 
     header = raw[0]
     if not (27 <= header <= 34):
@@ -122,7 +131,153 @@ def verify_signature(message, signature_b64, expect_pubkey):
     raise ValueError("expected a 33-byte compressed public key in hex")
 
 
+# --- keys and addresses -----------------------------------------------------
+
+def hash160(b):
+    return ripemd160(hashlib.sha256(b).digest())
+
+
+def ripemd160(data):
+    """RIPEMD-160, in Python when the interpreter's OpenSSL lacks it.
+
+    Message signing addresses are hashes of keys, and comparing a recovered
+    key to the address a user says they signed with needs this hash. Some
+    Python builds ship without it, so it is carried here rather than assumed.
+    """
+    try:
+        return hashlib.new("ripemd160", data).digest()
+    except (ValueError, TypeError):
+        return _ripemd160(data)
+
+
+def _ripemd160(data):
+    def rol(x, n):
+        return ((x << n) | (x >> (32 - n))) & 0xffffffff
+
+    K1 = (0x00000000, 0x5A827999, 0x6ED9EBA1, 0x8F1BBCDC, 0xA953FD4E)
+    K2 = (0x50A28BE6, 0x5C4DD124, 0x6D703EF3, 0x7A6D76E9, 0x00000000)
+    R1 = (0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15,
+          7, 4, 13, 1, 10, 6, 15, 3, 12, 0, 9, 5, 2, 14, 11, 8,
+          3, 10, 14, 4, 9, 15, 8, 1, 2, 7, 0, 6, 13, 11, 5, 12,
+          1, 9, 11, 10, 0, 8, 12, 4, 13, 3, 7, 15, 14, 5, 6, 2,
+          4, 0, 5, 9, 7, 12, 2, 10, 14, 1, 3, 8, 11, 6, 15, 13)
+    R2 = (5, 14, 7, 0, 9, 2, 11, 4, 13, 6, 15, 8, 1, 10, 3, 12,
+          6, 11, 3, 7, 0, 13, 5, 10, 14, 15, 8, 12, 4, 9, 1, 2,
+          15, 5, 1, 3, 7, 14, 6, 9, 11, 8, 12, 2, 10, 0, 4, 13,
+          8, 6, 4, 1, 3, 11, 15, 0, 5, 12, 2, 13, 9, 7, 10, 14,
+          12, 15, 10, 4, 1, 5, 8, 7, 6, 2, 13, 14, 0, 3, 9, 11)
+    S1 = (11, 14, 15, 12, 5, 8, 7, 9, 11, 13, 14, 15, 6, 7, 9, 8,
+          7, 6, 8, 13, 11, 9, 7, 15, 7, 12, 15, 9, 11, 7, 13, 12,
+          11, 13, 6, 7, 14, 9, 13, 15, 14, 8, 13, 6, 5, 12, 7, 5,
+          11, 12, 14, 15, 14, 15, 9, 8, 9, 14, 5, 6, 8, 6, 5, 12,
+          9, 15, 5, 11, 6, 8, 13, 12, 5, 12, 13, 14, 11, 8, 5, 6)
+    S2 = (8, 9, 9, 11, 13, 15, 15, 5, 7, 7, 8, 11, 14, 14, 12, 6,
+          9, 13, 15, 7, 12, 8, 9, 11, 7, 7, 12, 7, 6, 15, 13, 11,
+          9, 7, 15, 11, 8, 6, 6, 14, 12, 13, 5, 14, 13, 13, 7, 5,
+          15, 5, 8, 11, 14, 14, 6, 14, 6, 9, 12, 9, 12, 5, 15, 8,
+          8, 5, 12, 9, 12, 5, 14, 6, 8, 13, 6, 5, 15, 13, 11, 11)
+
+    def f(j, x, y, z):
+        if j < 16:
+            return x ^ y ^ z
+        if j < 32:
+            return (x & y) | (~x & z)
+        if j < 48:
+            return (x | ~y) ^ z
+        if j < 64:
+            return (x & z) | (y & ~z)
+        return x ^ (y | ~z)
+
+    h = [0x67452301, 0xEFCDAB89, 0x98BADCFE, 0x10325476, 0xC3D2E1F0]
+    msg = bytearray(data)
+    bitlen = len(data) * 8
+    msg.append(0x80)
+    while len(msg) % 64 != 56:
+        msg.append(0)
+    msg += struct.pack("<Q", bitlen)
+    for off in range(0, len(msg), 64):
+        X = struct.unpack("<16I", msg[off:off + 64])
+        al, bl, cl, dl, el = h
+        ar, br, cr, dr, er = h
+        for j in range(80):
+            t = (rol((al + f(j, bl, cl, dl) + X[R1[j]] + K1[j // 16]) & 0xffffffff, S1[j]) + el) & 0xffffffff
+            al, el, dl, cl, bl = el, dl, rol(cl, 10), bl, t
+            t = (rol((ar + f(79 - j, br, cr, dr) + X[R2[j]] + K2[j // 16]) & 0xffffffff, S2[j]) + er) & 0xffffffff
+            ar, er, dr, cr, br = er, dr, rol(cr, 10), br, t
+        t = (h[1] + cl + dr) & 0xffffffff
+        h[1] = (h[2] + dl + er) & 0xffffffff
+        h[2] = (h[3] + el + ar) & 0xffffffff
+        h[3] = (h[4] + al + br) & 0xffffffff
+        h[4] = (h[0] + bl + cr) & 0xffffffff
+        h[0] = t
+    return struct.pack("<5I", *h)
+
+
+B58 = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
+
+
+def _b58check_decode(s):
+    n = 0
+    for ch in s:
+        if ch not in B58:
+            raise ValueError("not a base58 string")
+        n = n * 58 + B58.index(ch)
+    raw = n.to_bytes((n.bit_length() + 7) // 8, "big")
+    raw = b"\x00" * (len(s) - len(s.lstrip("1"))) + raw
+    if len(raw) < 25:
+        raise ValueError("too short for a base58check address")
+    body, check = raw[:-4], raw[-4:]
+    if hashlib.sha256(hashlib.sha256(body).digest()).digest()[:4] != check:
+        raise ValueError("bad base58 checksum")
+    return body
+
+
+def key_matches_address(pubkey_hex, address):
+    """Whether a recovered key is the key behind an address the user names.
+
+    Message signing works with the key's hash, so a P2PKH (legacy) or P2WPKH
+    (bech32, tb1q...) address can be checked: its 20-byte program is the
+    hash160 of the key. A taproot address carries a tweaked key and cannot be
+    checked this way; a confidential address is refused by the decoder.
+    Raises ValueError when the address is not one that names a key hash.
+    """
+    pub = bytes.fromhex(pubkey_hex)
+    want = hash160(pub)
+    a = str(address or "").strip()
+    if not a:
+        raise ValueError("no address given")
+    try:
+        hrp, ver, prog = ADDR.decode(a)
+    except ValueError as bech_err:
+        if "confidential" in str(bech_err):
+            raise
+        try:
+            body = _b58check_decode(a)
+        except ValueError:
+            raise ValueError("%s is not an address message signing works with "
+                             "(a legacy or a tb1q... address)" % address)
+        # Legacy payloads are <version><20-byte hash>; confidential legacy
+        # forms carry a blinding key first, and the hash is still the tail.
+        return hmac.compare_digest(body[-20:], want)
+    if ver == 0 and len(prog) == 20:
+        return hmac.compare_digest(bytes(prog), want)
+    if ver == 1:
+        raise ValueError("%s is a taproot address, which carries a tweaked key that "
+                         "message signing cannot be checked against; name the legacy "
+                         "or %s1q... address of the key you signed with" % (address, hrp))
+    raise ValueError("%s is not an address message signing works with: use the "
+                     "legacy or tb1q... address of the key you signed with" % address)
+
+
 # --- challenges -------------------------------------------------------------
+
+def _canonical(text):
+    """The text a signature is compared against: line endings normalised and
+    trailing whitespace dropped, which is every change a copy through a
+    shell or a text box makes to a statement without changing what it says."""
+    return "\n".join(line.rstrip() for line in str(text).replace("\r\n", "\n")
+                     .replace("\r", "\n").split("\n")).strip()
+
 
 class Challenges:
     """Single-use login challenges, held in memory with an expiry."""
@@ -133,23 +288,24 @@ class Challenges:
         self.site = site
         self.ttl = ttl
         self._now = now
-        self._open = {}
+        self._open = {}                 # nonce -> (expires, issued text)
         self.max_open = max_open or self.MAX_OPEN
 
-    def issue(self, purpose="Sign in to Levo"):
+    def issue(self, purpose="Sign in to Levo", extra_lines=()):
+        """A fresh statement to sign. It ends without a newline, so the bytes a
+        text box holds and the bytes a shell's `$(cat file)` yields are the
+        same bytes, and the signature matches either way."""
         nonce = secrets.token_hex(16)
         issued = self._now()
         expires = issued + self.ttl
-        text = (
-            "%s\n\n"
-            "%s\n"
-            "This signature proves you control this wallet. It authorises no "
-            "payment and moves no funds.\n\n"
-            "Nonce: %s\n"
-            "Expires: %s UTC\n"
-        ) % (self.site, purpose,
-             nonce, time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime(expires)))
-        self._open[nonce] = expires
+        lines = [self.site, "", purpose,
+                 "This signature proves you control this wallet. It authorises "
+                 "no payment and moves no funds.", ""]
+        lines += list(extra_lines)
+        lines += ["Nonce: %s" % nonce,
+                  "Expires: %s UTC" % time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime(expires))]
+        text = "\n".join(lines)
+        self._open[nonce] = (expires, text)
         self._sweep()
         return {"nonce": nonce, "message": text, "expires_at": int(expires)}
 
@@ -162,16 +318,18 @@ class Challenges:
         costs its holder a retry rather than anything they hold.
         """
         now = self._now()
-        for n, exp in list(self._open.items()):
+        for n, (exp, _) in list(self._open.items()):
             if exp < now:
                 del self._open[n]
         excess = len(self._open) - self.max_open
         if excess > 0:
-            for n, _ in sorted(self._open.items(), key=lambda kv: kv[1])[:excess]:
+            for n, _ in sorted(self._open.items(), key=lambda kv: kv[1][0])[:excess]:
                 del self._open[n]
 
     def redeem(self, message):
-        """Spend the nonce named in `message`. Raises if unknown or expired.
+        """Spend the nonce named in `message`, and check the message is the
+        statement that was issued with it. Raises if unknown, expired, or
+        different.
 
         Spending happens BEFORE the signature is checked so that a failed
         attempt still burns the nonce; a challenge is worth exactly one try.
@@ -182,12 +340,18 @@ class Challenges:
                 nonce = line[len("Nonce: "):].strip()
                 break
         if not nonce:
-            raise ValueError("challenge text carries no nonce")
-        expires = self._open.pop(nonce, None)
-        if expires is None:
-            raise ValueError("unknown or already-used challenge")
+            raise ValueError("the signed text carries no nonce; sign the challenge "
+                             "Levo issued, exactly as issued")
+        entry = self._open.pop(nonce, None)
+        if entry is None:
+            raise ValueError("unknown or already-used challenge; ask for a new one")
+        expires, issued = entry
         if expires < self._now():
-            raise ValueError("challenge has expired")
+            raise ValueError("the challenge has expired; ask for a new one")
+        if _canonical(message) != _canonical(issued):
+            raise ValueError("the signed text is not the challenge Levo issued. "
+                             "Sign the statement exactly as shown; a signature "
+                             "over different text logs nobody in")
         return nonce
 
 
@@ -227,4 +391,7 @@ class Sessions:
             return None
         if int(body.get("exp", 0)) < self._now():
             return None
-        return body.get("pubkey")
+        pk = body.get("pubkey")
+        if not isinstance(pk, str) or len(pk) != 66:
+            return None
+        return pk

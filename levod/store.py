@@ -3,8 +3,13 @@
 Levo's durable state is small and entirely public -- project metadata, sale
 terms, which staking keys an account proved, and how much each account has
 committed. There are no keys and no balances here, because levod holds neither;
-the tokens live in the covenant and the stake lives on chain. Losing this file
-would cost the listings and the allocation ledger, not anybody's funds.
+the tokens live in the covenant and the stake lives on chain.
+
+It is still worth backing up. A funded sale's leaves are rebuilt from the
+terms in this file, and a project that did not keep its own copy of the
+listing response has no other way to derive the witness that spends its
+covenant. Losing the file costs nobody tokens, but it can cost a project the
+easy path to its reclaim, and it costs every buyer their allocation record.
 """
 
 import json
@@ -19,9 +24,27 @@ class Store:
         self.data = {"projects": {}, "stake_links": {}, "version": 1}
         if self.path.is_file():
             self.load()
+        self._sweep_temp()
+
+    def _sweep_temp(self):
+        """Drop temp files a killed process left beside the state file. Each
+        was an unfinished write; the state file itself was never touched."""
+        try:
+            for stale in self.path.parent.glob(".levo-*.tmp"):
+                stale.unlink()
+        except OSError:
+            pass
 
     def load(self):
-        self.data = json.loads(self.path.read_text())
+        try:
+            data = json.loads(self.path.read_text())
+        except ValueError as e:
+            raise SystemExit("levod: the state file %s is not valid JSON (%s). "
+                             "Restore it from a backup rather than starting "
+                             "with an empty ledger." % (self.path, e))
+        if not isinstance(data, dict):
+            raise SystemExit("levod: the state file %s does not hold an object" % self.path)
+        self.data = data
         self.data.setdefault("projects", {})
         self.data.setdefault("stake_links", {})
 

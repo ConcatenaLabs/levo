@@ -173,3 +173,52 @@ def test_canonical_price_preserves_cost_and_buys_headroom(t):
     # Reducing changes the address, which is why it must happen before funding.
     t.ok(C.derive(raw).spk_hex != C.derive(red).spk_hex,
          "the two forms derive different addresses despite quoting one price")
+
+
+def test_the_generator_reproduces_the_frozen_vectors(t):
+    """`tools/gen_vectors.py` must produce the file `covenant.py` checks itself
+    against. A generator that drifts from the checker would, if ever run,
+    write vectors the checker rejects and stop levod importing at all."""
+    import importlib.util
+    spec = importlib.util.spec_from_file_location(
+        "gen_vectors", HERE.parent.parent / "tools" / "gen_vectors.py")
+    gen = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(gen)
+    frozen = json.loads((HERE.parent / "vectors.json").read_text())
+    t.eq(gen.build()["cases"], frozen["cases"], "the generator reproduces vectors.json")
+
+
+def test_only_the_reclaim_leaf_carries_the_locktime(t):
+    """The sell leaf has no locktime: the close opens the reclaim path and does
+    not shut the sell path, and the copy says so. This pins the fact."""
+    cov = C.derive(_terms())
+    t.ok(bytes([K.OP_CHECKLOCKTIMEVERIFY]) not in cov.sell_leaf,
+         "the sell leaf has no CHECKLOCKTIMEVERIFY")
+    t.ok(bytes([K.OP_CHECKLOCKTIMEVERIFY]) in cov.reclaim_leaf,
+         "the reclaim leaf has one")
+
+
+def test_close_locktime_and_total_are_bounded(t):
+    try:
+        _terms(close_locktime=5_000_000_000)
+        t.ok(False, "a close above 32 bits is refused")
+    except ValueError as e:
+        t.ok("4294967295" in str(e), "a close above 32 bits is refused, naming the bound")
+    t.ok(_terms(close_locktime=0xffffffff) is not None, "the bound itself is allowed")
+    try:
+        _terms(total_atoms=99_999, min_lot=100_000)
+        t.ok(False, "a total below the minimum lot is refused")
+    except ValueError as e:
+        t.ok("minimum lot" in str(e), "a total below the minimum lot is refused")
+    for bad in (2.5, True, "abc"):
+        try:
+            _terms(min_lot=bad)
+            t.ok(False, "min_lot %r refused" % (bad,))
+        except ValueError:
+            t.ok(True, "min_lot %r refused" % (bad,))
+    t.eq(_terms(min_lot="100000").min_lot, 100000, "a decimal string is a whole number")
+    try:
+        C.SaleTerms.from_json({"token_asset": "aa" * 32})
+        t.ok(False, "missing terms are named")
+    except ValueError as e:
+        t.ok("payment_asset" in str(e), "missing terms are named", str(e))
