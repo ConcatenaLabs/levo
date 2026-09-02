@@ -5,34 +5,62 @@ The web app hands you an unsigned transaction because levod holds no keys. If
 you run a Sequentia node, this does the rest: it picks unblinded inputs, builds
 the transaction, signs your inputs with your wallet, and broadcasts.
 
-    levo sales                              list what is open
+    levo sales                              list what is listed
     levo show <slug>                        the terms, and the address to check
+    levo verify <slug>                      rebuild the sale address and compare it
+                                            with the funded output on your node
+    levo whoami                             the account you are signed in as
+    levo link                               prove a staking key for your account
+    levo keygen                             a reclaim key pair for a new listing
+    levo create terms.json                  list a project from a JSON file
+    levo lock <slug>                        fund a sale you are listing
     levo buy <slug> --tokens 100            buy, end to end
-    levo lock <slug> --atoms 100000000      fund a sale you are listing
     levo reclaim <slug> --to <address>      sweep what did not sell, after close
+    levo withdraw <slug>                    remove an unfunded listing of yours
 
 Every command talks to a levod over HTTP and to your node over JSON-RPC. It
 never sends a key anywhere: signing happens in your own wallet, locally.
+
+Environment:
+    LEVO_URL            the levod to talk to (default http://127.0.0.1:8099)
+    SEQUENTIA_CLI       the node's CLI binary (default sequentia-cli on PATH)
+    SEQUENTIA_DATADIR   passed as -datadir, for a node in a non-default place
+    SEQUENTIA_WALLET    passed as -rpcwallet, when several wallets are loaded
+    LEVO_SIGN_WIF       sign in with this key instead of a wallet address. A
+                        staker who signs in with the staking key's WIF is
+                        recognised at once; there is nothing to link.
+    LEVO_RECLAIM_KEY    the 32-byte hex reclaim secret, for `levo reclaim`
+                        (or pass --reclaim-key)
+
+Sign-in identity: without LEVO_SIGN_WIF, the first sign-in creates a legacy
+address labelled "levo-login" in your wallet and every later sign-in reuses
+it, so your account stays the same key. The node's message signing works with
+legacy addresses only.
 """
 
 import argparse
 import json
 import os
+import secrets
 import subprocess
 import sys
 import urllib.error
 import urllib.request
+from decimal import Decimal
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent / "levod"))
 
 import address as ADDR  # noqa: E402
+import covenant as C  # noqa: E402
+import units as U  # noqa: E402
 
-LEVO_URL = os.environ.get("LEVO_URL", "http://127.0.0.1:8099")
+LEVO_URL = os.environ.get("LEVO_URL", "http://127.0.0.1:8099").rstrip("/")
 CLI = os.environ.get("SEQUENTIA_CLI", "sequentia-cli")
 DATADIR = os.environ.get("SEQUENTIA_DATADIR", "")
 WALLET = os.environ.get("SEQUENTIA_WALLET", "")
+SESSION_FILE = Path(os.path.expanduser("~/.levo-session"))
 
 
 class Fail(SystemExit):
@@ -40,21 +68,34 @@ class Fail(SystemExit):
         super().__init__("levo: %s" % msg)
 
 
-def node(*args):
+def node(*args, **named):
+    """Call the node's CLI. Named arguments go through -named, which the
+    long-tailed Elements RPCs need to be readable."""
     cmd = [CLI]
     if DATADIR:
         cmd.append("-datadir=%s" % DATADIR)
     if WALLET:
         cmd.append("-rpcwallet=%s" % WALLET)
-    cmd += [str(a) for a in args]
+    if named:
+        cmd += ["-named", str(args[0])] + ["%s=%s" % (k, _arg(v)) for k, v in named.items()]
+    else:
+        cmd += [_arg(a) for a in args]
     p = subprocess.run(cmd, capture_output=True, text=True)
     if p.returncode != 0:
         raise Fail("node call %s failed: %s" % (args[0], p.stderr.strip() or p.stdout.strip()))
     out = p.stdout.strip()
     try:
-        return json.loads(out)
+        return json.loads(out, parse_float=Decimal)
     except ValueError:
         return out
+
+
+def _arg(v):
+    if isinstance(v, bool):
+        return "true" if v else "false"
+    if isinstance(v, (dict, list)):
+        return json.dumps(v)
+    return str(v)
 
 
 def api(method, path, body=None, token=None):
@@ -72,8 +113,51 @@ def api(method, path, body=None, token=None):
             raise Fail(json.loads(e.read())["error"])
         except (ValueError, KeyError):
             raise Fail("HTTP %s from %s" % (e.code, path))
-    except Exception as e:
+    except urllib.error.URLError as e:
         raise Fail("cannot reach levod at %s: %s" % (LEVO_URL, e))
+
+
+def atoms(v):
+    """Atoms for an amount the node reported, exactly."""
+    return int((Decimal(str(v)) * 100_000_000).to_integral_value())
+
+
+# --- signing in -----------------------------------------------------------------
+
+def _session():
+    if SESSION_FILE.is_file():
+        try:
+            return json.loads(SESSION_FILE.read_text())
+        except ValueError:
+            return {}
+    return {}
+
+
+def _save_session(d):
+    SESSION_FILE.write_text(json.dumps(d))
+    try:
+        SESSION_FILE.chmod(0o600)
+    except OSError:
+        pass
+
+
+def login_address():
+    """The wallet address that signs Levo's challenges: one legacy address,
+    created once and reused, so the account is the same key every time."""
+    sess = _session()
+    addr = sess.get("address")
+    if addr:
+        return addr
+    labelled = {}
+    try:
+        labelled = node("getaddressesbylabel", "levo-login") or {}
+    except Fail:
+        pass
+    for a in labelled:
+        info = node("getaddressinfo", a)
+        if info.get("isscript") is False and info.get("iswitness") is False:
+            return a
+    return node("getnewaddress", "levo-login", "legacy")
 
 
 def sign_in():
@@ -84,9 +168,9 @@ def sign_in():
     the login has already proved control of it, so there is nothing left to
     link.
     """
-    token_file = Path(os.path.expanduser("~/.levo-session"))
-    if token_file.is_file():
-        tok = token_file.read_text().strip()
+    sess = _session()
+    tok = sess.get("token")
+    if tok and sess.get("url") == LEVO_URL:
         try:
             api("GET", "/api/me", token=tok)
             return tok
@@ -94,18 +178,28 @@ def sign_in():
             pass
     ch = api("POST", "/api/auth/challenge")
     wif = os.environ.get("LEVO_SIGN_WIF")
+    body = {"message": ch["message"]}
     if wif:
-        sig = node("signmessagewithprivkey", wif, ch["message"])
+        body["signature"] = node("signmessagewithprivkey", wif, ch["message"])
     else:
-        addr = node("getnewaddress", "levo-login")
-        sig = node("signmessage", addr, ch["message"])
-    r = api("POST", "/api/auth/verify", {"message": ch["message"], "signature": sig})
-    token_file.write_text(r["token"])
-    try:
-        token_file.chmod(0o600)
-    except OSError:
-        pass
-    print("signed in as %s" % r["account"])
+        addr = login_address()
+        body["signature"] = node("signmessage", addr, ch["message"])
+        body["address"] = addr
+    r = api("POST", "/api/auth/verify", body)
+    _save_session({"url": LEVO_URL, "token": r["token"], "account": r["account"],
+                   "address": None if wif else body["address"]})
+    prior = sess.get("account")
+    if prior and prior != r["account"]:
+        print("note: signed in as %s; the last session here was %s" % (r["account"], prior),
+              file=sys.stderr)
+    else:
+        print("signed in as %s" % r["account"], file=sys.stderr)
+    if not wif:
+        me = api("GET", "/api/me", token=r["token"])
+        if me["tier"]["cap_atoms"] == 0 and not me["keys"]:
+            print("note: this account holds no proven stake. To sign in with your "
+                  "staking key set LEVO_SIGN_WIF to its WIF, or run `levo link`.",
+                  file=sys.stderr)
     return r["token"]
 
 
@@ -115,94 +209,224 @@ def unblinded_inputs(asset_hex, need_atoms):
     A covenant fill has to be readable by the covenant, so confidential outputs
     are no use here however much they hold.
     """
+    if need_atoms <= 0:
+        return [], 0
     utxos = node("listunspent", 0, 9999999)
     picked, total = [], 0
-    for u in utxos:
+    for u in sorted(utxos, key=lambda x: -Decimal(str(x["amount"]))):
         if (u.get("asset") or "").lower() != asset_hex.lower():
             continue
         if u.get("amountcommitment") or u.get("assetcommitment"):
             continue                                   # confidential: unusable
-        atoms = int(round(float(u["amount"]) * 100_000_000))
         picked.append({"txid": u["txid"], "vout": int(u["vout"])})
-        total += atoms
+        total += atoms(u["amount"])
         if total >= need_atoms:
             return picked, total
     raise Fail(
-        "not enough UNBLINDED %s to cover %d atoms (found %d). Send some to an "
+        "not enough UNBLINDED %s to cover %s (found %s). Send some to an "
         "unblinded address first: a covenant reads the amounts it checks, so it "
         "cannot be filled with confidential outputs."
-        % (asset_hex[:12], need_atoms, total))
+        % (asset_hex[:12], U.fmt(need_atoms), U.fmt(total)))
 
+
+def _payment_label(p):
+    return (p.get("payment_label") or "USDX")
+
+
+# --- commands -----------------------------------------------------------------
 
 def cmd_sales(args):
-    for p in api("GET", "/api/projects")["projects"]:
+    r = api("GET", "/api/projects")
+    if not r["projects"]:
+        print("nothing is listed")
+        return
+    for p in r["projects"]:
         s = p.get("sale") or {}
-        print("%-18s %-6s %-9s %s" % (
-            p["slug"], p["ticker"], s.get("status", "-"),
-            s.get("address") or p.get("address") or ""))
+        status = (s.get("status") or "-").replace("_", " ")
+        print("%-20s %-6s %-10s %s" % (p["slug"], p["ticker"], status, p.get("address") or ""))
 
 
 def cmd_show(args):
+    print(json.dumps(api("GET", "/api/projects/%s" % args.slug), indent=2))
+
+
+def cmd_whoami(args):
+    tok = sign_in()
+    me = api("GET", "/api/me", token=tok)
+    print("account  %s" % me["account"])
+    print("tier     %s (%s staked)" % (me["tier"]["name"], U.fmt(me["stake_atoms"], 8, "SEQ")))
+    for k in me["keys"]:
+        print("key      %s  %s%s" % (k["staker_pubkey"], U.fmt(k["weight_atoms"], 8, "SEQ"),
+                                     "  (login key)" if k.get("is_login_key") else ""))
+    if not me.get("staking_available", True):
+        print("note     %s" % me["delegation_note"])
+
+
+def cmd_verify(args):
+    """The check every page asks the reader to make, done by this machine."""
     p = api("GET", "/api/projects/%s" % args.slug)
-    print(json.dumps(p, indent=2))
+    sale = p.get("sale")
+    if not sale:
+        raise Fail("this project has no sale")
+    terms = C.SaleTerms.from_json(sale["terms"])
+    cov = C.derive(terms)
+    hrp = p.get("address", "tb1")[:p.get("address", "tb1").rfind("1")] if p.get("address") else "tb"
+    derived_addr = ADDR.from_script_pubkey(cov.spk_hex, hrp)
+    okay = True
+    print("terms          %s" % json.dumps(sale["terms"], sort_keys=True))
+    print("derived spk    %s" % cov.spk_hex)
+    print("published spk  %s" % sale["script_pubkey"])
+    if cov.spk_hex != sale["script_pubkey"]:
+        okay = False
+        print("MISMATCH: the published scriptPubKey is not what the published terms derive")
+    print("derived addr   %s" % derived_addr)
+    print("published addr %s" % p.get("address"))
+    if p.get("address") and derived_addr != p["address"]:
+        okay = False
+        print("MISMATCH: the published address is not what the terms derive")
+    f = sale.get("funding")
+    if f:
+        out = node("gettxout", f["txid"], int(f["vout"]), True)
+        if not out:
+            print("funding        %s:%s is not unspent on your node (spent, or not seen)" % (f["txid"], f["vout"]))
+            okay = False
+        else:
+            spk = (out.get("scriptPubKey") or {}).get("hex")
+            asset = (out.get("asset") or "").lower()
+            print("on chain       spk %s" % spk)
+            print("               asset %s, %s, %s confirmations"
+                  % (asset, U.fmt(atoms(out.get("value", 0))), out.get("confirmations", 0)))
+            if spk != cov.spk_hex:
+                okay = False
+                print("MISMATCH: the funded output is not at the derived address")
+            if asset != terms.token_asset:
+                okay = False
+                print("MISMATCH: the funded output holds a different asset from the terms")
+    else:
+        print("funding        none published; the sale is a draft")
+    print("internal key   NUMS (no key path)")
+    print("RESULT         %s" % ("OK: the tokens are locked under exactly these terms" if okay
+                                 else "FAILED: do not buy from this listing"))
+    return 0 if okay else 1
+
+
+def cmd_link(args):
+    tok = sign_in()
+    pk = args.pubkey
+    if not pk:
+        if not args.address:
+            raise Fail("give --pubkey <33-byte hex> or --address <the address whose key staked>")
+        pk = node("getaddressinfo", args.address).get("pubkey")
+        if not pk:
+            raise Fail("your wallet does not hold the key behind %s" % args.address)
+    ch = api("POST", "/api/stake/challenge", {"staker_pubkey": pk}, tok)
+    if args.wif:
+        sig = node("signmessagewithprivkey", args.wif, ch["message"])
+    elif args.address:
+        sig = node("signmessage", args.address, ch["message"])
+    else:
+        raise Fail("to sign the statement give --address (a legacy address of that key in "
+                   "your wallet) or --wif")
+    st = api("POST", "/api/stake/link", {"message": ch["message"], "signature": sig,
+                                         "staker_pubkey": pk}, tok)
+    print("linked. tier %s, %s staked" % (st["tier"]["name"], U.fmt(st["stake_atoms"], 8, "SEQ")))
+
+
+def cmd_keygen(args):
+    """A fresh reclaim key. Levo never sees it; keep it where you keep money."""
+    import secp256k1 as K
+    sec = int.from_bytes(secrets.token_bytes(32), "big") % K.N
+    if sec == 0:
+        sec = 1
+    print(json.dumps({
+        "reclaim_secret_hex": "%064x" % sec,
+        "reclaim_xonly": K.xonly_pubkey(sec).hex(),
+        "keep": "the secret is the only thing that can take unsold tokens back "
+                "after the close. Store it offline; put only reclaim_xonly in the listing.",
+    }, indent=2))
+
+
+def cmd_create(args):
+    tok = sign_in()
+    spec = json.loads(Path(args.file).read_text())
+    if not isinstance(spec, dict) or "project" not in spec or "terms" not in spec:
+        raise Fail("the file needs {\"project\": {...}, \"terms\": {...}}; see README")
+    r = api("POST", "/api/projects", spec, tok)
+    lock = r["lock"]
+    print("listed %s" % r["project"]["slug"])
+    print("send exactly %s of asset %s to %s" % (lock["amount"], lock["asset"], lock["address"]))
+    print("then: levo lock %s" % r["project"]["slug"])
+    if lock.get("price_reduced"):
+        print("note: the price was stored in lowest terms (%s/%s); verify against the "
+              "published terms" % (r["project"]["sale"]["terms"]["price_num"],
+                                   r["project"]["sale"]["terms"]["price_den"]))
 
 
 def cmd_lock(args):
     tok = sign_in()
     p = api("GET", "/api/projects/%s" % args.slug)
     sale = p["sale"]
+    total = sale["terms"].get("total_atoms")
+    if args.atoms is None and total is None:
+        raise Fail("this sale publishes no total; pass --atoms")
+    amount = int(args.atoms if args.atoms is not None else total)
     addr = p.get("address") or ADDR.from_script_pubkey(sale["script_pubkey"])
-    atoms = int(args.atoms or sale["terms"]["total_atoms"])
-    print("sending %d atoms of %s to %s" % (atoms, sale["terms"]["token_asset"], addr))
-    txid = node("-named", "sendtoaddress", "address=%s" % addr,
-                "amount=%.8f" % (atoms / 100_000_000),
-                "assetlabel=%s" % args.asset_label,
-                "fee_asset_label=%s" % args.fee_asset_label)
-    raw = node("getrawtransaction", txid, 1)
-    vout = next((o["n"] for o in raw["vout"]
-                 if o.get("scriptPubKey", {}).get("hex") == sale["script_pubkey"]), None)
-    if vout is None:
-        raise Fail("funded %s but could not find the covenant output" % txid)
-    api("POST", "/api/projects/%s/lock" % args.slug, {"txid": txid, "vout": vout}, tok)
-    print("locked at %s:%d -- the sale is open" % (txid, vout))
+    fee_asset = args.fee_asset or sale["terms"]["payment_asset"]
+    if args.txid:
+        txid, vout = args.txid, args.vout
+    else:
+        print("sending %s of %s to %s" % (U.fmt(amount), sale["terms"]["token_asset"], addr))
+        txid = node("sendtoaddress", address=addr, amount="%.8f" % (amount / 100_000_000),
+                    assetlabel=args.asset_label or sale["terms"]["token_asset"],
+                    fee_asset_label=fee_asset)
+        raw = node("getrawtransaction", txid, 1)
+        vout = next((o["n"] for o in raw["vout"]
+                     if o.get("scriptPubKey", {}).get("hex") == sale["script_pubkey"]), None)
+        if vout is None:
+            raise Fail("funded %s but could not find the covenant output" % txid)
+    api("POST", "/api/projects/%s/lock" % args.slug, {"txid": txid, "vout": int(vout)}, tok)
+    print("locked at %s:%d -- the sale is open" % (txid, int(vout)))
 
 
 def cmd_buy(args):
     tok = sign_in()
     p = api("GET", "/api/projects/%s" % args.slug)
     sale = p["sale"]
-    token_atoms = int(round(float(args.tokens) * 100_000_000))
+    if args.rail and args.rail.lower() != "usdx":
+        raise Fail("the covenant is paid in %s. A BTC purchase is two steps: swap BTC for "
+                   "%s over Lightning in your wallet, then run this command."
+                   % (_payment_label(p), _payment_label(p)))
+    decimals = int(p.get("decimals", 8))
+    token_atoms = U.parse(args.tokens, decimals)
+    if token_atoms is None:
+        raise Fail("--tokens must be a number with at most %d decimal places" % decimals)
 
-    plan = api("POST", "/api/projects/%s/buy" % args.slug,
-               {"token_atoms": token_atoms, "rail": args.rail}, tok)
-    print("buying %s %s for %d atoms of the payment asset"
-          % (args.tokens, p["ticker"], plan["payment_atoms"]))
+    plan = api("POST", "/api/projects/%s/buy" % args.slug, {"token_atoms": token_atoms}, tok)
+    print("buying %s %s for %s" % (args.tokens, p["ticker"], U.fmt(plan["payment_atoms"], 8, _payment_label(p))))
 
     pay_asset = sale["terms"]["payment_asset"]
-    fee_atoms = int(args.fee)
+    fee_atoms = int(args.fee) if args.fee is not None else int(
+        plan.get("fee", {}).get("suggested_atoms") or 100_000)
     ins, _ = unblinded_inputs(pay_asset, plan["payment_atoms"] + fee_atoms)
 
     dest = args.to or node("getnewaddress", "levo-buy")
-    dest_spk = node("getaddressinfo", dest)["scriptPubKey"]
     change = args.change or dest
-    change_spk = node("getaddressinfo", change)["scriptPubKey"]
 
     built = api("POST", "/api/projects/%s/transaction" % args.slug, {
         "token_atoms": token_atoms,
-        "buyer": {"token_script_pubkey": dest_spk,
-                  "change_script_pubkey": change_spk,
-                  "inputs": ins, "fee_atoms": fee_atoms,
-                  "fee_asset": pay_asset}}, tok)
+        "buyer": {"token_address": dest, "change_address": change,
+                  "inputs": ins, "fee_atoms": fee_atoms, "fee_asset": pay_asset}}, tok)
 
     signed = node("signrawtransactionwithwallet", built["unsigned_tx_hex"])
     if not signed.get("complete"):
         raise Fail("your wallet could not sign every input: %s" % signed.get("errors"))
-    check = node("testmempoolaccept", json.dumps([signed["hex"]]))
+    check = node("testmempoolaccept", [signed["hex"]])
     if not check or not check[0].get("allowed"):
         raise Fail("the chain would reject this: %s"
                    % (check[0].get("reject-reason") if check else "unknown"))
     if args.dry_run:
-        print("would broadcast %s (accepted by testmempoolaccept)" % built["txid"])
+        print("would broadcast %s (accepted by testmempoolaccept, %s fee)"
+              % (built["txid"], U.fmt(fee_atoms, 8, _payment_label(p))))
         return
     txid = node("sendrawtransaction", signed["hex"])
     print("bought. %s" % txid)
@@ -215,7 +439,7 @@ def cmd_buy(args):
              "payment_atoms": plan["payment_atoms"]}, tok)
     except SystemExit as e:
         print("note: the purchase succeeded, but recording it against your "
-              "allocation did not (%s)" % e)
+              "allocation did not (%s)" % e, file=sys.stderr)
 
 
 def cmd_reclaim(args):
@@ -223,13 +447,12 @@ def cmd_reclaim(args):
     p = api("GET", "/api/projects/%s" % args.slug)
     sale = p["sale"]
     dest = args.to or node("getnewaddress", "levo-reclaim")
-    dest_spk = node("getaddressinfo", dest)["scriptPubKey"]
     fee_atoms = int(args.fee)
-    ins, _ = unblinded_inputs(sale["terms"]["payment_asset"], fee_atoms)
+    fee_asset = args.fee_asset or sale["terms"]["payment_asset"]
+    ins, _ = unblinded_inputs(fee_asset, fee_atoms)
     r = api("POST", "/api/projects/%s/reclaim" % args.slug, {
-        "destination_script_pubkey": dest_spk,
-        "fee_inputs": ins, "fee_atoms": fee_atoms,
-        "fee_asset": sale["terms"]["payment_asset"]}, tok)
+        "destination_address": dest,
+        "fee_inputs": ins, "fee_atoms": fee_atoms, "fee_asset": fee_asset}, tok)
 
     key = args.reclaim_key or os.environ.get("LEVO_RECLAIM_KEY")
     if not key:
@@ -252,11 +475,13 @@ def cmd_reclaim(args):
                             bytes.fromhex(r["signs_with"])):
         raise Fail("that key is not this sale's reclaim key (%s); the covenant "
                    "would reject the spend" % r["signs_with"])
-    witness = [sig.hex(), r["leaf"], r["control_block"]]
-    signed = node("signrawtransactionwithwallet", r["unsigned_tx_hex"])
-    hexed = signed.get("hex") or r["unsigned_tx_hex"]
-    hexed = TXMOD.set_witness(hexed, 0, [bytes.fromhex(w) for w in witness])
-    check = node("testmempoolaccept", json.dumps([hexed]))
+    witness = [sig, bytes.fromhex(r["leaf"]), bytes.fromhex(r["control_block"])]
+    hexed = r["unsigned_tx_hex"]
+    if ins:
+        signed = node("signrawtransactionwithwallet", hexed)
+        hexed = signed.get("hex") or hexed
+    hexed = TXMOD.set_witness(hexed, 0, witness)
+    check = node("testmempoolaccept", [hexed])
     if not check or not check[0].get("allowed"):
         raise Fail("the chain would reject this reclaim: %s"
                    % (check[0].get("reject-reason") if check else "unknown"))
@@ -266,25 +491,44 @@ def cmd_reclaim(args):
     print("reclaimed. %s" % node("sendrawtransaction", hexed))
 
 
+def cmd_withdraw(args):
+    tok = sign_in()
+    api("DELETE", "/api/projects/%s" % args.slug, token=tok)
+    print("withdrawn %s" % args.slug)
+
+
 def main():
     ap = argparse.ArgumentParser(prog="levo", description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest="cmd", required=True)
 
     sub.add_parser("sales").set_defaults(fn=cmd_sales)
-
     sh = sub.add_parser("show"); sh.add_argument("slug"); sh.set_defaults(fn=cmd_show)
+    vf = sub.add_parser("verify"); vf.add_argument("slug"); vf.set_defaults(fn=cmd_verify)
+    sub.add_parser("whoami").set_defaults(fn=cmd_whoami)
+    sub.add_parser("keygen").set_defaults(fn=cmd_keygen)
+
+    ln = sub.add_parser("link")
+    ln.add_argument("--pubkey", help="the 33-byte staking key, hex")
+    ln.add_argument("--address", help="a legacy address of that key in your wallet, to sign with")
+    ln.add_argument("--wif", help="or the key's WIF, to sign with signmessagewithprivkey")
+    ln.set_defaults(fn=cmd_link)
+
+    cr = sub.add_parser("create"); cr.add_argument("file"); cr.set_defaults(fn=cmd_create)
 
     lk = sub.add_parser("lock")
     lk.add_argument("slug"); lk.add_argument("--atoms", type=int)
-    lk.add_argument("--asset-label", required=True)
-    lk.add_argument("--fee-asset-label", default="bitcoin")
+    lk.add_argument("--asset-label", help="label or hex id the node knows the token by "
+                                          "(default: the sale's token id)")
+    lk.add_argument("--fee-asset", help="asset to pay the fee in (default: the sale's payment asset)")
+    lk.add_argument("--txid", help="confirm an output you already sent instead of sending")
+    lk.add_argument("--vout", type=int, default=0)
     lk.set_defaults(fn=cmd_lock)
 
     b = sub.add_parser("buy")
     b.add_argument("slug"); b.add_argument("--tokens", required=True)
     b.add_argument("--rail", default="usdx")
-    b.add_argument("--fee", type=int, default=100000)
+    b.add_argument("--fee", type=int, help="fee in atoms of the payment asset (default: levod's suggestion)")
     b.add_argument("--to"); b.add_argument("--change")
     b.add_argument("--dry-run", action="store_true")
     b.set_defaults(fn=cmd_buy)
@@ -292,12 +536,16 @@ def main():
     rc = sub.add_parser("reclaim")
     rc.add_argument("slug"); rc.add_argument("--to")
     rc.add_argument("--fee", type=int, default=100000)
+    rc.add_argument("--fee-asset", help="asset to pay the fee in (default: the sale's payment asset)")
     rc.add_argument("--reclaim-key", help="32-byte hex; signs the covenant here")
     rc.add_argument("--dry-run", action="store_true")
     rc.set_defaults(fn=cmd_reclaim)
 
+    wd = sub.add_parser("withdraw"); wd.add_argument("slug"); wd.set_defaults(fn=cmd_withdraw)
+
     args = ap.parse_args()
-    args.fn(args)
+    rc = args.fn(args)
+    sys.exit(rc or 0)
 
 
 if __name__ == "__main__":
