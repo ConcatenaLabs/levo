@@ -28,6 +28,7 @@ class FakeRPC:
         self.blocks = {}          # height -> hash currently at that height
         self.mined = {}           # block hash -> txids in it
         self.mempool = []
+        self.txs = {}             # txid -> decoded transaction, as a node gives it
         self.ibd = False
         self.height = 100
 
@@ -41,7 +42,7 @@ class FakeRPC:
         if method == "getrawmempool":
             return list(self.mempool)
         if method == "getrawtransaction":
-            return None
+            return self.txs.get(params[0])
         raise RuntimeError("unexpected call %s" % method)
 
     def chain_info(self):
@@ -356,6 +357,7 @@ def test_a_recorded_purchase_moves_the_sale_before_it_confirms(t):
     s.expect_remainder_at("ee" * 32)
     rpc.txouts[("ee" * 32, 1)] = {"value": 250.0, "asset": GOLD,
                                   "scriptPubKey": {"hex": s.script_pubkey}}
+    rpc.txs["ee" * 32] = {"txid": "ee" * 32, "vin": [{"txid": "ab" * 32, "vout": 0}]}
     _watch(s, rpc).poll()
     t.eq(s.status, S.PARTIAL, "the sale moved on one poll, unconfirmed")
     t.eq(s.funding["txid"], "ee" * 32, "to the purchase's remainder output")
@@ -373,6 +375,7 @@ def test_a_candidate_holding_something_else_is_ignored(t):
     s.expect_remainder_at("ee" * 32)
     rpc.txouts[("ee" * 32, 1)] = {"value": 250.0, "asset": USDX,
                                   "scriptPubKey": {"hex": s.script_pubkey}}
+    rpc.txs["ee" * 32] = {"txid": "ee" * 32, "vin": [{"txid": "ab" * 32, "vout": 0}]}
     _settle(s, rpc)
     t.eq(s.status, S.SOLD_OUT, "a different asset at output 1 is not a remainder")
 
@@ -620,6 +623,7 @@ def test_a_sale_keeps_the_block_of_the_outpoint_it_came_from(t):
     s.expect_remainder_at("ee" * 32)
     rpc.txouts[("ee" * 32, 1)] = {"value": 250.0, "asset": GOLD,
                                   "scriptPubKey": {"hex": s.script_pubkey}}
+    rpc.txs["ee" * 32] = {"txid": "ee" * 32, "vin": [{"txid": "ab" * 32, "vout": 0}]}
     _watch(s, rpc).poll()
     t.eq(s.funding["ancestor_block"], "block-95", "the older block is kept")
     del rpc.txouts[("ee" * 32, 1)]                  # the remainder sells too
@@ -800,3 +804,108 @@ def test_the_deep_search_is_made_once(t):
     rpc.height += 1
     w.poll()
     t.eq(Counting.reads, after_first, "and not again on every later poll")
+
+
+def test_a_reorg_that_re_mines_the_funding_is_not_a_ghost(t):
+    """A one-block reorg usually carries the same transactions into the new
+    block. The block at that height changes, and the sale is untouched: its
+    funding is still on the chain, one block over."""
+    s = _sale()
+    rpc = FakeRPC()
+    rpc.blocks[95] = "block-95"
+    rpc.txouts[("ab" * 32, 0)] = {"value": TOTAL / 1e8, "confirmations": 6}
+    _watch(s, rpc).poll()
+    t.eq(s.funding["block"], "block-95", "mined, and noted")
+    del rpc.txouts[("ab" * 32, 0)]                 # sold out
+    rpc.blocks[95] = "block-95-replaced"           # reorged...
+    rpc.mined["block-95-replaced"] = ["ab" * 32]   # ...and re-mined at once
+    _settle(s, rpc)
+    t.eq(s.status, S.SOLD_OUT, "the funding came back, so this is a sell-out")
+    t.eq(s.funding["block"], "block-95-replaced", "and the new block is remembered")
+
+
+def test_a_reorg_that_drops_the_funding_is_a_ghost(t):
+    """The same shape, with the funding really gone: no block carries it and
+    the mempool has not got it either."""
+    s = _sale()
+    rpc = FakeRPC()
+    rpc.blocks[95] = "block-95"
+    rpc.txouts[("ab" * 32, 0)] = {"value": TOTAL / 1e8, "confirmations": 6}
+    _watch(s, rpc).poll()
+    del rpc.txouts[("ab" * 32, 0)]
+    rpc.blocks[95] = "block-95-replaced"
+    _settle(s, rpc)
+    t.eq(s.status, S.GHOST, "gone from the chain and from the mempool: a ghost")
+
+
+def test_a_reorged_funding_waiting_in_the_mempool_is_left_alone(t):
+    s = _sale()
+    rpc = FakeRPC()
+    rpc.blocks[95] = "block-95"
+    rpc.txouts[("ab" * 32, 0)] = {"value": TOTAL / 1e8, "confirmations": 6}
+    _watch(s, rpc).poll()
+    del rpc.txouts[("ab" * 32, 0)]
+    rpc.blocks[95] = "block-95-replaced"
+    rpc.mempool = ["ab" * 32]                      # waiting to be mined again
+    _settle(s, rpc)
+    t.eq(s.status, S.LIVE, "a funding back in the mempool is not a ghost")
+
+
+def test_a_hinted_outpoint_that_did_not_spend_the_sale_is_ignored(t):
+    """Anyone with an account can record a purchase naming any transaction, and
+    the hint it leaves is where the watcher looks first. Without checking that
+    the transaction really spent this sale, an account could point the watcher
+    at tokens it sent to the sale address itself and make a sale that is nearly
+    full read as nearly sold out."""
+    s = _sale()
+    rpc = FakeRPC()
+    rpc.blocks[95] = "block-95"
+    rpc.txouts[("ab" * 32, 0)] = {"value": TOTAL / 1e8, "confirmations": 6}
+    _watch(s, rpc).poll()
+    del rpc.txouts[("ab" * 32, 0)]
+    s.expect_remainder_at("ee" * 32)
+    # A real output of the sale token at the sale address -- but from a
+    # transaction that spends something else entirely.
+    rpc.txouts[("ee" * 32, 1)] = {"value": 1.0, "asset": GOLD,
+                                  "scriptPubKey": {"hex": s.script_pubkey}}
+    rpc.txs["ee" * 32] = {"txid": "ee" * 32, "vin": [{"txid": "99" * 32, "vout": 3}]}
+    _watch(s, rpc).poll()
+    t.ok(s.funding is None or s.funding.get("txid") != "ee" * 32,
+         "the sale does not follow an outpoint that never spent it")
+    t.ok(s.locked_atoms != 1 * 10**8, "and does not take its size from one")
+
+
+def test_the_stray_report_is_capped(t):
+    """Anyone can pay dust to a sale address. The report says that something is
+    there; it is not a list an outsider gets to grow without limit."""
+    s = _sale()
+    rpc = FakeRPC()
+    rpc.txouts[("ab" * 32, 0)] = {"value": TOTAL / 1e8, "confirmations": 6}
+    rpc.blocks[95] = "block-95"
+    rpc.unspents = [{"txid": "ab" * 32, "vout": 0, "scriptPubKey": s.script_pubkey,
+                     "amount": TOTAL / 1e8, "asset": GOLD}]
+    rpc.unspents += [{"txid": "%02x" % i * 32, "vout": 0, "scriptPubKey": s.script_pubkey,
+                      "amount": 0.00001 * (i + 1), "asset": USDX} for i in range(40)]
+    w = _watch(s, rpc)
+    w._round = 9
+    w.poll()
+    t.eq(len(s.strays), W.MAX_STRAYS, "the report is capped")
+    t.ok(s.strays[0]["atoms"] >= s.strays[-1]["atoms"], "and keeps the largest")
+
+
+def test_a_change_of_state_is_recorded(t):
+    """When a project asks at three in the morning why its sale reads as it
+    does, the answer has to be somewhere other than the answer it gives now."""
+    said = []
+    s = _sale()
+    rpc = FakeRPC()
+    rpc.blocks[95] = "block-95"
+    rpc.txouts[("ab" * 32, 0)] = {"value": TOTAL / 1e8, "confirmations": 6}
+    w = W.Watcher(FakeMarket({"t": P(s)}), rpc, interval=1, note=said.append)
+    w.market.projects["t"].slug = "t"
+    w.poll()
+    del rpc.txouts[("ab" * 32, 0)]
+    w.poll(); rpc.height += 1; w.poll()
+    t.eq(s.status, S.SOLD_OUT, "the sale sold out")
+    t.ok(any("-> sold_out" in m for m in said), "and the change was recorded", said)
+    t.ok(any("block 95" in m for m in said), "with the evidence behind it", said)

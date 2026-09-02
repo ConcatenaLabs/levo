@@ -118,7 +118,16 @@ def decode(addr):
         raise ValueError("%s is a version-0 program with a bech32m checksum" % addr)
     if witver != 0 and kind != "bech32m":
         raise ValueError("%s is a version-%d program with a bech32 checksum" % (addr, witver))
-    if len(prog) not in (20, 32) if witver == 0 else not 2 <= len(prog) <= 40:
+    if witver == 0 and len(prog) not in (20, 32):
+        raise ValueError("%s carries a witness program of the wrong length" % addr)
+    if witver == 1 and len(prog) != 32:
+        # A version-1 program of any other length is not taproot; the chain
+        # treats it as anyone-can-spend, so paying one is giving the money to
+        # whoever spends it first.
+        raise ValueError(
+            "%s is a version-1 address whose program is %d bytes rather than 32, "
+            "which this chain treats as anyone-can-spend" % (addr, len(prog)))
+    if witver > 1 and not 2 <= len(prog) <= 40:
         raise ValueError("%s carries a witness program of the wrong length" % addr)
     return hrp, witver, bytes(prog)
 

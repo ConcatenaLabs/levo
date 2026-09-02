@@ -199,6 +199,10 @@ class Founder:
 def run(ok, rig):
     w, n = rig.w, rig.n
     node = RPCMOD.NodeRPC(url=rig.url, user="levo", password="levo")
+    # Regtest mines a block the instant it is asked to, so the tip must never
+    # be reused here: a held tip is correct against a chain with block times,
+    # and wrong against one without.
+    node.chain_info_ttl = 0
     token = w("issueasset", assetamount=1_000_000, tokenamount=0, blind=False, fee_asset="bitcoin")["asset"]
     pay = w("issueasset", assetamount=1_000_000, tokenamount=0, blind=False, fee_asset="bitcoin")["asset"]
     rig.mine()

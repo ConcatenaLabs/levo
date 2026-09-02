@@ -57,6 +57,11 @@ import tx as TX
 # thing to spend the node's time on when the pool is deep.
 MEMPOOL_SEARCH_LIMIT = 250
 
+# Polls to wait before walking the chain again after a walk that failed part
+# way. Two hundred blocks a minute against a node that is already struggling
+# helps nobody.
+SEARCH_RETRY_POLLS = 5
+
 # How far back the watcher will walk blocks looking for a funding transaction
 # it never saw confirmed. Beyond this it says it does not know, rather than
 # guessing.
@@ -68,16 +73,26 @@ BLOCK_SEARCH_LIMIT = 200
 # urgent enough to walk the UTXO set every minute.
 STRAY_SCAN_EVERY = 10
 
+# How many foreign outputs a sale reports at its address. Anyone can pay dust
+# to one, and a hundred lines of dust say no more than twenty do.
+MAX_STRAYS = 20
+
 
 class Watcher:
-    def __init__(self, market, rpc, interval=60, hrp="tb", log=None):
+    def __init__(self, market, rpc, interval=60, hrp="tb", log=None, note=None):
         self.market = market
         self.rpc = rpc
         self.interval = interval
-        self.hrp = hrp
+        self._hrp = hrp
         self.log = log or (lambda m: None)
+        # Two channels on purpose. `log` is for what went wrong; `note` is for
+        # what happened -- a sale changing state is the record an operator
+        # needs at three in the morning when a project asks why its sale reads
+        # as it does, and it is not an error.
+        self.note = note or self.log
         self._misses = {}
         self._miss_height = {}
+        self._search_after = {}       # sale -> the poll a failed block walk may retry at
         self._round = 0
         self.confirm_misses = 2
         # Sales whose funding this levod cannot place in the chain: state
@@ -89,6 +104,10 @@ class Watcher:
         self._thread = None
         self.last_run = None
         self.last_error = None
+        # Polls that have failed since the last clean one. A single failure is
+        # a bad minute on the node; a run of them means nothing is being
+        # reconciled, which is what a monitor needs to know.
+        self.consecutive_errors = 0
 
     # --- lifecycle ---------------------------------------------------------
 
@@ -118,6 +137,7 @@ class Watcher:
                 self.poll()
             except Exception as e:                      # never let the loop die
                 self.last_error = str(e)
+                self.consecutive_errors += 1
                 self.log("watcher: %s" % e)
             self._wake.wait(self.interval)
             self._wake.clear()
@@ -148,12 +168,13 @@ class Watcher:
         # included. In the steady state that answers for every sale and the
         # UTXO set is not walked at all.
         for slug, p in sales:
+            was = _shape(p.sale)
             try:
-                with self._held():
-                    settled, note = self._check_known(p, chain)
+                settled, note = self._check_known(p, chain)
             except Exception as e:
                 errors.append("%s: %s" % (slug, e))
                 continue
+            self._announce(slug, p.sale, was)
             dirty = dirty or note
             if settled is None:
                 pending.append((slug, p))
@@ -182,39 +203,71 @@ class Watcher:
         if found is not None:
             for slug, p in scan_for:
                 try:
-                    with self._held():
-                        note = self._note_strays(p, found)
+                    note = self._note_strays(p, found)
                     dirty = dirty or note
                 except Exception as e:
                     errors.append("%s strays: %s" % (slug, e))
             for slug, p in pending:
+                was = _shape(p.sale)
                 try:
-                    with self._held():
-                        if self._reconcile(p, found, chain):
-                            changed.append(slug)
+                    if self._reconcile(p, found, chain):
+                        changed.append(slug)
+                    self._announce(slug, p.sale, was)
                 except Exception as e:
                     errors.append("%s: %s" % (slug, e))
 
-        if changed or dirty:
-            self.market.save()
+        # A save that failed leaves the platform's state ahead of the disk;
+        # trying again every poll is the only thing that recovers a full disk
+        # once it has been emptied, and it is free when nothing is wrong.
+        store = getattr(self.market, "store", None)
+        if changed or dirty or (store is not None and store.dirty):
+            try:
+                self.market.save()
+            except Exception as e:
+                errors.append("saving the state file: %s" % e)
         self.unverified = sorted(
             slug for slug, p in sales
             if (p.sale.funding or {}).get("unverifiable"))
         self.last_run = time.time()
         self.last_error = "; ".join(errors) if errors else None
+        self.consecutive_errors = self.consecutive_errors + 1 if errors else 0
         if errors:
             self.log("watcher: " + self.last_error)
         return {"checked": len(sales), "changed": changed, "scanned": scanned,
                 "unverified": list(self.unverified)}
 
+    @property
+    def hrp(self):
+        return self._hrp() if callable(self._hrp) else self._hrp
+
+    def _announce(self, slug, sale, was):
+        """Say what changed, and on what evidence.
+
+        A sale's state is the platform's most consequential output, and until
+        this line existed there was no record anywhere of when one changed or
+        why -- only the answer it happens to give now.
+        """
+        now = _shape(sale)
+        if now == was:
+            return
+        f = sale.funding or {}
+        where = ("%s:%s" % (f.get("txid", "")[:12], f.get("vout"))) if f else "nothing"
+        at = f.get("height") or f.get("ancestor_height") or f.get("seen_height")
+        self.note("%s: %s -> %s, holding %s at %s%s"
+                  % (slug, was[0], now[0], now[1], where,
+                     (" (block %s)" % at) if at else ""))
+
     @contextmanager
     def _held(self):
         """The platform's lock, for the moment a sale is written.
 
-        The watcher runs beside the request threads, and both write sales. It
-        must not hold the lock across the chain reads -- a UTXO-set scan can
-        take minutes, and a buyer's purchase would wait behind it -- so the
-        lock is taken per sale, around the part that decides and writes.
+        The watcher runs beside the request threads and both write sales, so
+        every write here is made under it. It is never held across a chain
+        read: a UTXO-set scan takes minutes, a mempool search is hundreds of
+        calls, and the watcher's own RPC handle waits five minutes before it
+        gives up. Holding the lock across any of that would park every
+        purchase, lock and listing behind it -- and the shutdown path takes the
+        same lock, so systemd would kill levod rather than stop it.
         """
         lock = getattr(self.market, "lock", None)
         if lock is None:
@@ -343,10 +396,24 @@ class Watcher:
                 out = None
             if out is None or not self._is_resting(out, sale):
                 continue
+            # A remainder is what a BUY leaves behind, so the transaction
+            # holding it must spend the outpoint this sale was resting at.
+            # Anyone can record a purchase naming any transaction, and without
+            # this an account could point the watcher at an output of its own
+            # -- tokens it sent to the sale address itself -- and make a sale
+            # that is nearly full read as nearly sold out.
+            if not self._spends_funding(cand["txid"], sale):
+                continue
+            atoms = _out_atoms(out)
+            if 0 < atoms < sale.terms.min_lot:
+                # A remainder the covenant refuses to sell is not a remainder.
+                # Adopting one would leave the sale resting on an amount every
+                # later purchase is refused against.
+                continue
             sale.candidates = []
             self._misses.pop(slug, None)
             self._miss_height.pop(slug, None)
-            adopted = self._rest(sale, cand["txid"], cand["vout"], _out_atoms(out))
+            adopted = self._rest(sale, cand["txid"], cand["vout"], atoms)
             self._remember_block(sale, out, chain)
             return adopted
 
@@ -363,9 +430,11 @@ class Watcher:
                     self._misses.pop(slug, None)
                     self._miss_height.pop(slug, None)
                     adopted = self._rest(sale, txid, rem[0], rem[1])
-                    if sale.funding.get("seen_height") is None \
-                            and chain.get("height") is not None:
-                        sale.funding["seen_height"] = chain["height"]
+                    with self._held():
+                        if sale.funding is not None \
+                                and sale.funding.get("seen_height") is None \
+                                and chain.get("height") is not None:
+                            sale.funding["seen_height"] = chain["height"]
                     return adopted
                 # The spend leaves nothing behind: the sale is being bought
                 # out. Wait for the block that carries it rather than deciding
@@ -389,12 +458,14 @@ class Watcher:
             # found by the scan would look like something never seen confirmed.
             if u.get("height") is not None:
                 self._remember_height(sale, u["height"])
-            elif sale.funding is not None:
+            else:
                 # A node that does not say where it was mined still says that
                 # it WAS: the scan reads the confirmed set and nothing else.
                 # Recording that much keeps a later silence from reading as a
                 # funding that never landed.
-                sale.funding["mined"] = True
+                with self._held():
+                    if sale.funding is not None:
+                        sale.funding["mined"] = True
             return changed
 
         # Nothing anywhere. Before concluding that, wait for a second look with
@@ -434,12 +505,16 @@ class Watcher:
         if landed is None:
             return False                       # no evidence either way: wait
         if landed is False:
-            sale.mark_ghost()
+            with self._held():
+                sale.mark_ghost()
             return was != (sale.status, sale.locked_atoms)
-        if sale.has_closed(height=chain.get("height"), now=chain.get("mediantime")):
-            sale.mark_emptied(reclaimed=self._reclaim_landed(sale))
-        else:
-            sale.mark_sold_out()
+        closed = sale.has_closed(height=chain.get("height"), now=chain.get("mediantime"))
+        reclaimed = self._reclaim_landed(sale) if closed else False
+        with self._held():
+            if closed:
+                sale.mark_emptied(reclaimed=reclaimed)
+            else:
+                sale.mark_sold_out()
         return was != (sale.status, sale.locked_atoms)
 
     def _funding_landed(self, sale, chain):
@@ -457,12 +532,19 @@ class Watcher:
                      (f.get("ancestor_height"), f.get("ancestor_block"))):
             if b and h is not None:
                 try:
-                    return self.rpc.call("getblockhash", int(h)) == b
+                    if self.rpc.call("getblockhash", int(h)) == b:
+                        return True
                 except Exception:
                     tip = chain.get("height")
                     if tip is not None and int(h) > tip:
                         return False        # the chain no longer reaches that height
                     return None
+                # The block that carried it is not the block at that height any
+                # more. That is a reorg -- but a reorg usually RE-MINES the same
+                # transactions into the new block, and a sale whose funding came
+                # back is not a ghost. Ask the chain where the funding is now
+                # before concluding it is gone.
+                return self._mined_recently(sale, chain, definite=True)
         if f.get("seen_height") is None and not f.get("mined"):
             # Undated: state written before Levo dated its locks, or restored
             # from a backup taken then. The funding may be perfectly real and
@@ -476,18 +558,28 @@ class Watcher:
         # made, which is the one case that is genuinely a ghost.
         return self._mined_since(sale, chain)
 
-    def _mined_recently(self, sale, chain):
-        """Look back over the recent chain for a funding this watcher never
-        saw. True when it is there; None -- never False -- when it is not.
+    def _mined_recently(self, sale, chain, definite=False):
+        """Look back over the recent chain for a funding this watcher cannot
+        place. True when it is there.
 
-        Asked once per sale. Nothing about an old, undated funding changes from
-        one poll to the next, and the search reads a block at a time.
+        `definite` says what silence means. After a reorg the funding's block is
+        known to be gone, so a transaction that is nowhere in the new chain and
+        nowhere in the mempool really is gone: False. Without that, silence only
+        means this levod cannot tell, and the answer is None -- an undated sale
+        is never ghosted on the platform's own forgetfulness.
+
+        The undated search is asked once per sale: nothing about an old funding
+        changes from poll to poll, and it reads a block at a time.
         """
         f = sale.funding or {}
         tip = chain.get("height")
         txid = f.get("txid")
-        if not txid or tip is None or f.get("unverifiable"):
+        if not txid or tip is None:
             return None
+        if f.get("unverifiable") and not definite:
+            return None
+        if self._round < self._search_after.get(sale.project_id, 0):
+            return None                # a failed walk, waiting before another
         try:
             for h in range(int(tip), max(1, int(tip) - BLOCK_SEARCH_LIMIT) - 1, -1):
                 block = self.rpc.call("getblock", self.rpc.call("getblockhash", h), 1) or {}
@@ -495,8 +587,21 @@ class Watcher:
                     self._remember_height(sale, h)
                     return True
         except Exception:
+            # The walk failed part way. Trying again on the very next poll
+            # would re-read two hundred blocks a minute against a node that is
+            # already struggling, so it waits for a few.
+            self._search_after[sale.project_id] = self._round + SEARCH_RETRY_POLLS
             return None
-        f["unverifiable"] = True
+        if definite:
+            try:
+                if txid in (self.rpc.call("getrawmempool") or []):
+                    return None            # back in the mempool, waiting again
+            except Exception:
+                return None
+            return False                   # reorged out and not re-mined
+        with self._held():
+            if sale.funding is f:
+                f["unverifiable"] = True
         self.log("watcher: %s: its funding %s:%s is in none of the last %d blocks "
                  "and this levod never saw it. The sale is left exactly as it was; "
                  "it is not called a ghost on a guess."
@@ -527,20 +632,31 @@ class Watcher:
         return False
 
     def _purchase_landed(self, sale):
-        """True when a purchase Levo recorded is visibly on chain: its treasury
-        credit at output 0 still pays this sale's treasury. Only ever used to
-        prove a sale was real, never to prove it was not."""
+        """True when a purchase Levo recorded really spent this sale.
+
+        Paying the treasury is not enough on its own -- anyone may pay a
+        treasury, and a recorded purchase is a claim by whoever made it. The
+        transaction has to spend the outpoint the sale was resting at, which
+        only the covenant's own spend can do. Used only to prove a sale was
+        real, never to prove it was not.
+        """
         want = TX.treasury_script_pubkey(sale.terms).hex()
         for entries in sale.purchases.values():
             for e in list(entries)[-4:]:
                 txid = e.get("txid")
                 if not txid or e.get("voided"):
                     continue
+                if not self._spends_funding(txid, sale):
+                    continue
                 try:
                     out = self.rpc.txout(txid, 0)
                 except Exception:
                     continue
-                if out and ((out.get("scriptPubKey") or {}).get("hex") or "").lower() == want:
+                if not out:
+                    continue
+                spk = ((out.get("scriptPubKey") or {}).get("hex") or "").lower()
+                asset = (out.get("asset") or "").lower()
+                if spk == want and asset in ("", sale.terms.payment_asset):
                     return True
         return None
 
@@ -568,6 +684,10 @@ class Watcher:
 
     def _rest(self, sale, txid, vout, atoms):
         """The covenant rests at this outpoint with this many tokens."""
+        with self._held():
+            return self._rest_locked(sale, txid, vout, atoms)
+
+    def _rest_locked(self, sale, txid, vout, atoms):
         before = (sale.status, sale.locked_atoms,
                   sale.funding and sale.funding.get("txid"),
                   sale.funding and sale.funding.get("vout"))
@@ -627,6 +747,26 @@ class Watcher:
                 best = (int(o.get("n", 0)), atoms)
         return best
 
+    def _spends_funding(self, txid, sale):
+        """Whether this transaction spends the outpoint the sale rests at.
+
+        Unknown counts as no: the check exists to stop an outpoint nobody can
+        connect to the sale from being adopted, and a node that cannot answer
+        has connected nothing. The scan and the mempool search find a real
+        remainder anyway, a block later.
+        """
+        f = sale.funding or {}
+        if not f.get("txid"):
+            return False
+        try:
+            raw = self.rpc.call("getrawtransaction", txid, True) or {}
+        except Exception:
+            return False
+        for vin in raw.get("vin") or []:
+            if vin.get("txid") == f["txid"] and int(vin.get("vout", -1)) == int(f["vout"]):
+                return True
+        return False
+
     def _mempool_spender(self, txid, vout):
         """(spending txid, its decoded outputs) for a mempool transaction that
         spends this outpoint, or None. Bounded; a miss just means 'not seen'."""
@@ -655,11 +795,22 @@ class Watcher:
         """
         sale = project.sale
         at_address = found.get(sale.script_pubkey.lower(), [])
+        # Anyone can pay dust to a sale address, so the report is capped: it
+        # exists to tell a project that something is there, and a hundred lines
+        # of dust say that no better than twenty do. The largest are kept,
+        # because those are the ones worth sweeping.
+        others = [u for u in at_address if u["asset"] != sale.terms.token_asset]
+        others.sort(key=lambda u: -u["atoms"])
         strays = [{"txid": u["txid"], "vout": u["vout"], "asset": u["asset"],
                    "atoms": u["atoms"]}
-                  for u in at_address if u["asset"] != sale.terms.token_asset]
+                  for u in others[:MAX_STRAYS]]
+        if len(others) > MAX_STRAYS:
+            self.log("watcher: %s has %d foreign outputs at its address; the "
+                     "%d largest are reported"
+                     % (sale.project_id, len(others), MAX_STRAYS))
         if strays != sale.strays:
-            sale.strays = strays
+            with self._held():
+                sale.strays = strays
             return True
         return False
 
@@ -677,10 +828,11 @@ class Watcher:
         except (TypeError, ValueError):
             conf = 0
         if conf < 1:
-            if sale.funding is not None and sale.funding.get("seen_height") is None \
-                    and chain.get("height") is not None:
-                sale.funding["seen_height"] = chain["height"]
-                return True
+            with self._held():
+                if sale.funding is not None and sale.funding.get("seen_height") is None \
+                        and chain.get("height") is not None:
+                    sale.funding["seen_height"] = chain["height"]
+                    return True
             return False
         try:
             # `gettxout` names the tip it answered against, so the height is
@@ -714,15 +866,24 @@ class Watcher:
             block = self.rpc.call("getblockhash", height)
             if not block:
                 return False
-            if sale.funding.get("height") == height and sale.funding.get("block") == block:
-                return False
-            sale.funding["height"] = height
-            sale.funding["block"] = block
-            sale.funding.pop("seen_height", None)
-            sale.funding.pop("unverifiable", None)
+            with self._held():
+                if not sale.funding:
+                    return False
+                if sale.funding.get("height") == height \
+                        and sale.funding.get("block") == block:
+                    return False
+                sale.funding["height"] = height
+                sale.funding["block"] = block
+                sale.funding.pop("seen_height", None)
+                sale.funding.pop("unverifiable", None)
             return True
         except Exception:
             return False
+
+
+def _shape(sale):
+    """What a change is measured against: the state and what it holds."""
+    return (sale.status, sale.locked_atoms)
 
 
 def _out_atoms(out):

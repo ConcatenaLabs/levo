@@ -211,7 +211,7 @@ class Sale:
                                and self.has_closed(height=height, now=now)) else self.status
             raise SaleError("this sale is not open (%s)" % shown.replace("_", " "))
         if tier.cap_atoms <= 0:
-            raise SaleError("your tier cannot invest; stake Sequence to reach a tier "
+            raise SaleError("your tier cannot buy; stake Sequence to reach a tier "
                             "with a cap")
 
         locked = self.locked_atoms

@@ -232,11 +232,16 @@ def _b58check_decode(s):
     return body
 
 
-def key_matches_address(pubkey_hex, address):
+def key_matches_address(pubkey_hex, address, hrp="tb"):
     """Whether a recovered key is the key behind an address the user names.
 
+    `hrp` is the chain's address prefix, used only in the refusals: a reader
+    told to find a `tb1q...` address on mainnet is being sent looking for
+    something their wallet will never print.
+
     Message signing works with the key's hash, so a P2PKH (legacy) or P2WPKH
-    (bech32, tb1q...) address can be checked: its 20-byte program is the
+    (bech32, one of the chain's own 1q addresses) can be checked: its
+    20-byte program is the
     hash160 of the key. A taproot address carries a tweaked key and cannot be
     checked this way; a confidential address is refused by the decoder.
     Raises ValueError when the address is not one that names a key hash.
@@ -258,7 +263,7 @@ def key_matches_address(pubkey_hex, address):
     if not a:
         raise ValueError("no address given")
     try:
-        hrp, ver, prog = ADDR.decode(a)
+        got_hrp, ver, prog = ADDR.decode(a)
     except ValueError as bech_err:
         if "confidential" in str(bech_err):
             raise
@@ -266,7 +271,7 @@ def key_matches_address(pubkey_hex, address):
             body = _b58check_decode(a)
         except ValueError:
             raise ValueError("%s is not an address message signing works with "
-                             "(a legacy or a tb1q... address)" % address)
+                             "(a legacy or a %s1q... address)" % (address, hrp))
         # Legacy payloads are <version><20-byte hash>; confidential legacy
         # forms carry a blinding key first, and the hash is still the tail.
         return any(hmac.compare_digest(body[-20:], w) for w in wanted)
@@ -277,9 +282,11 @@ def key_matches_address(pubkey_hex, address):
     if ver == 1:
         raise ValueError("%s is a taproot address, which carries a tweaked key that "
                          "message signing cannot be checked against; name the legacy "
-                         "or %s1q... address of the key you signed with" % (address, hrp))
+                         "or %s1q... address of the key you signed with"
+                         % (address, got_hrp or hrp))
     raise ValueError("%s is not an address message signing works with: use the "
-                     "legacy or tb1q... address of the key you signed with" % address)
+                     "legacy or %s1q... address of the key you signed with"
+                     % (address, got_hrp or hrp))
 
 
 # --- challenges -------------------------------------------------------------

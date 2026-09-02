@@ -262,6 +262,17 @@ def _hex32(v, name):
     return v
 
 
+# What the sale address is made of, and what it is not. The leaves compile the
+# first list; the rest is Levo's record of the sale, checked when the lock is
+# accepted and not by the chain afterwards. Saying "change any term and the
+# address changes" would be wrong about exactly two of them, and a buyer who
+# believed it would think the amount for sale was enforced by the covenant.
+COMMITTED_TERMS = ("token_asset", "payment_asset", "price_num", "price_den",
+                   "treasury_prog", "treasury_ver", "min_lot", "close_locktime",
+                   "reclaim_xonly")
+PUBLISHED_TERMS = ("total_atoms",)
+
+
 class SaleTerms:
     """Everything a sale commits to on chain.
 

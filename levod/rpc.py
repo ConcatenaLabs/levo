@@ -14,12 +14,19 @@ number to round.
 """
 
 import json
+import time
 import os
 import urllib.request
 import urllib.error
 from base64 import b64encode
 from decimal import Decimal
 from pathlib import Path
+
+
+# How long the tip is held before it is asked for again. Shorter than a block,
+# so nothing a reader sees is older for it, and long enough that one page view
+# is one round trip rather than three.
+CHAIN_INFO_TTL = 2.0
 
 
 class RPCError(RuntimeError):
@@ -52,6 +59,12 @@ class NodeRPC:
                                    "start the node first, or set LEVOD_RPC_USER and "
                                    "LEVOD_RPC_PASSWORD" % self._cookie)
         self._id = 0
+        self._chain_info = None
+        self._chain_info_at = 0.0
+        # How long the tip may be reused. Shorter than a block on any chain
+        # Levo runs against; set it to 0 where blocks arrive faster than that,
+        # which is every regtest.
+        self.chain_info_ttl = CHAIN_INFO_TTL
 
     def with_timeout(self, seconds):
         """The same connection with a different patience, for the watcher."""
@@ -152,10 +165,28 @@ class NodeRPC:
         return out, True
 
     def chain_info(self):
-        return self.call("getblockchaininfo") or {}
+        """The tip, the chain's name and its clock.
+
+        Held for a moment. Drawing the board asks for the height, the median
+        time and the node's reachability, which was three round trips for one
+        page view, and a caller looping it made three for every request. A
+        second is shorter than the chain's own block time, so nothing a reader
+        sees is older for it.
+        """
+        now = time.time()
+        if self._chain_info and now - self._chain_info_at < self.chain_info_ttl:
+            return self._chain_info
+        info = self.call("getblockchaininfo") or {}
+        self._chain_info, self._chain_info_at = info, now
+        return info
 
     def chain_height(self):
         return int(self.chain_info()["blocks"])
+
+    def forget_chain_info(self):
+        """Drop the held tip. For a caller that has just changed the chain and
+        wants the next answer to be the new one."""
+        self._chain_info = None
 
     def chain_name(self):
         """The chain the node is on ('test', 'sequentia', 'elementsregtest'...)."""

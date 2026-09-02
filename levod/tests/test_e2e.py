@@ -50,6 +50,7 @@ class FakeNode:
         self.rates = {"SBTC": 6400000000000, "USDX": 100000000}
         self.down = False
         self.mempool = {}        # txid -> decoded tx
+        self.txs = {}            # txid -> decoded tx the node knows but has not got unspent
 
     def _up(self):
         if self.down:
@@ -102,7 +103,7 @@ class FakeNode:
         if method == "getrawmempool":
             return list(self.mempool)
         if method == "getrawtransaction":
-            return self.mempool.get(params[0])
+            return self.mempool.get(params[0]) or self.txs.get(params[0])
         raise RuntimeError("unexpected call %s" % method)
 
 
@@ -439,6 +440,11 @@ def run(d):
     ok.eq(r["lock"]["amount"], "1,000,000 HLX", "the lock instructions say the amount in units")
     code, r = req("POST", "/api/projects", {"project": meta, "terms": terms}, token=issuer_tok)
     ok.eq(code, 400, "a duplicate page name is refused")
+    code, r = req("POST", "/api/projects",
+                  {"project": dict(meta, slug="pretender", ticker="USDX"),
+                   "terms": dict(terms, min_lot=terms["min_lot"] + 3)}, token=issuer_tok)
+    ok.eq(code, 400, "a listing cannot take the ticker sales are priced in")
+    ok.ok("ticker" in (r.get("error") or ""), "saying why", r.get("error"))
     code, r = req("GET", "/api/me/projects", token=issuer_tok)
     ok.eq([p["slug"] for p in r["projects"]], ["helios"], "the issuer sees their project")
     ok.ok(r["projects"][0]["lock"] is not None, "with lock instructions while it is a draft")
@@ -446,6 +452,11 @@ def run(d):
     ok.eq(code, 403, "a stranger cannot edit a project")
     code, r = req("PATCH", "/api/projects/helios", {"summary": "Edited.", "links": {}}, token=issuer_tok)
     ok.eq(code, 200, "the issuer can edit copy")
+    code, r = req("PATCH", "/api/projects/helios", {"decimals": 2}, token=issuer_tok)
+    ok.eq(code, 400, "but not the decimals, which would reprice every amount")
+    ok.ok("Withdraw" in (r.get("error") or ""), "and is told what to do instead", r.get("error"))
+    code, r = req("PATCH", "/api/projects/helios", {"decimals": 8}, token=issuer_tok)
+    ok.eq(code, 200, "while sending the decimals it already has is not a change")
     ok.eq(r["summary"], "Edited.", "and the edit lands")
     # A second listing has to differ in something the address is made of.
     # Identical terms derive one covenant, and two sales sharing one could not
@@ -658,8 +669,15 @@ def run(d):
                   token=buyer_tok)
     ok.eq(code, 400, "a transaction paying another treasury is refused")
     code, r = req("POST", "/api/projects/helios/confirm",
+                  {"txid": "d9" * 32, "token_atoms": 100_000, "payment_atoms": 1}, token=buyer_tok)
+    ok.eq(code, 400, "a purchase the node has never seen is refused")
+    ok.ok("not seen" in (r.get("error") or ""), "saying so", r.get("error"))
+    # A purchase the node knows about, whose treasury output has since been
+    # spent: it cannot be checked, and it still happened.
+    node.txs["e1" * 32] = {"txid": "e1" * 32, "vin": [], "vout": []}
+    code, r = req("POST", "/api/projects/helios/confirm",
                   {"txid": "e1" * 32, "token_atoms": 100_000, "payment_atoms": 1}, token=buyer_tok)
-    ok.eq(code, 200, "an unverifiable purchase is still recorded")
+    ok.eq(code, 200, "an unverifiable purchase the node knows is still recorded")
     ok.eq(r["treasury_payment_verified"], None, "and says it could not be checked")
     ok.eq(r["purchase"]["payment_atoms"], 25_000, "but never for less than the covenant's price for the tokens")
     code, r = req("POST", "/api/projects/helios/confirm",
@@ -736,6 +754,43 @@ def run(d):
           "and its leaves, so a client can keep them")
     ok.eq(r["node_reachable"], True, "and whether the node answered")
 
+    # --- limits and the headers a client acts on ---------------------------
+    ok.section("limits")
+    _, _, h = _req(d.base, "GET", "/api/config")
+    ok.ok("max-age" in (h.get("Cache-Control") or ""),
+          "the config answer may be held for a moment", h.get("Cache-Control"))
+    _, _, h = _req(d.base, "GET", "/api/projects")
+    ok.eq(h.get("Cache-Control"), "no-store", "the board is never cached")
+    saved = d.app.read_limit
+    d.app.read_limit = d.server_mod.RateLimit(per_minute=1)
+    req("GET", "/api/projects")
+    code, r, h = _req(d.base, "GET", "/api/projects")
+    ok.eq(code, 429, "a caller reading in a loop is slowed down")
+    ok.eq(h.get("Retry-After"), "60", "and told how long to wait")
+    code, _, _ = _req(d.base, "GET", "/api/health")
+    ok.eq(code, 200, "while health is never the thing that trips the limit")
+    d.app.read_limit = saved
+
+    # --- which of a wallet's outputs a covenant can actually spend ---------
+    ok.section("outputs")
+    node.utxos[("b1" * 32, 0)] = {"scriptPubKey": {"hex": "0014" + "cc" * 20},
+                                  "assetcommitment": "0a" * 33,
+                                  "valuecommitment": "08" * 33}
+    code, r = req("POST", "/api/outputs/check",
+                  {"outputs": [{"txid": "77" * 32, "vout": 0},
+                               {"txid": "b1" * 32, "vout": 0},
+                               {"txid": "b2" * 32, "vout": 7}]}, token=buyer_tok)
+    ok.eq(code, 200, "a signed-in caller can ask about its own outputs")
+    rows = {(x["txid"], x["vout"]): x for x in r["outputs"]}
+    ok.eq(rows[("77" * 32, 0)]["spendable"], True, "an explicit output can be spent")
+    ok.eq(rows[("77" * 32, 0)]["asset"], USDX, "and says what it holds")
+    ok.eq(rows[("b1" * 32, 0)]["spendable"], False, "a confidential one cannot")
+    ok.ok("confidential" in rows[("b1" * 32, 0)]["why"], "and says why",
+          rows[("b1" * 32, 0)]["why"])
+    ok.eq(rows[("b2" * 32, 7)]["spendable"], False, "nor one that is not there")
+    code, r = req("POST", "/api/outputs/check", {"outputs": [{"txid": "77" * 32, "vout": 0}]})
+    ok.eq(code, 401, "and it takes a session")
+
     # --- the board a visitor lands on --------------------------------------
     ok.section("board")
     code, r = req("GET", "/api/projects")
@@ -782,6 +837,34 @@ def run(d):
     ok.eq(code, 200, "and it can be put back")
     code, r = req("GET", "/api/projects")
     ok.ok("helios" in [p["slug"] for p in r["projects"]], "back on the board")
+
+    # --- what each path takes ----------------------------------------------
+    ok.section("verbs")
+    code, r, h = _req(d.base, "OPTIONS", "/api/health")
+    ok.eq(code, 204, "OPTIONS answers")
+    ok.eq(h.get("Allow"), "GET, HEAD, OPTIONS", "with what that path takes")
+    code, r, h = _req(d.base, "OPTIONS", "/api/projects")
+    ok.eq(h.get("Allow"), "GET, POST, HEAD, OPTIONS", "and a different list elsewhere")
+    code, r, h = _req(d.base, "DELETE", "/api/health")
+    ok.eq(code, 405, "a verb a path does not take is 405, not 404")
+    ok.ok("GET" in (h.get("Allow") or ""), "with the verbs it does take", h.get("Allow"))
+    code, r, _ = _req(d.base, "GET", "/api/no-such-thing")
+    ok.eq(code, 404, "while a path that does not exist is still 404")
+
+    # --- the ledger an issuer can read -------------------------------------
+    ok.section("ledger")
+    code, r = req("GET", "/api/projects/helios/purchases", token=issuer_tok)
+    ok.eq(code, 200, "the issuer can read what Levo recorded for its own sale")
+    ok.ok(len(r["purchases"]) >= 1, "with the purchases in it", len(r["purchases"]))
+    ok.ok(all("account" in e and "txid" in e for e in r["purchases"]),
+          "each naming the account and the transaction")
+    ok.ok("chain" in r["what_this_is"], "and saying what it is not")
+    code, r = req("GET", "/api/projects/helios/purchases", token=buyer_tok)
+    ok.eq(code, 403, "a buyer cannot read the whole ledger")
+    code, r = req("GET", "/api/me", token=issuer_tok)
+    ok.eq(r.get("operator"), True, "an operator is told they are one")
+    code, r = req("GET", "/api/me", token=buyer_tok)
+    ok.eq(r.get("operator"), False, "and an ordinary account is told it is not")
 
     # --- the ledger only records purchases that could have happened --------
     ok.section("ledger")
