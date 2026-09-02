@@ -30,6 +30,7 @@ export default function Launch() {
 
   async function submit(e) {
     e.preventDefault()
+    if (busy) return
     setError(null); setInvalid({}); setBusy(true)
     try {
       // An empty field is not zero decimals. Reading it as one would list the
@@ -74,7 +75,14 @@ export default function Launch() {
       navigate('/p/' + r.project.slug)
     } catch (err) {
       setError(capitalise(err.message))
-      if (err.field) setInvalid({ [err.field]: true })
+      // Twelve fields: an error that does not say which one leaves the reader
+      // tabbing backwards through the form to find it.
+      const field = err.field || fieldOf(err.message)
+      if (field) {
+        setInvalid({ [field]: true })
+        const el = document.getElementById(FIELD_INPUT[field] || field)
+        if (el) { el.focus(); el.scrollIntoView({ block: 'center' }) }
+      }
     } finally { setBusy(false) }
   }
 
@@ -134,7 +142,7 @@ export default function Launch() {
       </Notice>
 
       <form onSubmit={submit} style={{ marginTop: '2rem' }} noValidate>
-        <h3 style={{ marginBottom: '1rem' }}>The project</h3>
+        <h2 className="section-h" style={{ marginTop: 0 }}>The project</h2>
         <div className="grid-2">
           <div className="field">
             <label htmlFor="name">Name</label>
@@ -165,7 +173,7 @@ export default function Launch() {
           <div className="hint">More links can be added on the sale's page after listing.</div>
         </div>
 
-        <h3 style={{ margin: '2rem 0 1rem' }}>The sale</h3>
+        <h2 className="section-h">The sale</h2>
         <div className="grid-2">
           <div className="field">
             <label htmlFor="asset">Token asset id</label>
@@ -243,12 +251,43 @@ export default function Launch() {
         </div>
 
         {error && <Notice kind="bad" style={{ marginBottom: '1rem' }}>{error}</Notice>}
-        <button className="btn btn-primary" disabled={busy}>
+        <button className="btn btn-primary" aria-disabled={busy}>
           {busy ? 'Deriving the sale address…' : 'Derive the sale address'}
         </button>
       </form>
     </div>
   )
+}
+
+// levod answers in sentences, not codes, and the sentences name their subject.
+// This is the one place that reads them, and it fails quietly: a message it
+// does not recognise simply leaves the error where it is.
+const FIELD_WORDS = [
+  ['slug', /page name/i],
+  ['ticker', /ticker/i],
+  ['token_asset', /token_asset|asset id/i],
+  ['treasury', /treasury/i],
+  ['reclaim', /reclaim key|reclaim_xonly/i],
+  ['price', /price/i],
+  ['min', /minimum lot|min_lot/i],
+  ['total', /total_atoms|for sale/i],
+  ['close', /close/i],
+  ['decimals', /decimals/i],
+]
+
+// Which input each of those names is, on this page.
+const FIELD_INPUT = {
+  slug: 'slug', ticker: 'ticker', token_asset: 'asset', treasury: 'treasury',
+  reclaim: 'reclaim', price: 'price', min: 'min', total: 'total',
+  close: 'close', decimals: 'decimals',
+}
+
+function fieldOf(message) {
+  const text = String(message || '')
+  for (const [field, pattern] of FIELD_WORDS) {
+    if (pattern.test(text)) return field
+  }
+  return null
 }
 
 function bad(field, message) {

@@ -10,7 +10,8 @@ import { Copy, Notice } from './ui'
 // to, so there is nothing to register and nothing to remember.
 
 export default function SignIn({ onDone, label = 'Sign in with your wallet' }) {
-  const { refresh } = useStore()
+  const { refresh, config } = useStore()
+  const hrp = config.hrp || 'tb'
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState(null)
   const [manual, setManual] = useState(null)   // { message } when pasting a signature
@@ -90,7 +91,8 @@ export default function SignIn({ onDone, label = 'Sign in with your wallet' }) {
           different text signs nobody in.
         </p>
         <div className="field">
-          <label htmlFor="challenge">Message to sign <Copy value={manual.message} label="Copy the message" /></label>
+          <label htmlFor="challenge">Message to sign</label>
+          <Copy value={manual.message} label="Copy the message to sign" />
           <textarea id="challenge" className="mono fit" readOnly value={manual.message} rows={rows}
                     onFocus={(e) => e.target.select()} />
           <div className="hint">
@@ -116,7 +118,7 @@ export default function SignIn({ onDone, label = 'Sign in with your wallet' }) {
             <label htmlFor="sigaddr">Address you signed with <span className="dim">(optional)</span></label>
             <input id="sigaddr" className="mono" value={address} autoComplete="off"
                    onChange={(e) => setAddress(e.target.value)}
-                   placeholder="a legacy or tb1q… address of the signing key" />
+                   placeholder={'a legacy or ' + hrp + '1q… address of the signing key'} />
             <div className="hint">
               A signature over slightly different text recovers to a key nobody
               holds. Naming the address turns that into an error instead of a
@@ -125,7 +127,7 @@ export default function SignIn({ onDone, label = 'Sign in with your wallet' }) {
           </div>
           {error && <Notice kind="bad" style={{ marginBottom: '1rem' }}>{error}</Notice>}
           <div className="btn-row">
-            <button className="btn btn-primary" disabled={busy || !pasted.trim()}>
+            <button className="btn btn-primary" aria-disabled={busy || !pasted.trim()}>
               {busy ? 'Checking…' : 'Sign in'}
             </button>
             <button type="button" className="btn btn-ghost" onClick={() => setManual(null)}>
@@ -142,12 +144,12 @@ export default function SignIn({ onDone, label = 'Sign in with your wallet' }) {
       {error && <Notice kind="bad" style={{ marginBottom: '1rem' }}>{error}</Notice>}
       <div className="btn-row">
         {hasProvider() && (
-          <button className="btn btn-primary" onClick={withWallet} disabled={busy}>
+          <button className="btn btn-primary" onClick={withWallet} aria-disabled={busy}>
             {busy ? 'Waiting for your wallet…' : label}
           </button>
         )}
         <button className={'btn' + (hasProvider() ? ' btn-ghost' : ' btn-primary')}
-                onClick={startManual} disabled={busy}>
+                onClick={startManual} aria-disabled={busy}>
           {hasProvider() ? 'Sign another way' : 'Sign a message to continue'}
         </button>
       </div>

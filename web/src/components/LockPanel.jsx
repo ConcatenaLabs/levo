@@ -27,6 +27,7 @@ export default function LockPanel({ project, onLocked }) {
 
   async function confirm(e, named) {
     if (e) e.preventDefault()
+    if (busy || (named && !lock.txid.trim())) return
     setError(null); setBusy(true)
     try {
       const r = named
@@ -55,8 +56,8 @@ export default function LockPanel({ project, onLocked }) {
         </p>
       )}
       <div className="field">
-        <label htmlFor="lockaddr">Sale address</label>
-        <div id="lockaddr" className="hex small">
+        <div className="field-title" id="lockaddr-title">Sale address</div>
+        <div className="hex small" aria-labelledby="lockaddr-title">
           <Hex value={project.address} href={explorer('address', project.address)} />
         </div>
       </div>
@@ -79,8 +80,9 @@ export default function LockPanel({ project, onLocked }) {
         </p>
         <div className="field" style={{ marginBottom: 0 }}>
           <label htmlFor="lockcmd">
-            Command <Copy value={lockCommand} label="Copy the command" />
+            Command
           </label>
+          <Copy value={lockCommand} label="Copy the lock command" />
           <textarea id="lockcmd" className="mono" rows={4} readOnly value={lockCommand}
                     onFocus={(e) => e.target.select()} />
           <div className="hint">
@@ -91,7 +93,7 @@ export default function LockPanel({ project, onLocked }) {
       </details>
       {error && <Notice kind="bad" style={{ marginBottom: '1rem' }}>{error}</Notice>}
       <div className="btn-row">
-        <button className="btn btn-primary" onClick={() => confirm(null, false)} disabled={busy}>
+        <button className="btn btn-primary" onClick={() => confirm(null, false)} aria-disabled={busy}>
           {busy ? 'Looking on chain…' : 'Look for my tokens on chain'}
         </button>
         <button type="button" className="btn btn-ghost btn-sm" onClick={() => setManual((m) => !m)}>
@@ -114,7 +116,7 @@ export default function LockPanel({ project, onLocked }) {
             <input id="vout" className="mono" inputMode="numeric" value={lock.vout} required
                    onChange={(e) => setLock({ ...lock, vout: e.target.value })} />
           </div>
-          <button className="btn btn-primary btn-sm" disabled={busy || !lock.txid.trim()}>
+          <button className="btn btn-primary btn-sm" aria-disabled={busy || !lock.txid.trim()}>
             {busy ? 'Checking the chain…' : 'Confirm the lock'}
           </button>
         </form>

@@ -39,6 +39,7 @@ export default function Reclaim({ project }) {
 
   async function build(e) {
     e.preventDefault()
+    if (busy || !form.dest.trim()) return
     setError(null); setBusy(true)
     try {
       const fee_inputs = form.inputs.split(/\s+/).filter(Boolean).map((s) => {
@@ -96,7 +97,7 @@ export default function Reclaim({ project }) {
             </div>
           )}
         </div>
-        <button className="btn btn-primary btn-sm" disabled={busy || !form.dest.trim()}>
+        <button className="btn btn-primary btn-sm" aria-disabled={busy || !form.dest.trim()}>
           {busy ? 'Building…' : 'Build the reclaim'}
         </button>
       </form>
@@ -110,19 +111,25 @@ export default function Reclaim({ project }) {
             inputs and broadcasts. Nothing below needs Levo.
           </Notice>
           <div className="field">
-            <label htmlFor="rsh">Sighash to sign, BIP340, with key {built.signs_with.slice(0, 12)}… <Copy value={built.sighash} label="Copy the sighash" /></label>
-            <div id="rsh" className="hex small">{built.sighash}</div>
+            <div className="field-title" id="rsh-title">
+              Sighash to sign, BIP340, with key {built.signs_with.slice(0, 12)}…
+            </div>
+            <div className="hex small" aria-labelledby="rsh-title">{built.sighash}</div>
+            <Copy value={built.sighash} label="Copy the sighash" />
           </div>
           <div className="field">
-            <label htmlFor="rleaf">Reclaim leaf <Copy value={built.leaf} label="Copy the leaf" /></label>
-            <div id="rleaf" className="hex small">{built.leaf}</div>
+            <div className="field-title" id="rleaf-title">Reclaim leaf</div>
+            <div className="hex small" aria-labelledby="rleaf-title">{built.leaf}</div>
+            <Copy value={built.leaf} label="Copy the reclaim leaf" />
           </div>
           <div className="field">
-            <label htmlFor="rcb">Control block <Copy value={built.control_block} label="Copy the control block" /></label>
-            <div id="rcb" className="hex small">{built.control_block}</div>
+            <div className="field-title" id="rcb-title">Control block</div>
+            <div className="hex small" aria-labelledby="rcb-title">{built.control_block}</div>
+            <Copy value={built.control_block} label="Copy the control block" />
           </div>
           <div className="field">
-            <label htmlFor="runsigned">Unsigned transaction, locktime {built.locktime} <Copy value={built.unsigned_tx_hex} label="Copy the unsigned transaction" /></label>
+            <label htmlFor="runsigned">Unsigned transaction, locktime {built.locktime}</label>
+            <Copy value={built.unsigned_tx_hex} label="Copy the unsigned transaction" />
             <textarea id="runsigned" className="mono" rows={3} readOnly
                       value={built.unsigned_tx_hex}
                       onFocus={(e) => e.target.select()} />

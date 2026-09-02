@@ -24,10 +24,10 @@ export default function HowItWorks() {
         an operator, so this page draws it plainly.
       </p>
 
-      <h3 style={{ margin: '2.5rem 0 .75rem' }}>What you need</h3>
+      <h2 className="section-h">What you need</h2>
       <p>
         <strong>To buy:</strong> a Levo account, which is a key you can sign with
-        {wallet ? <> (the <a href={wallet} target="_blank" rel="noopener noreferrer">browser extension</a>, or any wallet that signs messages)</> : ' (a browser extension, or any wallet that signs messages)'};
+        {wallet ? <> (<a href={wallet} target="_blank" rel="noopener noreferrer">a wallet</a>, or any wallet that signs messages)</> : ' (a browser extension, or any wallet that signs messages)'};
         staked Sequence under a key you can prove you control, at or above the first
         tier; and unblinded {payment.label} to pay with -- unblinded meaning the
         amount is written on the chain in the clear, which is how Sequentia pays
@@ -46,7 +46,7 @@ export default function HowItWorks() {
         <span className="mono"> levo keygen</span> makes one.
       </p>
 
-      <h3 style={{ margin: '2.5rem 0 .75rem' }}>Signing in</h3>
+      <h2 className="section-h">Signing in</h2>
       <p>
         Your account is a public key. Levo issues a challenge, your wallet signs
         it, and Levo recovers the key from the signature. That key is who you
@@ -57,7 +57,7 @@ export default function HowItWorks() {
         other text signs nobody in.
       </p>
 
-      <h3 style={{ margin: '2.5rem 0 .75rem' }}>Tiers</h3>
+      <h2 className="section-h">Tiers</h2>
       <p>
         Your tier comes from Sequence staked under keys you have proven you
         control. Signing in with a staking key proves it. Proving another key
@@ -93,7 +93,7 @@ export default function HowItWorks() {
         from the chain.
       </p>
 
-      <h3 style={{ margin: '2.5rem 0 .75rem' }}>A sale</h3>
+      <h2 className="section-h">A sale</h2>
       <p>
         A project locks its whole allocation in one taproot output whose spending
         conditions are compiled from the sale's terms. The output has no key
@@ -116,7 +116,7 @@ export default function HowItWorks() {
         planning purchases at the close.
       </p>
 
-      <h3 style={{ margin: '2.5rem 0 .75rem' }}>What is enforced, and by whom</h3>
+      <h2 className="section-h">What is enforced, and by whom</h2>
       <p>
         The covenant enforces the price, the treasury that gets paid, the token a
         remainder must be, the minimum lot, and the earliest moment the project can
@@ -134,7 +134,7 @@ export default function HowItWorks() {
         enforces it, and a sale can be filled without Levo at all.
       </p>
 
-      <h3 style={{ margin: '2.5rem 0 .75rem' }}>Paying</h3>
+      <h2 className="section-h">Paying</h2>
       <p>
         {payment.label} settles inside the covenant, which is what makes a purchase
         atomic end to end. BTC is native Bitcoin on the parent chain, not a token on
@@ -149,7 +149,7 @@ export default function HowItWorks() {
         {' '}{payment.label}.
       </p>
 
-      <h3 style={{ margin: '2.5rem 0 .75rem' }}>If Bitcoin reorgs</h3>
+      <h2 className="section-h">If Bitcoin reorgs</h2>
       <p>
         Sequentia follows its Bitcoin anchor, so a funding transaction can be
         un-made after a sale was already showing as open. Levo does not treat
@@ -158,7 +158,7 @@ export default function HowItWorks() {
         the same address a second time.
       </p>
 
-      <h3 style={{ margin: '2.5rem 0 .75rem' }}>Checking Levo's work</h3>
+      <h2 className="section-h">Checking Levo's work</h2>
       <p>
         A hostile or broken Levo could show a sale that is not funded, quote a
         price that is not the covenant's, or hide a listing. What it cannot do
@@ -169,7 +169,7 @@ export default function HowItWorks() {
         {' '}does that on your own node.
       </p>
 
-      <h3 style={{ margin: '2.5rem 0 .75rem' }}>The levo command</h3>
+      <h2 className="section-h">The levo command</h2>
       <p>
         <span className="mono">levo</span> is a command-line client for everything
         on this site: it lists sales, rebuilds a sale address from its terms and
@@ -183,7 +183,7 @@ export default function HowItWorks() {
         <span className="mono">sequentia-cli</span> on your path.
       </p>
 
-      <h3 style={{ margin: '2.5rem 0 .75rem' }}>Words this page uses</h3>
+      <h2 className="section-h">Words this page uses</h2>
       <dl className="glossary">
         <dt>Atom</dt>
         <dd>

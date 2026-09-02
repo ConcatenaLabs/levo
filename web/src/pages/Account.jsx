@@ -25,6 +25,7 @@ function LinkKey({ onLinked }) {
 
   async function start(e) {
     e.preventDefault()
+    if (busy || !pubkey.trim()) return
     setError(null); setBusy(true)
     try {
       const pk = pubkey.trim().toLowerCase()
@@ -43,6 +44,7 @@ function LinkKey({ onLinked }) {
 
   async function submit(e) {
     e.preventDefault()
+    if (busy) return
     setError(null); setBusy(true)
     try {
       const st = await api.stakeLink(challenge.message, sig.trim(), pubkey.trim().toLowerCase())
@@ -57,6 +59,7 @@ function LinkKey({ onLinked }) {
   // Ask the wallet which key its stake is bonded to, then have it prove that
   // key. Two fields the user would have to find become one button.
   async function oneClick() {
+    if (busy) return
     setError(null); setBusy(true)
     try {
       const pk = await getStakerPublicKey()
@@ -85,11 +88,11 @@ function LinkKey({ onLinked }) {
         </div>
         {error && <Notice kind="bad" style={{ marginBottom: '1rem' }}>{error}</Notice>}
         <div className="btn-row">
-          <button className="btn btn-primary" disabled={busy || !pubkey.trim()}>
+          <button className="btn btn-primary" aria-disabled={busy || !pubkey.trim()}>
             {busy ? 'Working…' : 'Prove I control this key'}
           </button>
           {canOneClick && (
-            <button type="button" className="btn btn-ghost" disabled={busy}
+            <button type="button" className="btn btn-ghost" aria-disabled={busy}
                     onClick={oneClick}>
               Use my wallet's staking key
             </button>
@@ -103,7 +106,8 @@ function LinkKey({ onLinked }) {
   return (
     <form onSubmit={submit}>
       <div className="field">
-        <label htmlFor="stmt">Sign this with the staking key <Copy value={challenge.message} label="Copy the statement" /></label>
+        <label htmlFor="stmt">Sign this with the staking key</label>
+        <Copy value={challenge.message} label="Copy the statement to sign" />
         <textarea id="stmt" className="mono fit" readOnly rows={rows} value={challenge.message}
                   onFocus={(e) => e.target.select()} />
         <div className="hint">
@@ -121,7 +125,7 @@ function LinkKey({ onLinked }) {
       </div>
       {error && <Notice kind="bad" style={{ marginBottom: '1rem' }}>{error}</Notice>}
       <div className="btn-row">
-        <button className="btn btn-primary" disabled={busy || !sig.trim()}>
+        <button className="btn btn-primary" aria-disabled={busy || !sig.trim()}>
           {busy ? 'Checking…' : 'Link this stake'}
         </button>
         <button type="button" className="btn btn-ghost" onClick={() => setChallenge(null)}>
@@ -217,6 +221,7 @@ export default function Account() {
   }
 
   async function unlink(k) {
+    if (busyKey) return
     setUnlinkError(null); setBusyKey(k)
     try { setStanding(await api.stakeUnlink(k)) } catch (e) { setUnlinkError(capitalise(e.message)) } finally { setBusyKey(null) }
   }
@@ -309,7 +314,8 @@ export default function Account() {
                 </p>
               ) : (
                 <button className="btn btn-sm btn-ghost" style={{ marginTop: '.75rem' }}
-                        disabled={busyKey === k.staker_pubkey}
+                        aria-disabled={busyKey === k.staker_pubkey}
+                        aria-label={'Unlink the staking key ' + shortHex(k.staker_pubkey, 8, 6)}
                         onClick={() => unlink(k.staker_pubkey)}>
                   {busyKey === k.staker_pubkey ? 'Unlinking…' : 'Unlink'}
                 </button>

@@ -136,7 +136,11 @@ export function timeLabel(unix) {
 // is part of what the covenant was compiled from.
 export function treasurySpk(terms) {
   if (!terms || !terms.treasury_prog) return ''
-  return (Number(terms.treasury_ver ?? 1) === 1 ? '5120' : '0014') + terms.treasury_prog
+  const prog = terms.treasury_prog
+  if (Number(terms.treasury_ver ?? 1) === 1) return '5120' + prog
+  // A version-0 program is 20 bytes for a key hash and 32 for a script hash,
+  // and the push length in front of it says which.
+  return '00' + (prog.length / 2).toString(16).padStart(2, '0') + prog
 }
 
 // What a tier lets you do, from the tier itself. An operator's blurb is

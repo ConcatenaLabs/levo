@@ -48,8 +48,16 @@ export function StoreProvider({ children }) {
       await refresh()
       if (alive) setLoading(false)
     })()
+    // The node can go down while someone is reading, and a banner drawn once
+    // at page load would go on saying everything is fine. It is cheap: one
+    // request a minute, the same one an uptime check makes.
+    const beat = setInterval(() => {
+      api.health()
+        .then((h) => alive && setHealth(h))
+        .catch((e) => { if (alive && e && e.body && e.body.node) setHealth(e.body) })
+    }, 60_000)
     const off = onSignedOut(() => setStanding(null))
-    return () => { alive = false; off() }
+    return () => { alive = false; clearInterval(beat); off() }
   }, [refresh])
 
   const signOut = useCallback(() => { setToken(null); setStanding(null) }, [])
@@ -70,6 +78,7 @@ export function StoreProvider({ children }) {
     stake: config.stake,
     links: config.links || {},
     nodeDown: !!(health && health.node && health.node.reachable === false),
+    chainHeight: (health && health.node && health.node.height) || null,
   }
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>
 }

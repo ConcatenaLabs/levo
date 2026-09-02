@@ -157,7 +157,11 @@ export default function Home() {
                 {config.testnet && faucet && (
                   <li>Get testnet {stake.label} and {payment.label} from <a href={faucet} target="_blank" rel="noopener noreferrer">the faucet</a>.</li>
                 )}
-                <li>Stake {compact(firstAtoms)} {stake.label}{pools ? <>, or delegate to <a href={pools} target="_blank" rel="noopener noreferrer">a pool</a></> : ''}. Delegated stake still counts for you.</li>
+                <li>
+                  Stake {compact(firstAtoms)} {stake.label}.
+                  {pools ? <> Delegating it to <a href={pools} target="_blank" rel="noopener noreferrer">a pool</a> afterwards
+                    lends the block-signing rights and not the coins, so it still counts for you.</> : ''}
+                </li>
                 <li><Link to="/account">Sign in</Link> with the staking key, and your tier is on the first screen.</li>
               </ol>
             </div>
