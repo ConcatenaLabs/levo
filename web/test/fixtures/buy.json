@@ -1,0 +1,44 @@
+{
+ "hex": "020000000102abababababababababababababababababababababababababababababababab0100000000ffffffffcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd0000000000ffffffff0501deb9044d8fa54b848820dd7d71150dc1c0ba65cd6e76a7ca606a5eda3955512a01000000009502f900002251204f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa01aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa0100000014f46b040000225120318ee788309ec199cc721def9670271aedc943991ae148a901bf62b7ed4d3eb501aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa0100000002540be40000160014cccccccccccccccccccccccccccccccccccccccc01deb9044d8fa54b848820dd7d71150dc1c0ba65cd6e76a7ca606a5eda3955512a01000000009502f51800160014dddddddddddddddddddddddddddddddddddddddd01deb9044d8fa54b848820dd7d71150dc1c0ba65cd6e76a7ca606a5eda3955512a0100000000000003e8000000000000000002f0cdc95188cd76938bd59f63cd76938bce518820aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa8763cd76938bd1cdca7b8888cd76938bcf5188760800ca9a3b00000000df6967080000000000000000686708000000000000000068d869760800ca9a3b00000000df69080100000000000000d969080300000000000000d769080400000000000000da6977cd7693ce518820deb9044d8fa54b848820dd7d71150dc1c0ba65cd6e76a7ca606a5eda3955512a88cd7693d15188204f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa88cd7693cf51887cdf41c450929b74c1a04954b78b4b6035e97a5e078a5a0f28ec96d547bfee9ace803ac0543568c8992a854d3d9371a2154395515a4f2e97ca2a278e521bf6c613a6955c000000000000000000000000000000",
+ "sale_script_pubkey": "5120318ee788309ec199cc721def9670271aedc943991ae148a901bf62b7ed4d3eb5",
+ "treasury_script_pubkey": "51204f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa",
+ "token_asset": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+ "payment_asset": "2a515539da5e6a60caa7766ecd65bac0c10d15717ddd2088844ba58f4d04b9de",
+ "outputs": [
+  {
+   "index": 0,
+   "asset": "2a515539da5e6a60caa7766ecd65bac0c10d15717ddd2088844ba58f4d04b9de",
+   "atoms": 2500000000,
+   "script_pubkey": "51204f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa",
+   "role": "treasury credit, checked by the covenant"
+  },
+  {
+   "index": 1,
+   "asset": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "atoms": 90000000000,
+   "script_pubkey": "5120318ee788309ec199cc721def9670271aedc943991ae148a901bf62b7ed4d3eb5",
+   "role": "unsold remainder, re-rested at the sale address"
+  },
+  {
+   "index": 2,
+   "asset": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "atoms": 10000000000,
+   "script_pubkey": "0014cccccccccccccccccccccccccccccccccccccccc",
+   "role": "your tokens"
+  },
+  {
+   "index": 3,
+   "asset": "2a515539da5e6a60caa7766ecd65bac0c10d15717ddd2088844ba58f4d04b9de",
+   "atoms": 2499999000,
+   "script_pubkey": "0014dddddddddddddddddddddddddddddddddddddddd",
+   "role": "your change"
+  },
+  {
+   "index": 4,
+   "asset": "2a515539da5e6a60caa7766ecd65bac0c10d15717ddd2088844ba58f4d04b9de",
+   "atoms": 1000,
+   "script_pubkey": "",
+   "role": "network fee"
+  }
+ ]
+}

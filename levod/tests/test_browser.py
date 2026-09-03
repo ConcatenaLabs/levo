@@ -240,6 +240,18 @@ def run(ok, rig, levod, page, wallet, slug):
     wait(page, wallet, has(page, "sign and broadcast"), timeout=90)
     ok.ok(True, "levod built the transaction and the page offered it for signing")
 
+    # What the buyer is shown before signing is read out of the transaction
+    # itself: the page decodes the bytes rather than trusting the server's
+    # description of them, and refuses to offer a signature for anything it
+    # cannot read.
+    ok.ok("read out of the transaction itself" in page.text().lower(),
+          "the page says the figures come from the bytes")
+    shown = page.eval(
+        "JSON.stringify(Array.from(document.querySelectorAll('table.outputs tbody tr'))"
+        ".map(function(r){return r.innerText.replace(/\\s+/g, ' ').trim()}))")
+    ok.ok("25 USDX" in shown or "25 PAY" in shown,
+          "and the treasury credit is among them", shown[:200])
+
     page.click("Sign and broadcast with my wallet")
     wait(page, wallet, has(page, "broadcast."), timeout=120)
     ok.ok("signPset" in wallet.seen, "the wallet signed the PSET the site built")

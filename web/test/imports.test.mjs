@@ -78,7 +78,10 @@ test('no source file calls a helper it never imported', () => {
   for (const path of sources('src')) {
     const source = readFileSync(path, 'utf8')
     const imported = new Set(importedNames(source).map((i) => i.name))
+    // Method definitions (`compact() {`) read like calls to a regex, and a
+    // class of its own may name a method whatever it likes.
     const body = source.replace(/import\s+[^'"]+?\s+from\s+['"][^'"]+['"]/g, '')
+                       .replace(/^\s*\w+\s*\([^)]*\)\s*\{/gm, '')
     for (const [name, from] of Object.entries(helpers)) {
       if (path === from || imported.has(name)) continue
       // Declared locally under the same name is fine; called without either is not.

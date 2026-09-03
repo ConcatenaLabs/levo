@@ -245,6 +245,17 @@ console error anywhere in the sequence. It needs the app built first.
 
 No CI and no framework. Those commands are the whole gate.
 
+## What a buyer's browser checks for itself
+
+The page rebuilds the sale address from the published terms and compares it
+with the address it was told, and before anything is offered for signing it
+decodes the transaction and reads the outputs out of the bytes: the treasury
+credit, the remainder going back to the sale address, and the tokens arriving
+at the address the buyer gave. None of that is levod's word for it -- the
+description levod sends alongside is shown next to the decoded figures, not
+instead of them, and a transaction the page cannot read is one it will not
+offer to sign.
+
 ## Deployment
 
 The platform is live at [sequentiatestnet.com/levo/](https://sequentiatestnet.com/levo/),

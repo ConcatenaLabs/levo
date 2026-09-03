@@ -4,6 +4,8 @@ import { hasProvider, getUtxos, getAddress, broadcastHex, signPset, broadcastPse
          supportsPset, friendly } from '../lib/wallet'
 import { useStore } from '../lib/store'
 import { amount, atomsArg, big, capitalise, plain, shortHex, timeLabel, toAtoms, treasurySpk } from '../lib/format'
+import { outputsOf } from '../lib/eltx'
+import { scriptForAddress } from '../lib/bech32'
 import { Copy, Hex, Notice } from './ui'
 import SignIn from './SignIn'
 
@@ -31,22 +33,60 @@ function clearDraft(slug) {
 // catches a plan that moved under the buyer -- another purchase landing
 // between pricing and building -- and any disagreement between what this page
 // showed and what it is about to hand to a wallet.
-function disagreements(built, plan, sale, project) {
+// What is wrong with the transaction levod built, read from the transaction.
+//
+// Everything here used to be checked against `built.outputs` -- levod's own
+// description of what it had made -- compared with `plan`, levod's own quote.
+// One server's word on both sides of a comparison proves nothing, and this is
+// the page that tells the reader they need not take Levo's word for anything.
+// So the bytes it is about to sign are decoded, and the covenant's own rule is
+// checked against them: output 0 pays the treasury the terms name, output 1
+// re-rests the remainder at the sale address the terms derive, and what is
+// left for the buyer is what was priced and goes where the buyer asked.
+function disagreements(built, plan, sale, project, funding, hrp) {
   const out = []
   const d = project.decimals ?? 8
   const treasury = treasurySpk(sale.terms)
-  const outputs = built.outputs || []
+  let outputs
+  try {
+    outputs = outputsOf(built.unsigned_tx_hex).map((o) => ({
+      index: o.index, asset: o.asset, atoms: o.atoms,
+      script_pubkey: o.script, isFee: o.isFee,
+    }))
+  } catch (e) {
+    return ['this transaction cannot be read: ' + (e.message || e) +
+            '. Do not sign it.']
+  }
   const pay = outputs[0]
   if (!pay || pay.script_pubkey !== treasury) {
     out.push('the first output does not pay the treasury named in the terms')
-  } else if (big(pay.atoms) !== big(plan.payment_atoms)) {
+  } else if (pay.asset !== sale.terms.payment_asset) {
+    out.push('the treasury would be paid in an asset that is not the sale\'s')
+  } else if (pay.atoms !== big(plan.payment_atoms)) {
     out.push('the treasury would be paid an amount the quote did not say')
   }
-  const mine = outputs.filter((x) => x.role === 'your tokens')
-    .reduce((n, x) => n + big(x.atoms), 0n)
-  if (mine !== big(built.token_atoms) || big(built.token_atoms) !== big(plan.token_atoms)) {
+  // The remainder, when there is one, has to go back to the same address: that
+  // is what keeps the sale a sale rather than a one-time sweep.
+  if (big(plan.remainder_atoms) > 0n) {
+    const rest = outputs[1]
+    if (!rest || rest.script_pubkey !== sale.script_pubkey) {
+      out.push('the unsold remainder would not go back to the sale address')
+    } else if (rest.asset !== sale.terms.token_asset ||
+               rest.atoms !== big(plan.remainder_atoms)) {
+      out.push('the remainder left at the sale address is not what was priced')
+    }
+  }
+  const wanted = (funding && funding.token_addr && funding.token_addr.trim())
+    ? scriptForAddress(funding.token_addr.trim(), hrp || 'tb')
+    : null
+  const mine = outputs
+    .filter((x) => x.asset === sale.terms.token_asset && x.index >= 2 &&
+                   (!wanted || x.script_pubkey === wanted))
+    .reduce((n, x) => n + x.atoms, 0n)
+  if (mine !== big(plan.token_atoms)) {
     out.push('the tokens it sends you are not the ' + amount(plan.token_atoms, d) + ' ' +
-             project.ticker + ' that was priced')
+             project.ticker + ' that was priced' +
+             (wanted ? ', at the address you gave' : ''))
   }
   return out
 }
@@ -236,7 +276,7 @@ export default function BuyFlow({ project, tier, onSettled }) {
           fee_atoms: Number(feeAtoms),
         },
       })
-      const wrong = disagreements(b, plan, sale, project)
+      const wrong = disagreements(b, plan, sale, project, funding, hrp)
       setMismatch(wrong.length ? wrong : null)
       setBuilt(b)
     } catch (e) { fail(e) } finally { setBusy(false) }
@@ -305,6 +345,15 @@ export default function BuyFlow({ project, tier, onSettled }) {
   }
 
   const expired = plan && plan.quote && plan.quote.expires_at && now > plan.quote.expires_at
+  // The transaction as the chain would read it. A failure here is not a
+  // rendering problem: it means the thing on offer to sign cannot be read.
+  let decoded = []
+  let unreadable = null
+  if (built && built.unsigned_tx_hex) {
+    try {
+      decoded = outputsOf(built.unsigned_tx_hex)
+    } catch (e) { unreadable = e.message || String(e) }
+  }
   const remaining = plan && plan.cap ? big(plan.cap.per_sale_atoms) - big(plan.cap.committed_atoms) : null
 
   if (needSignIn) {
@@ -528,10 +577,12 @@ export default function BuyFlow({ project, tier, onSettled }) {
               <tr><th>Output</th><th>What</th><th className="num">Amount</th></tr>
             </thead>
             <tbody>
-              {built.outputs.map((o) => (
+              {/* Read out of the transaction itself, with levod's name for each
+                  row beside it. What is shown is what would be signed. */}
+              {decoded.map((o) => (
                 <tr key={o.index}>
                   <th>{o.index}</th>
-                  <td>{o.role}</td>
+                  <td>{(built.outputs[o.index] || {}).role || (o.isFee ? 'network fee' : '')}</td>
                   <td className="num">
                     {amount(o.atoms, o.asset === sale.terms.token_asset ? decimals : payment.decimals)}{' '}
                     {o.asset === sale.terms.token_asset ? project.ticker
@@ -542,9 +593,18 @@ export default function BuyFlow({ project, tier, onSettled }) {
             </tbody>
           </table>
           <p className="small dim">
-            Check the treasury credit and your tokens before you sign. Estimated
+            Read out of the transaction itself, not from what Levo said it built:
+            the amounts above are the bytes your wallet is about to sign. Estimated
             size {built.vsize_estimate} vB.
           </p>
+          {unreadable && (
+            <Notice kind="bad" style={{ marginBottom: '1rem' }}>
+              <strong>This transaction cannot be read here.</strong> {capitalise(unreadable)}.
+              Nothing on this page can tell you what signing it would do, so do not
+              sign it. Price the purchase again, and if it happens twice, buy from
+              your own node with <span className="mono">levo buy</span>.
+            </Notice>
+          )}
           {mismatch && (
             <Notice kind="bad" style={{ marginBottom: '1rem' }}>
               <strong>This does not match what was priced.</strong> Price it again
@@ -554,7 +614,7 @@ export default function BuyFlow({ project, tier, onSettled }) {
               </ul>
             </Notice>
           )}
-          {!sentTxid && !mismatch && walletCanSign && built.pset && (
+          {!sentTxid && !mismatch && !unreadable && walletCanSign && built.pset && (
             <div style={{ marginBottom: '1rem' }}>
               <button className="btn btn-primary btn-sm" onClick={signAndSendWithWallet}
                       aria-disabled={busy}>
