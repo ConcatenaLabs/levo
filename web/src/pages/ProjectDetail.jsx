@@ -20,12 +20,12 @@ function Terms({ project, sale }) {
   return (
     <table className="terms">
       <tbody>
-        <tr><th>Token</th><td>{project.ticker} <span className="dim">·</span> <Hex value={t.token_asset} href={explorer('asset', t.token_asset)} />
+        <tr><th>Token</th><td>{project.ticker} <span className="dim">·</span> <Hex value={t.token_asset} href={explorer('asset', t.token_asset)} label="token's asset id" />
           <div className="dim small prose">
             the name and ticker are the project's own words; the asset id beside
             them is the only part of this row the chain knows about
           </div></td></tr>
-        <tr><th>Paid in</th><td>{payment.label} <span className="dim">·</span> <Hex value={t.payment_asset} href={explorer('asset', t.payment_asset)} /></td></tr>
+        <tr><th>Paid in</th><td>{payment.label} <span className="dim">·</span> <Hex value={t.payment_asset} href={explorer('asset', t.payment_asset)} label="payment asset id" /></td></tr>
         <tr>
           <th>Price</th>
           <td>{priceLabel(t, d, payment.decimals)} {payment.label} per {project.ticker}
@@ -43,7 +43,7 @@ function Terms({ project, sale }) {
             </div>
           </td></tr>
         <tr><th>Reclaim opens</th><td>{closeLabel(t.close_locktime)}</td></tr>
-        <tr><th>Treasury address</th><td><Hex value={treasuryAddr} href={explorer('address', treasuryAddr)} />
+        <tr><th>Treasury address</th><td><Hex value={treasuryAddr} href={explorer('address', treasuryAddr)} label="treasury address" />
           <div className="dim small prose">
             {Number(t.treasury_ver ?? 1) === 1 ? 'taproot' : 'version-0'} witness program{' '}
             {shortHex(t.treasury_prog, 10, 6)}
@@ -72,7 +72,7 @@ function Terms({ project, sale }) {
           <td>
             {project.issuance_txid
               ? <>The project names{' '}
-                  <Hex value={project.issuance_txid}
+                  <Hex value={project.issuance_txid} label="issuance transaction id"
                        href={explorer('tx', project.issuance_txid)} /> as the
                   issuance. Levo does not check it.</>
               : <>The project has not named its issuance transaction.</>}
@@ -86,7 +86,7 @@ function Terms({ project, sale }) {
                    rel="noopener noreferrer">its page on the explorer</a></> : ''}.
             </div>
           </td></tr>
-        <tr><th>Reclaim key</th><td><Hex value={t.reclaim_xonly} />
+        <tr><th>Reclaim key</th><td><Hex value={t.reclaim_xonly} label="reclaim key" />
           <div className="dim small prose">
             the project signs with this to take back what did not sell, from the
             close on. Levo never holds it
@@ -324,7 +324,7 @@ function LedgerPanel({ project }) {
                     {amount(e.token_atoms, d)} {project.ticker} for{' '}
                     {amount(e.payment_atoms, payment.decimals)} {payment.label}
                     <div className="dim small prose">
-                      <Hex value={e.txid} href={explorer('tx', e.txid)} />
+                      <Hex value={e.txid} href={explorer('tx', e.txid)} label="transaction id" />
                       {e.verified === true ? ' · treasury payment checked on chain'
                         : e.verified === false ? ' · the treasury payment did not check out'
                           : ' · not checked on chain'}
@@ -547,13 +547,13 @@ export default function ProjectDetail() {
                   <table className="terms" style={{ marginTop: '.75rem' }}>
                     <tbody>
                       <tr><th>Sale address</th>
-                          <td><Hex value={project.address} href={explorer('address', project.address)} /></td></tr>
-                      <tr><th>scriptPubKey</th><td><Hex value={project.verify.script_pubkey} /></td></tr>
+                          <td><Hex value={project.address} href={explorer('address', project.address)} label="sale address" /></td></tr>
+                      <tr><th>scriptPubKey</th><td><Hex value={project.verify.script_pubkey} label="scriptPubKey" /></td></tr>
                       <tr><th>Internal key</th>
                           <td className="prose">{prose(project.verify.internal_key)}</td></tr>
                       {sale.funding && (
                         <tr><th>{sale.sold_atoms > 0 ? 'Resting at' : 'Locked at'}</th>
-                            <td><Hex value={sale.funding.txid + ':' + sale.funding.vout} href={explorer('tx', sale.funding.txid)} />
+                            <td><Hex value={sale.funding.txid + ':' + sale.funding.vout} href={explorer('tx', sale.funding.txid)} label="outpoint" />
                               {sale.sold_atoms > 0 && (
                                 <div className="dim small prose">
                                   a partial buy re-rests what is left at the same address,
@@ -591,7 +591,7 @@ export default function ProjectDetail() {
                       <li key={s.txid + s.vout}>
                         {amount(s.atoms, s.asset === sale.terms.payment_asset ? payment.decimals : 8)}{' '}
                         {s.asset === sale.terms.payment_asset ? payment.label : <span className="mono">{shortHex(s.asset, 8, 6)}</span>}
-                        {' '}at <Hex value={s.txid + ':' + s.vout}
+                        {' '}at <Hex value={s.txid + ':' + s.vout} label="outpoint"
                                     href={explorer('tx', s.txid)} short={14} />
                         {' '}&mdash; {s.sellable === false
                           ? 'below the minimum purchase, so a buy cannot take it; sweep it after the close'
@@ -619,7 +619,14 @@ export default function ProjectDetail() {
               <div className="kv"><span>Sold</span><b>{amount(sale.sold_atoms, d)} {project.ticker}</b></div>
               <div className="kv"><span>Still locked</span><b>{amount(sale.locked_atoms, d)} {project.ticker}</b></div>
               <div className="kv"><span>Total for sale</span><b>{amount(sale.terms.total_atoms, d)} {project.ticker}</b></div>
-              {typeof sale.buyers === 'number' && <div className="kv"><span>Buyers through Levo</span><b>{sale.buyers}</b></div>}
+              {typeof sale.buyers === 'number' && (
+                <div className="kv">
+                  <span title="Accounts whose payment to the treasury Levo checked on chain">
+                    Buyers Levo checked
+                  </span>
+                  <b>{sale.buyers}</b>
+                </div>
+              )}
               {closeLeft && <div className="kv"><span>Reclaim opens</span><b>{closeLeft}</b></div>}
             </div>
           )}

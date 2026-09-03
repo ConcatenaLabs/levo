@@ -45,13 +45,15 @@ export function Notice({ kind = '', children, style }) {
 
 // A hex value: monospace, wraps anywhere, copies with one click, links out to
 // the explorer when there is one.
-export function Hex({ value, href, copy = true, short }) {
+export function Hex({ value, href, copy = true, short, label }) {
   if (!value) return <span className="dim">—</span>
   const shown = short ? String(value).slice(0, short) + '…' : value
   return (
     <span className="hex">
       <Ext href={href}>{shown}</Ext>
-      {copy && <Copy value={value} />}
+      {/* Every one of these on a page otherwise reads as the same button to a
+          screen reader's button list: "Copy", seven times. */}
+      {copy && <Copy value={value} label={label ? 'Copy the ' + label : undefined} />}
     </span>
   )
 }

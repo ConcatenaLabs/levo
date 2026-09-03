@@ -473,7 +473,14 @@ class Sale:
             "funding": self.funding,
             "locked_atoms": atoms_out(self.locked_atoms),
             "sold_atoms": atoms_out(self.sold_atoms),
-            "buyers": len([a for a, v in self.allocations.items() if v > 0]),
+            # Only purchases whose treasury payment this Levo actually checked
+            # on chain. An entry it could not check is still recorded -- it may
+            # be perfectly real, and refusing it would cost the buyer their own
+            # headroom -- but a figure printed on a public page as "buyers"
+            # should not be one anybody can raise by recording something
+            # nobody verified.
+            "buyers": len({a for a, rows in self.purchases.items()
+                           if any(e.get("verified") is True for e in rows)}),
             "reclaim_txids": list(self.reclaim_txids),
             "strays": list(self.strays),
             "created_at": self.created_at,

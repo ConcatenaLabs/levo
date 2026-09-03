@@ -201,7 +201,7 @@ function MyPositions() {
           {p.purchases.map((e) => (
             <div key={e.txid + e.at} className="small dim" style={{ marginTop: '.4rem' }}>
               {timeLabel(e.at)}: {amount(e.token_atoms, p.decimals)} {p.ticker} for {amount(e.payment_atoms, payment.decimals)} {payment.label}
-              {e.txid && <> · <Hex value={e.txid} href={explorer('tx', e.txid)} short={12} /></>}
+              {e.txid && <> · <Hex value={e.txid} href={explorer('tx', e.txid)} short={12} label="transaction id" /></>}
               {e.verified === true ? ' · treasury payment checked' : e.verified === false ? '' : ' · not checked on chain'}
             </div>
           ))}

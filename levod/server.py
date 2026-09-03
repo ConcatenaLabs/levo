@@ -835,12 +835,20 @@ class Handler(BaseHTTPRequestHandler):
             # while every API check passes. An uptime check watching this
             # endpoint has to see that. Only when a bundle was there at
             # startup: an API-only run is not broken.
-            serving = app.api_only or (app.webroot / "index.html").is_file()
+            try:
+                serving = app.api_only or (app.webroot / "index.html").is_file()
+            except OSError as e:
+                # A webroot that cannot be read at all is not a healthy site,
+                # and it is not a reason for the endpoint that says so to
+                # answer with a traceback.
+                serving, node = False, dict(node, webroot_error=str(e))
             ok = (node["reachable"] and not stale and not failing
                   and not write_error and serving)
             return self._json(200 if ok else 503, {
                 "service": "levod", "ok": ok, "node": node,
-                "app": {"serving": serving, "webroot": str(app.webroot)},
+                # No path here: nothing reads it, and an unauthenticated
+                # endpoint should not name the filesystem it runs on.
+                "app": {"serving": serving},
                 "payment": {"asset": app.rails.payment_asset,
                             "label": app.rails.payment_label,
                             "decimals": app.payment_decimals},

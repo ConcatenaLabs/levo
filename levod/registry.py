@@ -63,19 +63,24 @@ class Answer:
                 "error": self.error}
 
 
-# Characters that are not text, whatever a font does with them: the same set
-# the platform refuses in a lister's own words.
-_BAD = set(chr(c) for c in list(range(0, 32)) + [127] + list(range(128, 160)))
-_BAD |= set("\u200b\u200c\u200d\u200e\u200f\u202a\u202b\u202c\u202d"
-            "\u202e\u2066\u2067\u2068\u2069\ufeff")
+# Characters that draw nothing but are letters or symbols by category, so a
+# name made of them looks empty however it is categorised.
+BLANK_GLYPHS = "\u3164\uffa0\u2800\u115f\u1160\u17b4\u17b5"
 
 
 def _plain(value, limit):
-    """A registry's string, as something safe to print anywhere, or None."""
+    """A registry's string, as something safe to print anywhere, or None.
+
+    The same rule the platform applies to a lister's own words, and by the same
+    property rather than by a list of code points: a format, control, surrogate
+    or private-use character is not text, whatever its number.
+    """
     if value is None:
         return None
     text = unicodedata.normalize("NFC", str(value))
-    text = "".join(c for c in text if c not in _BAD).strip()[:limit]
+    text = "".join(c for c in text
+                   if unicodedata.category(c) not in ("Cf", "Cc", "Cs", "Co", "Cn")
+                   and c not in BLANK_GLYPHS).strip()[:limit]
     return text or None
 
 
