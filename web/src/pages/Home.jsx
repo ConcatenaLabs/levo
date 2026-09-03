@@ -110,8 +110,16 @@ export default function Home() {
                 {config.first_tier_is_chain_floor
                   ? 'The first tier starts where the chain\'s own does: ' + floor + ' staked ' + stake.label +
                     ', the floor below which consensus ignores a staker entirely.'
-                  : 'The first tier opens at ' + compact(firstAtoms) + ' staked ' + stake.label +
-                    '. The chain\'s own blocksigner floor is ' + floor + '.'}
+                  : config.staking_floor_from_chain
+                    ? 'The first tier opens at ' + compact(firstAtoms) + ' staked ' + stake.label +
+                      '. The chain\'s own blocksigner floor, read from the node, is ' + floor + '.'
+                    /* Levo could not read the floor, so it must not state one as
+                       the chain's. Everything else on this page is checkable;
+                       a configured default said in the chain's name would not
+                       be, and would be the one sentence here worth doubting. */
+                    : 'The first tier opens at ' + compact(firstAtoms) + ' staked ' + stake.label +
+                      '. Levo could not read the chain\'s blocksigner floor from its node, so the ' +
+                      floor + ' it quotes for that floor is configured rather than checked.'}
                 {' '}Every proven key's stake adds to your total, and the total decides
                 the tier. Only staked Sequence counts, and only for keys you have
                 proven you control.

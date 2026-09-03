@@ -3,7 +3,7 @@ import { Link, useSearchParams } from 'react-router-dom'
 import { api } from '../lib/api'
 import { useStore } from '../lib/store'
 import { Notice, usePageTitle } from '../components/ui'
-import { closeIn, closeLabel, compact, priceLabel, shortHex } from '../lib/format'
+import { closeIn, closeLabel, compact, positive, priceLabel, shortHex } from '../lib/format'
 
 // What a state is CALLED, which is not always what levod calls it. "Closed"
 // is the one that would mislead: the sell leaf carries no locktime, so a sale
@@ -21,9 +21,10 @@ export function Status({ sale }) {
 }
 
 function Progress({ sale, decimals }) {
-  if (!sale || !sale.terms || !sale.terms.total_atoms) return null
-  const total = Number(sale.terms.total_atoms)
-  const sold = Number(sale.sold_atoms || 0)
+  if (!sale || !sale.terms || !positive(sale.terms.total_atoms)) return null
+  // geometry: the width of a bar, rounded to a percent either way.
+  const total = Number(sale.terms.total_atoms)  // geometry
+  const sold = Number(sale.sold_atoms || 0)  // geometry
   const pct = total ? Math.min(100, (sold / total) * 100) : 0
   return (
     <div>
@@ -150,7 +151,10 @@ export default function Projects() {
         {!projects ? 'Loading the sales.'
           : total === 0 ? 'No sales match.'
             : total + (total === 1 ? ' sale' : ' sales') +
-              (q ? ' matching ' + q : '') + ', showing ' + projects.length + '.'}
+              (q ? ' matching ' + q : '') +
+              // A listener is being told what is on the page, so the second
+              // number earns its place only when it differs from the first.
+              (projects.length === total ? '.' : ', showing ' + projects.length + '.')}
       </p>
       {!projects && !error && <p className="dim">Loading the sales…</p>}
 

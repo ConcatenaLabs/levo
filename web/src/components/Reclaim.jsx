@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { api } from '../lib/api'
 import { useStore } from '../lib/store'
-import { amount, capitalise, toAtoms } from '../lib/format'
+import { amount, capitalise, positive, toAtoms } from '../lib/format'
 import { Copy, Hex, Notice } from './ui'
 
 // After the close, whatever did not sell is the project's to sweep. The
@@ -88,9 +88,9 @@ export default function Reclaim({ project }) {
           <label htmlFor="rfee">Fee, in {payment.label}</label>
           <input id="rfee" className="mono" inputMode="decimal" value={form.fee} required
                  onChange={(e) => setForm({ ...form, fee: e.target.value })}
-                 placeholder={advice && advice.suggested_atoms
+                 placeholder={advice && positive(advice.suggested_atoms)
                    ? amount(advice.suggested_atoms, payment.decimals) : ''} />
-          {advice && advice.min_atoms && (
+          {advice && positive(advice.min_atoms) && (
             <div className="hint">
               This node relays a reclaim of about {advice.vsize_estimate} vB for{' '}
               {amount(advice.min_atoms, payment.decimals)} {payment.label} or more.
