@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { useParams, Link } from 'react-router-dom'
 import { api } from '../lib/api'
 import { useStore } from '../lib/store'
-import { amount, capitalise, closeIn, closeLabel, compact, priceLabel, prose, shortHex, treasurySpk } from '../lib/format'
+import { amount, capitalise, closeIn, closeLabel, compact, priceLabel, prose, shortHex, timeLabel, treasurySpk } from '../lib/format'
 import { addressOf } from '../lib/bech32'
 import { Copy, Hex, Notice, usePageTitle } from '../components/ui'
 import SignIn from '../components/SignIn'
@@ -614,6 +614,15 @@ export default function ProjectDetail() {
             </div>
           )}
           {operator && <FlagPanel project={project} onFlagged={load} />}
+          {/* An operator can read a sale's ledger through the API, which is
+              what a flag has to be judged against; the page offered it to the
+              issuer alone, so the one person asked to act on a complaint could
+              not see what Levo had recorded. */}
+          {operator && !issuer && (
+            <div style={{ marginTop: '1rem' }}>
+              <LedgerPanel project={project} />
+            </div>
+          )}
           {issuer && (
             <div style={{ marginTop: '1rem' }}>
               <EditPanel project={project} onSaved={setProject} />

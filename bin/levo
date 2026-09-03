@@ -403,12 +403,21 @@ def cmd_verify(args):
         okay = False
         print("MISMATCH: the published address is not what the terms derive")
     f = sale.get("funding")
+    resting = None
     if f:
         out = node("gettxout", f["txid"], int(f["vout"]), True)
         if not out:
-            print("funding        %s:%s is not unspent on your node (spent, or not seen)" % (f["txid"], f["vout"]))
-            okay = False
+            # Not a failure by itself, and calling it one accused every
+            # finished sale of fraud: a sold-out, reclaimed or just-bought sale
+            # has no unspent funding, and that is what the end of a sale looks
+            # like. What this command answers is whether the ADDRESS is what
+            # the terms derive; where the tokens are now is a separate line.
+            resting = False
+            print("funding        %s:%s is not unspent on your node -- it has "
+                  "been spent (a purchase, or the project's reclaim), or your "
+                  "node has not seen it" % (f["txid"], f["vout"]))
         else:
+            resting = True
             spk = (out.get("scriptPubKey") or {}).get("hex")
             asset = (out.get("asset") or "").lower()
             print("on chain       spk %s" % spk)
@@ -431,7 +440,7 @@ def cmd_verify(args):
           % ", ".join(C.PUBLISHED_TERMS))
     print("               chain when it accepted the lock; the covenant sells")
     print("               whatever it holds")
-    if f and okay:
+    if f and okay and resting:
         held = atoms(out.get("value", 0))
         want = int(sale["terms"].get("total_atoms") or 0)
         sold = int(sale.get("sold_atoms") or 0)
@@ -440,10 +449,20 @@ def cmd_verify(args):
             print("NOTE: the covenant holds %s and Levo records %s sold, which is "
                   "less than the %s this sale published"
                   % (U.fmt(held, dp), U.fmt(sold, dp), U.fmt(want, dp)))
-    print("RESULT         %s" % ("OK: the covenant at this address enforces exactly "
-                                 "the committed terms above" if okay
-                                 else "FAILED: do not buy from this listing"))
-    return 0 if okay else 1
+    if not okay:
+        print("RESULT         FAILED: do not buy from this listing")
+        return 1
+    print("RESULT         OK: the covenant at this address enforces exactly the "
+          "committed terms above")
+    if resting is False:
+        # Said after the verdict, because it is news about the sale rather than
+        # about the listing's integrity.
+        status = (sale.get("status") or "").replace("_", " ")
+        print("               Nothing is resting at it now%s. A sale that has "
+              "sold out, been reclaimed, or simply moved with a purchase your "
+              "node has seen looks exactly like this."
+              % (" (Levo calls this sale %s)" % status if status else ""))
+    return 0
 
 
 def cmd_link(args):
