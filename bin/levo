@@ -287,10 +287,19 @@ def resolve_asset(name):
 
 
 def _units(atoms, decimals=8):
-    """Atoms as the decimal string a node's RPC expects, exactly."""
+    """Atoms as an exact decimal string: what a node's RPC expects, and what
+    this CLI's own `--tokens` accepts back.
+
+    An asset that divides into nothing smaller than one unit has no fractional
+    part at all, and printing "1.0" for it produced a command this CLI then
+    refused as having too many decimal places.
+    """
     atoms = int(atoms)
     sign = "-" if atoms < 0 else ""
     atoms = abs(atoms)
+    decimals = int(decimals)
+    if decimals <= 0:
+        return "%s%d" % (sign, atoms)
     base = 10 ** decimals
     return "%s%d.%0*d" % (sign, atoms // base, decimals, atoms % base)
 
@@ -599,7 +608,36 @@ def cmd_lock(args):
     if args.atoms is None and total is None:
         raise Fail("this sale publishes no total; pass --atoms")
     amount = int(args.atoms if args.atoms is not None else total)
-    addr = p.get("address") or ADDR.from_script_pubkey(sale["script_pubkey"])
+
+    # The address is DERIVED here, from the terms this sale published, and
+    # levod's own answer has to match it. Sending an allocation to an address
+    # because a server named it is the one thing this command must never do:
+    # the covenant is the whole guarantee, and an address that is not the
+    # covenant's is an address with no leaves behind it at all.
+    terms = C.SaleTerms.from_json(sale["terms"])
+    cov = C.derive(terms)
+    if cov.spk_hex != sale["script_pubkey"]:
+        raise Fail("the sale's published address is not what its terms derive "
+                   "(%s, not %s). Do not lock into it; run `levo verify %s`"
+                   % (sale["script_pubkey"][:20], cov.spk_hex[:20], args.slug))
+    published = p.get("address") or ""
+    hrp = published[:published.rfind("1")] if "1" in published else args.hrp
+    addr = ADDR.from_script_pubkey(cov.spk_hex, hrp)
+    if published and addr != published:
+        raise Fail("the address this Levo published is not the one its own "
+                   "terms derive (%s, not %s); nothing was sent"
+                   % (published, addr))
+
+    # And nothing is sent to a sale that is already funded. levod refuses the
+    # second lock -- correctly, a sale is locked once -- but it refuses AFTER
+    # the tokens have gone, and they land at an address whose sell leaf will
+    # sell them to anyone at the sale's price.
+    if not args.txid and (sale.get("funding") or sale.get("status") not in
+                          (None, "draft", "ghost")):
+        raise Fail("this sale is already funded at %s; a sale is locked once, "
+                   "and anything else sent to its address is buyable by anyone "
+                   "at the sale's price"
+                   % ((sale.get("funding") or {}).get("txid") or sale.get("status")))
     fee_asset = args.fee_asset or sale["terms"]["payment_asset"]
     if args.txid:
         txid, vout = args.txid, args.vout
@@ -611,7 +649,7 @@ def cmd_lock(args):
             addr, amount, args.asset_label or sale["terms"]["token_asset"], fee_asset)
         raw = node("decoderawtransaction", hexed)
         vout = next((o["n"] for o in raw["vout"]
-                     if o.get("scriptPubKey", {}).get("hex") == sale["script_pubkey"]), None)
+                     if o.get("scriptPubKey", {}).get("hex") == cov.spk_hex), None)
         if vout is None:
             raise Fail("funded %s but could not find the covenant output" % txid)
     api("POST", "/api/projects/%s/lock" % args.slug, {"txid": txid, "vout": int(vout)}, tok)
@@ -622,9 +660,16 @@ def cmd_buy(args):
     tok = sign_in()
     p = api("GET", "/api/projects/%s" % args.slug)
     sale = p["sale"]
-    if args.rail and args.rail.lower() != "usdx":
-        raise Fail("the covenant is paid in %s. A BTC purchase is two steps: swap BTC for "
-                   "%s over Lightning in your wallet, then run this command."
+    # The covenant reads one asset, and this command fills the covenant. A
+    # two-step rail (BTC over Lightning, then the covenant) is a swap in the
+    # buyer's own wallet followed by exactly this command, which is why there
+    # is nothing here to do for it.
+    settles = (sale.get("terms") or {}).get("payment_asset")
+    if args.rail and args.rail.lower() not in ("", "usdx", str(_payment_label(p)).lower(),
+                                               str(settles or "").lower()):
+        raise Fail("the covenant is paid in %s, and that is what this command "
+                   "sends. A BTC purchase is two steps: swap BTC for %s over "
+                   "Lightning in your own wallet, then run this command."
                    % (_payment_label(p), _payment_label(p)))
     decimals = int(p.get("decimals", 8))
     token_atoms = U.parse(args.tokens, decimals)
@@ -692,10 +737,11 @@ def cmd_buy(args):
     # The purchase is on chain now. Recording it against your allocation is a
     # bookkeeping step, so a failure here is worth saying out loud but must not
     # be reported as a failed purchase.
-    _record(args.slug, txid, token_atoms, plan["payment_atoms"], tok)
+    _record(args.slug, txid, token_atoms, plan["payment_atoms"], tok,
+            decimals=decimals)
 
 
-def _record(slug, txid, token_atoms, payment_atoms, tok, tries=5):
+def _record(slug, txid, token_atoms, payment_atoms, tok, tries=5, decimals=8):
     """Tell Levo about a purchase, patiently.
 
     Levo reads its own node, which is not the node the transaction was
@@ -721,7 +767,10 @@ def _record(slug, txid, token_atoms, payment_atoms, tok, tries=5):
           "allocation did not go through (%s).\n"
           "      Finish it whenever you like with:\n"
           "        levo record %s --txid %s --tokens %s"
-          % (last, slug, txid, _units(token_atoms)), file=sys.stderr)
+          # In the token's OWN units: `levo record` parses --tokens at the
+          # project's precision, so eight decimal places on a two-place token
+          # is a command this CLI prints and then refuses.
+          % (last, slug, txid, _units(token_atoms, decimals)), file=sys.stderr)
     return False
 
 
@@ -737,7 +786,8 @@ def cmd_record(args):
         raise Fail("--tokens must be a number with at most %d decimal places" % decimals)
     payment_atoms = int(args.payment) if args.payment is not None else \
         -(-token_atoms * int(sale["terms"]["price_num"]) // int(sale["terms"]["price_den"]))
-    if not _record(args.slug, args.txid.lower(), token_atoms, payment_atoms, tok):
+    if not _record(args.slug, args.txid.lower(), token_atoms, payment_atoms, tok,
+                   decimals=int(decimals)):
         # The purchase may well be real; this command exists to record one, and
         # it did not, so it says so in the way a script can act on.
         raise Fail("the purchase was not recorded")
@@ -761,7 +811,17 @@ def cmd_rescue(args):
     terms_json = spec.get("terms", spec)
     terms = C.SaleTerms.from_json(terms_json)
     cov = C.derive(terms)
-    addr = ADDR.from_script_pubkey(cov.spk_hex, args.hrp)
+    # The file remembers which chain the sale was on, in the address it was
+    # written with. Defaulting to a testnet prefix instead produced an address
+    # that is not the sale's, on the one command whose whole purpose is to work
+    # when nothing else is left to ask -- and the scan then found nothing.
+    kept = str(spec.get("sale_address") or "")
+    hrp = args.hrp or (kept[:kept.rfind("1")] if "1" in kept else "tb")
+    addr = ADDR.from_script_pubkey(cov.spk_hex, hrp)
+    if kept and kept != addr:
+        raise Fail("this file's terms derive %s, but the file says the sale "
+                   "address is %s. One of the two has been edited; the terms "
+                   "are what the covenant is made of" % (addr, kept))
     print("sale address   %s" % addr)
 
     key = args.reclaim_key or os.environ.get("LEVO_RECLAIM_KEY")
@@ -785,10 +845,15 @@ def cmd_rescue(args):
           % (U.fmt(held, dp), biggest["txid"], biggest["vout"]))
 
     sale = S_MOD.Sale("rescue", terms, "rescue")
-    sale.confirm_lock(biggest["txid"], int(biggest["vout"]), cov.spk_hex, held,
-                      terms.token_asset)
+    # What is resting NOW, which after any purchase is less than the sale
+    # published. `confirm_lock` is the listing-time check and refuses exactly
+    # that, so a rescue that went through it could sweep only a sale nobody had
+    # ever bought from -- which is not the sale a rescue is for.
+    if (biggest.get("asset") or "").lower() != terms.token_asset:
+        raise Fail("that output does not hold this sale's token")
+    sale.rest_on(biggest["txid"], int(biggest["vout"]), held)
     dest = args.to or node("getnewaddress", "levo-rescue")
-    dest_spk = ADDR.to_script_pubkey(dest, args.hrp).hex()
+    dest_spk = ADDR.to_script_pubkey(dest, hrp).hex()
     fee_asset = resolve_asset(args.fee_asset) if args.fee_asset else terms.payment_asset
     fee_atoms = int(args.fee)
     fee_ins, _ = unblinded_inputs(fee_asset, fee_atoms)
@@ -804,7 +869,7 @@ def cmd_rescue(args):
     # Change from the fee inputs goes back to this wallet, never to --to: that
     # address may be a cold wallet or a custodian that credits only the token.
     change_spk = ADDR.to_script_pubkey(
-        node("getnewaddress", "levo-rescue-change"), args.hrp).hex()
+        node("getnewaddress", "levo-rescue-change"), hrp).hex()
     built = TXMOD.build_reclaim(sale, destination_spk=dest_spk, fee_inputs=ins,
                                 fee_atoms=fee_atoms, fee_asset=fee_asset,
                                 genesis_hash=node("getblockhash", 0),
@@ -986,7 +1051,9 @@ def main():
     rs.add_argument("--to", help="where the tokens go (default: a new wallet address)")
     rs.add_argument("--fee", type=int, default=1000, help="fee in atoms of the fee asset")
     rs.add_argument("--fee-asset", help="asset to pay the fee in")
-    rs.add_argument("--hrp", default="tb", help="the chain's address prefix")
+    rs.add_argument("--hrp", default="",
+                    help="the chain's address prefix (default: the one the "
+                         "terms file's own sale address was written with)")
     rs.add_argument("--locktime", type=int, help="override the reclaim's locktime")
     rs.add_argument("--dry-run", action="store_true")
     rs.set_defaults(fn=cmd_rescue)
@@ -1019,11 +1086,19 @@ def main():
     lk.add_argument("--fee-asset", help="asset to pay the fee in (default: the sale's payment asset)")
     lk.add_argument("--txid", help="confirm an output you already sent instead of sending")
     lk.add_argument("--vout", type=int, default=0)
+    lk.add_argument("--hrp", default="tb",
+                    help="the chain's address prefix, used only when this Levo "
+                         "publishes no address of its own")
     lk.set_defaults(fn=cmd_lock)
 
     b = sub.add_parser("buy")
     b.add_argument("slug"); b.add_argument("--tokens", required=True)
-    b.add_argument("--rail", default="usdx")
+    # The rails a levod offers are its own (`GET /api/rails`); naming one here
+    # as a default would hardcode a ticker this file elsewhere refuses to
+    # assume. Empty means "the one that settles in the covenant".
+    b.add_argument("--rail", default="",
+                   help="a rail this Levo offers (default: pay in the sale's "
+                        "own payment asset)")
     b.add_argument("--fee", type=int, help="fee in atoms of the fee asset (default: levod's suggestion)")
     b.add_argument("--fee-asset", help="asset to pay the fee in (default: the sale's payment asset)")
     b.add_argument("--to"); b.add_argument("--change")
@@ -1041,7 +1116,22 @@ def main():
     wd = sub.add_parser("withdraw"); wd.add_argument("slug"); wd.set_defaults(fn=cmd_withdraw)
 
     args = ap.parse_args()
-    rc = args.fn(args)
+    try:
+        rc = args.fn(args)
+    except Fail:
+        raise
+    except KeyboardInterrupt:
+        sys.exit("levo: stopped")
+    except Exception as e:
+        # A traceback is the right answer to a bug and the wrong one to a
+        # mistake: a mistyped slug, a node that is not running, a wallet that
+        # holds nothing. The message says what happened and where the detail
+        # is, and LEVO_TRACE prints the stack for the case where it really is
+        # a bug in here.
+        if os.environ.get("LEVO_TRACE"):
+            raise
+        sys.exit("levo: %s: %s\n(set LEVO_TRACE=1 for the full traceback)"
+                 % (e.__class__.__name__, e))
     sys.exit(rc or 0)
 
 

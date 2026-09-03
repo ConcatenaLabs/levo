@@ -155,6 +155,19 @@ def run(ok, rig, levod, env):
     ok.eq(int(detail["sale"]["locked_atoms"]), 1_000 * COIN,
           "holding exactly what was published")
 
+    # --- a second lock sends nothing ---------------------------------------
+    #
+    # levod refuses to lock a funded sale twice, correctly -- but it refused
+    # after the tokens had gone, and they land at an address whose sell leaf
+    # sells them to anyone at the sale's price. The refusal has to come first.
+    before = sum(int(round(float(u["amount"]) * 1e8)) for u in w("listunspent", 0)
+                 if u.get("asset") == token)
+    out = levo("lock", "cli-sale", expect_failure=True)
+    ok.ok("already funded" in out, "a second lock is refused", out[-200:])
+    after = sum(int(round(float(u["amount"]) * 1e8)) for u in w("listunspent", 0)
+                if u.get("asset") == token)
+    ok.eq(after, before, "and not one token left the wallet")
+
     # --- verify says what the address enforces -----------------------------
     out = levo("verify", "cli-sale")
     ok.ok("RESULT" in out and "OK" in out, "verify rebuilds the address and agrees",
@@ -264,9 +277,18 @@ def run(ok, rig, levod, env):
     rig.mine()
     rescue_terms = Path(tempfile.mkdtemp()) / "rescue.json"
     levo("terms", "rescue-me", "--out", str(rescue_terms))
+    # A sale somebody has BOUGHT from, which is the sale a rescue is for: the
+    # covenant now rests on a remainder smaller than the total it published,
+    # and a rescue that insisted on the published total could sweep only a sale
+    # nobody had ever touched.
+    out = levo("buy", "rescue-me", "--tokens", "50")
+    ok.ok("bought." in out, "a purchase moves the sale that will be rescued", out[-160:])
+    rig.mine()
     while rig.n("getblockcount") <= int(spec2["terms"]["close_locktime"]):
         rig.mine()
-    out = levo("rescue", "--terms", str(rescue_terms), "--hrp", "ert",
+    # No --hrp: the file remembers which chain it was written on, and a
+    # rescue that guessed a prefix derived an address that is not the sale's.
+    out = levo("rescue", "--terms", str(rescue_terms),
                "--reclaim-key", keys2["reclaim_secret_hex"], "--dry-run")
     ok.ok("would broadcast" in out,
           "a sale can be reclaimed from its terms file alone, with no Levo", out[-200:])

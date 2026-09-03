@@ -12,7 +12,11 @@ import { xFor, yFor } from '../lib/beam'
 // The geometry lives in lib/beam.js so it can be tested without a browser.
 
 export default function Beam({ tiers, stakeAtoms = 0, compactMode = false, showMarker = true,
-                               paymentLabel = 'USDX', stakeLabel = 'SEQ' }) {
+                               paymentLabel = 'USDX', stakeLabel = 'SEQ',
+                               // A cap is an amount of the PAYMENT asset and a
+                               // stake is an amount of the stake asset, and the
+                               // two do not divide the same way.
+                               paymentDecimals = 8, stakeDecimals = 8 }) {
   if (!tiers || tiers.length < 2) return null
 
   const W = 1000
@@ -43,15 +47,15 @@ export default function Beam({ tiers, stakeAtoms = 0, compactMode = false, showM
   // different fact from a cap of zero.
   const label = 'Per-sale cap by amount staked. ' + tiers.map((t) => {
     const from = Number(t.min_stake_atoms) > 0
-      ? 'from ' + compact(t.min_stake_atoms) + ' ' + stakeLabel + ' staked'
+      ? 'from ' + compact(t.min_stake_atoms, stakeDecimals) + ' ' + stakeLabel + ' staked'
       : 'below the first threshold'
     return t.name + ', ' + from + ', ' +
       (Number(t.cap_atoms) > 0
-        ? 'up to ' + compact(t.cap_atoms) + ' ' + paymentLabel + ' per sale'
+        ? 'up to ' + compact(t.cap_atoms, paymentDecimals) + ' ' + paymentLabel + ' per sale'
         : 'cannot buy') +
       (t.may_list ? ', and may list a project' : '')
   }).join('. ') + '.' + (showMarker && stake > 0
-    ? ' You have ' + compact(stake) + ' ' + stakeLabel + ' staked, which is ' +
+    ? ' You have ' + compact(stake, stakeDecimals) + ' ' + stakeLabel + ' staked, which is ' +
       steps[reachedIndex].tier.name + '.'
     : '')
 
@@ -107,7 +111,7 @@ export default function Beam({ tiers, stakeAtoms = 0, compactMode = false, showM
             <span key={'cap' + s.i} className="beam-cap"
                   style={{ left: (s.x0 / W) * 100 + '%',
                            top: (s.y - (compactMode ? 15 : 19) + (compactMode ? 20 : 22)) + 'px' }}>
-              {compact(s.tier.cap_atoms)}
+              {compact(s.tier.cap_atoms, paymentDecimals)}
             </span>
           ) : null
         ))}
@@ -119,7 +123,7 @@ export default function Beam({ tiers, stakeAtoms = 0, compactMode = false, showM
                style={{ left: (i / tiers.length) * 100 + '%' }}>
             <b>{t.name}</b>
             <span>{Number(t.min_stake_atoms) === 0 ? 'no stake'
-                                                   : compact(t.min_stake_atoms) + ' ' + stakeLabel}</span>
+                                                   : compact(t.min_stake_atoms, stakeDecimals) + ' ' + stakeLabel}</span>
           </div>
         ))}
       </div>

@@ -1,7 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { amount, compact, toAtoms, atomsArg, closeLabel, closeIn, isHeightClose, pricePerToken, treasurySpk, plain,
-         capitalise, big, prose } from '../src/lib/format.js'
+         capitalise, big, prose, priceLabel } from '../src/lib/format.js'
 import { xFor, yFor } from '../src/lib/beam.js'
 import { addressOf, encodeSegwit } from '../src/lib/bech32.js'
 
@@ -122,4 +122,15 @@ test('server prose gets the site dash', () => {
   assert.equal(capitalise('no output at ab:1 -- it is spent'),
     'No output at ab:1 — it is spent')
   assert.equal(prose('levo rescue --terms sale.json'), 'levo rescue --terms sale.json')
+})
+
+test('a price is scaled by the payment asset, not by eight places', () => {
+  // 1 token atom costs 1 payment atom. On an eight-place token and a two-place
+  // payment asset that is 1e8 token atoms for 1e8 payment atoms of price...
+  const terms = { price_num: 1, price_den: 1 }
+  assert.equal(pricePerToken(terms, 8, 8), 1)
+  assert.equal(pricePerToken(terms, 8, 2), 1000000)
+  assert.equal(priceLabel(terms, 8, 2), '1,000,000')
+  // and the default stays what it was for an eight-place payment asset.
+  assert.equal(priceLabel({ price_num: 25, price_den: 100 }, 8), '0.25')
 })

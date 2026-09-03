@@ -141,7 +141,8 @@ export default function Launch() {
           </p>
         </div>
         {tiers && <Beam tiers={tiers.tiers} stakeAtoms={standing.stake_atoms}
-                        paymentLabel={payment.label} stakeLabel={stake.label} />}
+                        paymentLabel={payment.label} stakeLabel={stake.label}
+                        paymentDecimals={payment.decimals} stakeDecimals={stake.decimals} />}
         <Link className="btn" style={{ marginTop: '2rem' }} to="/account">Link more stake</Link>
       </div>
     )

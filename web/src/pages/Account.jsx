@@ -263,7 +263,8 @@ export default function Account() {
 
       {tiers && (
         <div style={{ marginBottom: '2.5rem' }}>
-          <Beam tiers={tiers.tiers} stakeAtoms={st.stake_atoms} paymentLabel={payment.label} stakeLabel={stake.label} />
+          <Beam tiers={tiers.tiers} stakeAtoms={st.stake_atoms} paymentLabel={payment.label} stakeLabel={stake.label}
+                        paymentDecimals={payment.decimals} stakeDecimals={stake.decimals} />
         </div>
       )}
 

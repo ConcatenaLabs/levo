@@ -49,7 +49,8 @@ export default function Home() {
               </p>
             </div>
             <Beam tiers={list} stakeAtoms={stakeAtoms} showMarker={signedIn}
-                  paymentLabel={payment.label} stakeLabel={stake.label} />
+                  paymentLabel={payment.label} stakeLabel={stake.label}
+                        paymentDecimals={payment.decimals} stakeDecimals={stake.decimals} />
           </div>
         ) : !loading && (
           <Notice style={{ marginTop: '2rem' }}>The tier table could not be loaded right now.</Notice>
