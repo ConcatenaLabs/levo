@@ -19,7 +19,7 @@ export default function Launch() {
   const { signedIn, standing, tiers, mayList, loading, payment, stake, config } = useStore()
   const [form, setForm] = useState({
     slug: '', name: '', ticker: '', summary: '', description: '', website: '',
-    token_asset: '', decimals: '8', treasury_address: '', reclaim_xonly: '',
+    token_asset: '', decimals: '8', issuance_txid: '', treasury_address: '', reclaim_xonly: '',
     total: '', price: '', min_lot: '', close: '',
   })
   const [error, setError] = useState(null)
@@ -70,6 +70,7 @@ export default function Launch() {
         slug: form.slug.trim().toLowerCase(), name: form.name.trim(),
         ticker: form.ticker.trim().toUpperCase(), summary: form.summary.trim(),
         description: form.description.trim(), links, decimals,
+        issuance_txid: form.issuance_txid.trim() || undefined,
       }
       const r = await api.createProject(project, terms)
       navigate('/p/' + r.project.slug)
@@ -178,12 +179,25 @@ export default function Launch() {
           <div className="field">
             <label htmlFor="asset">Token asset id</label>
             <input id="asset" className="mono" value={form.token_asset} onChange={set('token_asset')}
-                   placeholder="64 hex characters" required aria-invalid={invalid.token_asset || undefined} />
-            <div className="hint">
+                   placeholder="64 hex characters" required aria-describedby="asset-hint"
+                   aria-invalid={invalid.token_asset || undefined} />
+            <div className="hint" id="asset-hint">
               Issue it with a contract naming the token and its ticker, and
               register that contract in the Sequentia registry, so wallets show
               a name instead of a hex id. The contract is committed at issuance
               and cannot be added later.
+            </div>
+          </div>
+          <div className="field">
+            <label htmlFor="issuance">Issuance transaction <span className="dim">(optional)</span></label>
+            <input id="issuance" className="mono" value={form.issuance_txid}
+                   onChange={set('issuance_txid')} aria-describedby="issuance-hint"
+                   placeholder="64 hex characters" />
+            <div className="hint" id="issuance-hint">
+              Where the token was created. Levo publishes it as a link and does
+              not check it, but a buyer wondering whether the supply can grow
+              has nowhere else on the page to start. Leaving it out is saying
+              nothing, which is what the page will show.
             </div>
           </div>
           <div className="field">

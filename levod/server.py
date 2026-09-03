@@ -113,8 +113,12 @@ class App:
             # as "payment_asset is not 32 bytes" when they try to list, and
             # never reaches the operator at all.
             raise SystemExit(
-                "levod: LEVOD_PAYMENT_ASSET must be a 64-character asset id; "
-                "got %r" % payment_asset)
+                "levod: LEVOD_PAYMENT_ASSET is %s. Set it to the 64-character "
+                "id of the asset this Levo prices sales in -- every price, cap "
+                "and quote is denominated in it, so there is no default worth "
+                "guessing." % ("not set" if not payment_asset
+                               else "%r, which is not a 64-character asset id"
+                                    % payment_asset))
         payment_label = os.environ.get("LEVOD_PAYMENT_LABEL", "USDX")
 
         self._chain = None

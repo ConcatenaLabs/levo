@@ -221,7 +221,14 @@ No CI and no framework. Those commands are the whole gate.
 
 ## Deployment
 
-The platform is live at [sequentiatestnet.com/levo/](https://sequentiatestnet.com/levo/).
+The platform is live at [sequentiatestnet.com/levo/](https://sequentiatestnet.com/levo/),
+priced in USDX on the Sequentia testnet
+(`2a515539da5e6a60caa7766ecd65bac0c10d15717ddd2088844ba58f4d04b9de`, eight
+decimal places), with `LEVOD_ORIGIN=https://sequentiatestnet.com/levo` and the
+explorer at `https://sequentiatestnet.com/explorer`. Those belong to this
+deployment: `contrib/levod.env.example` leaves them blank on purpose, because a
+fork that inherits them asks its users to sign statements naming somebody
+else's site.
 The box pulls this repo from GitHub and runs `levod/server.py` under systemd;
 `contrib/levod.service` is the unit, and `contrib/levod.env.example` lists every
 setting. `LEVOD_SECRET` and the node credentials are supplied through the
@@ -272,7 +279,9 @@ reaches the box nowhere else.
 | `LEVOD_SECRET` | random per start | Session-token key. Set it, or every restart signs everyone out. |
 | `LEVOD_RPC_URL` | `http://127.0.0.1:18776` | Sequentia node JSON-RPC. The default is the node's RPC port on chain `test`; the testnet box points it at its own follower node. |
 | `LEVOD_RPC_USER` / `LEVOD_RPC_PASSWORD` / `LEVOD_RPC_COOKIE` | — | Node credentials. The cookie path is tilde-expanded, read on every call, and refused at startup if it does not exist. |
-| `LEVOD_PAYMENT_ASSET` | USDX on testnet | The asset every sale is priced in. A listing in another asset is refused. |
+| `LEVOD_PAYMENT_ASSET` | USDX on testnet | The asset every sale is priced in. A listing in another asset is refused, and levod will not start on a value that is not a 64-character asset id. |
+| `LEVOD_PAYMENT_DECIMALS` | `8` | How many places that asset divides into. Prices, caps and quotes are all read through it. |
+| `LEVOD_BTC_RATE_LABEL` | `SBTC` | Which row of the node's fee exchange-rate table a BTC quote is derived from. |
 | `LEVOD_PAYMENT_LABEL` | `USDX` | Its label in the node's rate table and in the interface. |
 | `LEVOD_STAKE_LABEL` | `tSEQ` on chain `test`, else `SEQ` | The staking token's ticker in the interface. |
 | `LEVOD_HRP` | `tb` | Address prefix: `tb` testnet, `bc` mainnet (Sequentia's unblinded addresses use Bitcoin's own HRPs), `ert` on `elementsregtest`. |

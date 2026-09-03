@@ -67,6 +67,18 @@ MAX_DRAFTS = 3                   # unfunded listings one account may hold at onc
 DEFAULT_PAYMENT_ASSET = "2a515539da5e6a60caa7766ecd65bac0c10d15717ddd2088844ba58f4d04b9de"
 
 
+def _txid_or_none(value):
+    """A transaction id, or nothing. Anything else is a refusal: a field that
+    silently keeps a typo is a link that goes nowhere."""
+    text = str(value or "").strip().lower()
+    if not text:
+        return None
+    if not TXID_RE.match(text):
+        raise PlatformError("issuance_txid must be the 64-hex id of the "
+                            "transaction that issued the token, or empty")
+    return text
+
+
 def validate_links(links):
     """A short map of label to absolute http(s) URL, or a refusal.
 
@@ -124,7 +136,7 @@ class Project:
     """A listing: what it is, who runs it, and the sale attached to it."""
 
     def __init__(self, slug, name, ticker, summary, description, issuer_account,
-                 links=None, created_at=None, decimals=8):
+                 links=None, created_at=None, decimals=8, issuance_txid=None):
         if not isinstance(slug, str) or not SLUG_RE.match(slug or ""):
             raise PlatformError("the page name must be 3 to 40 lowercase letters, "
                                 "digits or hyphens, starting and ending with a "
@@ -139,6 +151,12 @@ class Project:
         self.issuer_account = issuer_account
         self.links = validate_links(links)
         self.decimals = _decimals(decimals)
+        # The transaction that issued the token, if the project names one. It
+        # is metadata rather than a term: the covenant never sees it, and it is
+        # published so a reader can look the issuance up themselves. Levo does
+        # not verify it -- a node without a transaction index cannot fetch a
+        # confirmed transaction at all -- and the page says so.
+        self.issuance_txid = _txid_or_none(issuance_txid)
         self.created_at = created_at or int(time.time())
         self.sale = None
         # Set by whoever runs this Levo, never by the project. A listing that
@@ -162,6 +180,8 @@ class Project:
             self.description = _text(meta.get("description"), "description", 8000)
         if "links" in meta:
             self.links = validate_links(meta.get("links"))
+        if "issuance_txid" in meta:
+            self.issuance_txid = _txid_or_none(meta.get("issuance_txid"))
         if "decimals" in meta and _decimals(meta.get("decimals")) != self.decimals:
             # Every amount in the terms is in atoms, and the decimals are how
             # they are read: the same 100000000000 is 1,000 tokens at eight
@@ -186,6 +206,7 @@ class Project:
             "issuer_account": self.issuer_account,
             "links": dict(self.links),
             "decimals": self.decimals,
+            "issuance_txid": self.issuance_txid,
             "created_at": self.created_at,
             "hidden": self.hidden,
             "notice": self.notice,
@@ -258,7 +279,8 @@ class Platform:
         for slug, d in (self.store.data.get("projects") or {}).items():
             p = Project(d["slug"], d["name"], d["ticker"], d.get("summary"),
                         d.get("description"), d["issuer_account"],
-                        d.get("links"), d.get("created_at"), d.get("decimals", 8))
+                        d.get("links"), d.get("created_at"), d.get("decimals", 8),
+                        issuance_txid=d.get("issuance_txid"))
             p.hidden = bool(d.get("hidden"))
             p.notice = d.get("notice")
             sd = d.get("sale")
@@ -395,7 +417,8 @@ class Platform:
                 % (len(drafts), ", ".join(sorted(d.slug for d in drafts))))
         p = Project(slug, meta.get("name"), meta.get("ticker"), meta.get("summary"),
                     meta.get("description"), account, meta.get("links"),
-                    decimals=meta.get("decimals", 8))
+                    decimals=meta.get("decimals", 8),
+                    issuance_txid=meta.get("issuance_txid"))
         terms_json = dict(terms_json)
         for k in ("token_asset", "price_num", "price_den", "min_lot",
                   "close_locktime", "reclaim_xonly", "total_atoms"):
