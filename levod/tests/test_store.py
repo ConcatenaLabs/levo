@@ -575,3 +575,54 @@ def test_every_setting_levod_reads_is_documented_and_offered(t):
     t.eq([n for n in names if n not in readme], [], "every setting is in the README")
     t.eq([n for n in names if n not in example], [],
          "and in the file an operator copies")
+
+
+def test_two_levods_cannot_share_one_state_file(t):
+    """Each keeps the whole platform in memory and writes the whole file, so a
+    purchase either records is erased by the other's next save -- silently,
+    since both believe they wrote what they hold. It is not a rare mistake: the
+    unit is running and somebody starts a second by hand to look at something.
+    """
+    import subprocess
+    import time
+    root = Path(__file__).resolve().parent.parent.parent
+    state = Path(tempfile.mkdtemp()) / "state.json"
+    env = dict(os.environ, LEVOD_STATE=str(state), LEVOD_SECRET="lock-test",
+               LEVOD_API_ONLY="1", LEVOD_HOST="127.0.0.1", LEVOD_PORT="8141",
+               LEVOD_RPC_URL="http://127.0.0.1:1", LEVOD_WATCH_SECONDS="3600")
+    first = subprocess.Popen([sys.executable, str(root / "levod" / "server.py")],
+                             env=env, stdout=subprocess.DEVNULL,
+                             stderr=subprocess.DEVNULL)
+    try:
+        time.sleep(2.0)
+        if first.poll() is not None:
+            t.ok(True, "no levod could be started here; the lock is not tested")
+            return
+        second = subprocess.run([sys.executable, str(root / "levod" / "server.py")],
+                                env=dict(env, LEVOD_PORT="8142"),
+                                capture_output=True, text=True, timeout=30)
+        t.eq(second.returncode, ST.BAD_STATE_EXIT,
+             "a second levod on the same state file refuses to start")
+        said = second.stdout + second.stderr
+        t.ok("already open by" in said, "and says which process holds it", said[:120])
+        t.ok("LEVOD_STATE" in said, "and how to give it one of its own")
+    finally:
+        first.terminate()
+        try:
+            first.wait(timeout=15)
+        except Exception:
+            first.kill()
+    # The lock lives on an open descriptor, so it is gone the moment the
+    # process is -- including when it is killed rather than stopped.
+    again = subprocess.Popen([sys.executable, str(root / "levod" / "server.py")],
+                             env=dict(env, LEVOD_PORT="8143"),
+                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    try:
+        time.sleep(2.0)
+        t.ok(again.poll() is None, "and a levod may take the file once that one has gone")
+    finally:
+        again.terminate()
+        try:
+            again.wait(timeout=15)
+        except Exception:
+            again.kill()

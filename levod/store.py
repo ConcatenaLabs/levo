@@ -40,7 +40,7 @@ STALE_TEMP_SECONDS = 300
 
 
 class Store:
-    def __init__(self, path=None):
+    def __init__(self, path=None, exclusive=False):
         self.path = Path(path or os.environ.get("LEVOD_STATE", "levo-state.json"))
         self.data = {"projects": {}, "stake_links": {}, "version": 1}
         # Set when a write fails: the state in memory is then ahead of the
@@ -54,9 +54,56 @@ class Store:
         self._version = 0
         self._written = 0
         self._writing = threading.Lock()
+        self._lock_fd = None
+        if exclusive:
+            self._take_the_file()
         if self.path.is_file():
             self.load()
         self._sweep_temp()
+
+    def _take_the_file(self):
+        """One levod per state file, enforced by the filesystem.
+
+        Taken only by a running SERVICE (`exclusive=True`), which is what
+        server.py and demo.py open. A tool or a test that reads or writes a
+        state file is not a second levod, and locking those out would stop a
+        round trip in one process from being written at all.
+
+        Two processes on one file is not a rare mistake: the unit is running
+        and somebody starts a second by hand to look at something, or a second
+        unit is enabled by accident. Each keeps its own copy of the platform in
+        memory and writes the whole file, so every purchase either of them
+        records is erased by the other's next save -- silently, since both
+        believe they wrote what they hold.
+
+        The lock is advisory and held on an open descriptor, so a levod that
+        crashes releases it at once and the next start is unimpeded.
+        """
+        try:
+            import fcntl
+        except ImportError:
+            return                      # not a platform this ships on
+        try:
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            fd = open(str(self.path) + ".lock", "a+")
+        except OSError:
+            return                      # a read-only directory says its own thing
+        try:
+            fcntl.flock(fd.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            fd.seek(0)
+            other = (fd.read(40) or "").strip() or "another process"
+            fd.close()
+            self._refuse(
+                "%s is already open by %s. Two levods on one state file "
+                "overwrite each other's ledgers, so this one is not starting. "
+                "Stop the other, or point this one at a state file of its own "
+                "with LEVOD_STATE." % (self.path, other))
+        fd.seek(0)
+        fd.truncate()
+        fd.write("pid %d" % os.getpid())
+        fd.flush()
+        self._lock_fd = fd              # held for the life of the process
 
     def _refuse(self, why):
         """Stop, with the reason where an operator will read it.

@@ -342,7 +342,7 @@ reaches the box nowhere else.
 |---|---|---|
 | `LEVOD_HOST` / `LEVOD_PORT` | `127.0.0.1:8099` | Where levod listens. |
 | `LEVOD_WEBROOT` | `web/dist` | The built app. |
-| `LEVOD_STATE` | `levo-state.json` | Listings, purchases and the allocation ledger. Use an absolute path outside the checkout. |
+| `LEVOD_STATE` | `levo-state.json` | Listings, purchases and the allocation ledger. Use an absolute path outside the checkout. A running levod takes the file for itself: a second one on the same file refuses to start rather than overwrite the first's ledger, and the hold is released the moment the process ends, however it ends. |
 | `LEVOD_SECRET` | random per start | Session-token key. Set it, or every restart signs everyone out. |
 | `LEVOD_RPC_URL` | `http://127.0.0.1:18776` | Sequentia node JSON-RPC. The default is the node's RPC port on chain `test`; the testnet box points it at its own follower node. |
 | `LEVOD_RPC_USER` / `LEVOD_RPC_PASSWORD` / `LEVOD_RPC_COOKIE` | — | Node credentials. The cookie path is tilde-expanded, read on every call, and refused at startup if it does not exist. |

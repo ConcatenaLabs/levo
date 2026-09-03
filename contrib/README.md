@@ -31,9 +31,12 @@ contrib/levo-backup.sh                      # take the first copy now, not in si
 curl -fsS http://127.0.0.1:8099/api/health | head -20
 ```
 
-levod exits 78 and stays down when its state file cannot be read, rather than
-restarting every five seconds over the one message that says to restore a
-backup. `systemctl status levod` shows it; restore from `/var/backups/levo` and
+levod exits 78 and stays down when its state file cannot be read, or when
+another levod already has that file open, rather than restarting every five
+seconds over the one message that says what to do. Two levods on one state file
+would overwrite each other's ledgers, each believing it wrote what it holds, so
+the second refuses to start and names the process holding it; the hold goes
+with the process, so a crash leaves nothing to clean up. `systemctl status levod` shows it; restore from `/var/backups/levo` and
 start it again.
 
 ## Upgrading

@@ -6,6 +6,9 @@ web/dist/
 levo-state.json
 levod/levo-state.json
 levod/tests/_e2e-state.json
+# ...and the file a running levod holds open beside it, so that a second one
+# refuses to start rather than overwriting the first's ledger.
+*.json.lock
 
 # Secrets never belong in this repository
 *.env
