@@ -136,6 +136,12 @@ whether a covenant purchase can spend it, with the asset and amount. A
 confidential output commits to its value instead of stating one, and the sell
 leaf reads the value it spends, so it cannot fund a purchase.
 
+A sale is a single resting output, and every buyer builds against that same
+outpoint. A transaction is therefore valid only until somebody spends it: the
+buyer who broadcasts second is told `bad-txns-inputs-missingorspent` by the
+node, having paid nothing. A client should treat that as ordinary, price the
+purchase again, and build against where the sale rests then.
+
 **`POST /api/projects/<slug>/transaction`** `{token_atoms, buyer}` (session) →
 the unsigned transaction as hex and as a PSET, with every output described.
 `buyer` carries `token_address` (or `token_script_pubkey`), optional

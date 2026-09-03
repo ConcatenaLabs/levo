@@ -20,7 +20,11 @@ function Terms({ project, sale }) {
   return (
     <table className="terms">
       <tbody>
-        <tr><th>Token</th><td>{project.ticker} <span className="dim">·</span> <Hex value={t.token_asset} href={explorer('asset', t.token_asset)} /></td></tr>
+        <tr><th>Token</th><td>{project.ticker} <span className="dim">·</span> <Hex value={t.token_asset} href={explorer('asset', t.token_asset)} />
+          <div className="dim small prose">
+            the name and ticker are the project's own words; the asset id beside
+            them is the only part of this row the chain knows about
+          </div></td></tr>
         <tr><th>Paid in</th><td>{payment.label} <span className="dim">·</span> <Hex value={t.payment_asset} href={explorer('asset', t.payment_asset)} /></td></tr>
         <tr>
           <th>Price</th>
@@ -98,7 +102,7 @@ function NotOpen({ sale }) {
     ghost: 'The chain does not have the output that funded this sale: either it never reached a block, or a Bitcoin-driven reorg took the block that held it. The sale is not funded and cannot be bought until the project locks its tokens again.',
     sold_out: 'Every token in this sale has been sold.',
     reclaimed: 'This sale closed and the project has taken back what did not sell.',
-    closed: 'This sale is closed. Levo no longer plans purchases from it.',
+    closed: 'This sale has passed its close, so the project may now reclaim whatever did not sell, and Levo no longer plans purchases from it. The covenant itself carries no closing date on the buying side: until the project reclaims, anyone holding the terms can still buy from it directly.',
   }[sale.status] || 'This sale is not open.'
   return (
     <div className="card">
@@ -219,6 +223,7 @@ function KeepThis({ project, sale }) {
     sale_address: project.address,
     script_pubkey: sale.script_pubkey,
     terms: sale.terms,
+    token_decimals: project.decimals,
     keep: "these terms make the sale address, and the reclaim leaf your key "
       + "spends through. With this file, your reclaim key and any Sequentia "
       + "node, `levo rescue --terms <this file>` sweeps whatever is left at "

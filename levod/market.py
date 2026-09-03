@@ -469,11 +469,16 @@ class Platform:
                     standing["tier"]["name"],
                     U.fmt(standing["stake_atoms"], 8, self.stake_label)))
         ticker = str(meta.get("ticker") or "").upper()
-        if ticker and ticker == (self.payment_label or "").upper():
-            raise PlatformError(
-                "%s is what this Levo prices sales in, so a token cannot use it "
-                "as its ticker: every amount on the board would read as that "
-                "asset" % self.payment_label)
+        # A ticker is free text a lister chooses. It may not be one of the two
+        # labels this site prints its own figures in: every cap, price and tier
+        # on the board is quoted in one of them, and a listing that took either
+        # would make its own token read as the asset those figures are in.
+        for taken in (self.payment_label, self.stake_label):
+            if ticker and taken and ticker == str(taken).upper():
+                raise PlatformError(
+                    "%s is a label this Levo prints its own figures in, so a "
+                    "token cannot use it as its ticker: amounts on the board "
+                    "would read as that asset" % taken)
         slug = meta.get("slug")
         if slug in self.projects:
             raise PlatformError("a project with that page name already exists")

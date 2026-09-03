@@ -122,6 +122,13 @@ export default function BuyFlow({ project, tier, onSettled }) {
     setPlan(null); setBuilt(null); setSigned(''); setSentTxid(null); setError(null)
   }
 
+  // Back to a fresh quote after the sale moved under this purchase. What the
+  // buyer typed is kept: the amount they wanted is still the amount they want.
+  async function startOver() {
+    reset()
+    await requote()
+  }
+
   // Re-price without throwing away what has been built or typed: the BTC rate
   // goes stale while the buyer is off doing the swap it told them to do.
   async function requote() {
@@ -297,7 +304,6 @@ export default function BuyFlow({ project, tier, onSettled }) {
     try { await record(built.txid) } catch (e) { fail(e) } finally { setBusy(false) }
   }
 
-  const btcRail = rails && rails.find((r) => r.id === 'btc')
   const expired = plan && plan.quote && plan.quote.expires_at && now > plan.quote.expires_at
   const remaining = plan && plan.cap ? big(plan.cap.per_sale_atoms) - big(plan.cap.committed_atoms) : null
 
@@ -348,13 +354,16 @@ export default function BuyFlow({ project, tier, onSettled }) {
                     data-rail={r.id}
                     onClick={() => { setRail(r.id); reset() }}>
               <b>{r.label}</b>
-              <span>{r.steps === 1 ? 'settles in the covenant' : 'two steps, via Lightning'}</span>
+              {/* A rail that cannot be used says why, in the option itself. The
+                  button is disabled, so nothing else can reach the reason: it
+                  takes no click and no focus, which also puts it out of a
+                  screen reader's way. */}
+              <span>{r.available
+                ? (r.steps === 1 ? 'settles in the covenant' : 'two steps, via Lightning')
+                : (r.unavailable_because || 'not available just now')}</span>
             </button>
           ))}
         </div>
-      )}
-      {rail === 'btc' && btcRail && !btcRail.available && (
-        <Notice kind="bad" style={{ marginBottom: '1rem' }}>{btcRail.unavailable_because}</Notice>
       )}
 
       <Step n="1" title="Price it" done={!!plan}>
@@ -633,7 +642,22 @@ export default function BuyFlow({ project, tier, onSettled }) {
         </Notice>
       )}
 
-      {error && <Notice kind="bad" style={{ marginTop: '1rem' }}>{error}</Notice>}
+      {error && (
+        <Notice kind="bad" style={{ marginTop: '1rem' }}>
+          {error}
+          {/* A sale is one resting output, so losing the race for it is an
+              ordinary event with an ordinary answer: price it again. Saying so
+              without offering the button is a dead end at the worst moment. */}
+          {/lost|no longer there|moved|rests now/i.test(error) && (
+            <div style={{ marginTop: '.5rem' }}>
+              <button type="button" className="btn btn-sm" onClick={startOver}
+                      aria-disabled={busy}>
+                Price it again
+              </button>
+            </div>
+          )}
+        </Notice>
+      )}
       <p aria-live="polite" className="visually-hidden">
         {busy ? 'Working.' : sentTxid ? 'Broadcast.' : built ? 'Transaction ready to sign.'
           : plan ? 'Priced.' : ''}

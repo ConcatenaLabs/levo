@@ -373,11 +373,15 @@ p { margin: 0 0 1rem; }
 }
 .row-status { text-align: right; }
 .row-price-inline { display: none; }
+.row-asset { font-size: .7rem; margin-top: .3rem; }
 @media (max-width: 760px) {
   /* One column: the name and summary get the full width, and the status
-     line sits under them rather than beside them. */
+     line sits under them rather than beside them. Progress stacks rather than
+     hiding: how much of a sale is left is what the board is read for, and a
+     phone is where it is read most. */
   .row { grid-template-columns: 1fr; gap: .5rem; }
   .row-hide { display: none; }
+  .row-progress { margin-top: .1rem; }
   .row-price-inline { display: block; margin-top: .35rem; }
   .row-status { text-align: left; display: flex; flex-wrap: wrap; align-items: center; gap: .4rem .9rem; }
   .row-status > div { margin-top: 0 !important; }

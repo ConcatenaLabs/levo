@@ -295,6 +295,19 @@ def _units(atoms, decimals=8):
     return "%s%d.%0*d" % (sign, atoms // base, decimals, atoms % base)
 
 
+def payment_decimals():
+    """How finely the payment asset divides on THIS deployment. Printing atoms
+    at eight places on a two-place asset is wrong by a factor of a million, in
+    a line a person reads before spending money."""
+    d = (config().get("payment") or {}).get("decimals")
+    return int(d) if isinstance(d, int) else 8
+
+
+def _payment_decimals(p):
+    d = (p or {}).get("payment_decimals")
+    return int(d) if isinstance(d, int) else payment_decimals()
+
+
 def _payment_label(p):
     """What to call the payment asset in this CLI's own output. The sale says
     so when it can; otherwise the deployment does. Nothing is assumed here: a
@@ -314,10 +327,18 @@ def cmd_sales(args):
         return
     shown = len(r["projects"])
     total = r.get("total", shown)
+    # The asset id, not only the ticker: a ticker is free text any lister can
+    # choose, and two listings can carry the same one. The id is the token.
+    print("%-20s %-6s %-16s %-10s %s"
+          % ("page", "ticker", "asset", "status", "sale address"))
     for p in r["projects"]:
         s = p.get("sale") or {}
         status = (s.get("status") or "-").replace("_", " ")
-        print("%-20s %-6s %-10s %s" % (p["slug"], p["ticker"], status, p.get("address") or ""))
+        asset = ((s.get("terms") or {}).get("token_asset") or "")
+        print("%-20s %-6s %-16s %-10s %s"
+              % (p["slug"], p["ticker"],
+                 (asset[:8] + "…" + asset[-6:]) if asset else "-",
+                 status, p.get("address") or ""))
     if total > args.offset + shown:
         print("\n%d of %d shown. --offset %d for the next page."
               % (shown, total, args.offset + shown))
@@ -396,9 +417,10 @@ def cmd_verify(args):
         want = int(sale["terms"].get("total_atoms") or 0)
         sold = int(sale.get("sold_atoms") or 0)
         if want and held + sold < want:
+            dp = int(p.get("decimals", 8))
             print("NOTE: the covenant holds %s and Levo records %s sold, which is "
                   "less than the %s this sale published"
-                  % (U.fmt(held), U.fmt(sold), U.fmt(want)))
+                  % (U.fmt(held, dp), U.fmt(sold, dp), U.fmt(want, dp)))
     print("RESULT         %s" % ("OK: the covenant at this address enforces exactly "
                                  "the committed terms above" if okay
                                  else "FAILED: do not buy from this listing"))
@@ -544,7 +566,9 @@ def cmd_lock(args):
     if args.txid:
         txid, vout = args.txid, args.vout
     else:
-        print("sending %s of %s to %s" % (U.fmt(amount), sale["terms"]["token_asset"], addr))
+        print("sending %s of %s to %s"
+              % (U.fmt(amount, int(p.get("decimals", 8))),
+                 sale["terms"]["token_asset"], addr))
         txid, hexed = _send_explicit(
             addr, amount, args.asset_label or sale["terms"]["token_asset"], fee_asset)
         raw = node("decoderawtransaction", hexed)
@@ -570,7 +594,9 @@ def cmd_buy(args):
         raise Fail("--tokens must be a number with at most %d decimal places" % decimals)
 
     plan = api("POST", "/api/projects/%s/buy" % args.slug, {"token_atoms": token_atoms}, tok)
-    print("buying %s %s for %s" % (args.tokens, p["ticker"], U.fmt(plan["payment_atoms"], 8, _payment_label(p))))
+    print("buying %s %s for %s"
+          % (args.tokens, p["ticker"],
+             U.fmt(plan["payment_atoms"], _payment_decimals(p), _payment_label(p))))
 
     pay_asset = sale["terms"]["payment_asset"]
     # A person types a label, because that is what a wallet shows them. levod
@@ -605,13 +631,23 @@ def cmd_buy(args):
         raise Fail("your wallet could not sign every input: %s" % signed.get("errors"))
     check = node("testmempoolaccept", [signed["hex"]])
     if not check or not check[0].get("allowed"):
-        raise Fail("the chain would reject this: %s"
-                   % (check[0].get("reject-reason") if check else "unknown"))
+        why = check[0].get("reject-reason") if check else "unknown"
+        if "missingorspent" in str(why).lower() or "missing inputs" in str(why).lower():
+            # A sale is one resting output and every buyer races for it.
+            raise Fail(
+                "this spends an output that is no longer there: another buyer "
+                "filled the sale first, or one of the outputs you were "
+                "spending has been spent elsewhere. Nothing was paid. Run the "
+                "same command again and it will be built against where the "
+                "sale rests now")
+        raise Fail("the chain would reject this: %s" % why)
     if args.dry_run:
         print("would broadcast %s (accepted by testmempoolaccept, %s fee)"
-              % (built["txid"], U.fmt(fee_atoms, 8,
-                                      _payment_label(p) if fee_asset == pay_asset
-                                      else fee_asset[:8])))
+              % (built["txid"],
+                 U.fmt(fee_atoms,
+                       _payment_decimals(p) if fee_asset == pay_asset else 8,
+                       _payment_label(p) if fee_asset == pay_asset
+                       else fee_asset[:8])))
         return
     txid = node("sendrawtransaction", signed["hex"])
     print("bought. %s" % txid)
@@ -705,7 +741,10 @@ def cmd_rescue(args):
                    % (terms.token_asset[:12], addr))
     biggest = max(resting, key=lambda u: atoms(u.get("amount", 0)))
     held = atoms(biggest.get("amount", 0))
-    print("resting        %s at %s:%d" % (U.fmt(held), biggest["txid"], biggest["vout"]))
+    dp = spec.get("token_decimals")
+    dp = int(dp) if isinstance(dp, int) else 8
+    print("resting        %s at %s:%d"
+          % (U.fmt(held, dp), biggest["txid"], biggest["vout"]))
 
     sale = S_MOD.Sale("rescue", terms, "rescue")
     sale.confirm_lock(biggest["txid"], int(biggest["vout"]), cov.spk_hex, held,
@@ -767,6 +806,10 @@ def cmd_terms(args):
         "sale_address": p.get("address"),
         "script_pubkey": sale["script_pubkey"],
         "terms": sale["terms"],
+        # Not part of the address, and not needed to rescue: it is here so a
+        # rescue can PRINT what it found in the units the token divides into,
+        # rather than in eight places it may not have.
+        "token_decimals": p.get("decimals", 8),
         "keep": "these terms make the sale address, and the reclaim leaf the "
                 "project's key spends through. With this file, your reclaim key "
                 "and any Sequentia node, `levo rescue --terms <this file>` "
