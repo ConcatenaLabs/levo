@@ -86,7 +86,9 @@ floor: `{asset, vsize_estimate, min_atoms, suggested_atoms, rate_atoms_per_kvb}`
 `{project, lock}`. `lock` says where to send the tokens and how many.
 
 `project`: `slug`, `name`, `ticker`, `decimals`, `summary`, `description`,
-`links`. `terms`: `token_asset`, `price_num`, `price_den`, `min_lot`,
+`links`, and optionally `issuance_txid` -- the transaction that created the
+token, published as a link so a reader can look up whether the supply can grow.
+Levo does not check it, and says so on the page. `terms`: `token_asset`, `price_num`, `price_den`, `min_lot`,
 `total_atoms`, `close_locktime`, `reclaim_xonly`, and the treasury as either
 `treasury_address` or `treasury_prog` (+ `treasury_ver`). The price is stored
 in lowest terms, so the response is what the address was derived from.

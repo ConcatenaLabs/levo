@@ -467,6 +467,11 @@ def run(d):
     ok.ok("Withdraw" in (r.get("error") or ""), "and is told what to do instead", r.get("error"))
     code, r = req("PATCH", "/api/projects/helios", {"decimals": 8}, token=issuer_tok)
     ok.eq(code, 200, "while sending the decimals it already has is not a change")
+    code, r = req("PATCH", "/api/projects/helios", {"issuance_txid": "not-a-txid"}, token=issuer_tok)
+    ok.eq(code, 400, "an issuance that is not a transaction id is refused")
+    code, r = req("PATCH", "/api/projects/helios", {"issuance_txid": "b7" * 32}, token=issuer_tok)
+    ok.eq(code, 200, "and a real one is published")
+    ok.eq(r["issuance_txid"], "b7" * 32, "as itself, for a reader to follow")
     ok.eq(r["summary"], "Edited.", "and the edit lands")
     # A second listing has to differ in something the address is made of.
     # Identical terms derive one covenant, and two sales sharing one could not

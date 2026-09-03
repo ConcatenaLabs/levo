@@ -44,6 +44,24 @@ function Terms({ project, sale }) {
             {Number(t.treasury_ver ?? 1) === 1 ? 'taproot' : 'version-0'} witness program{' '}
             {shortHex(t.treasury_prog, 10, 6)}
           </div></td></tr>
+        <tr><th>Supply</th>
+          <td>
+            {project.issuance_txid
+              ? <>The project names{' '}
+                  <Hex value={project.issuance_txid}
+                       href={explorer('tx', project.issuance_txid)} /> as the
+                  issuance. Levo does not check it.</>
+              : <>The project has not named its issuance transaction.</>}
+            <div className="dim small prose">
+              a Sequentia asset can carry a reissuance token, and whoever holds
+              that can create more of it. Levo cannot see whether one exists or
+              who holds it, and nothing in the covenant limits the supply --
+              only how much of it this sale holds. Look the asset up before you
+              buy{explorer('asset', t.token_asset) ? <>, starting with{' '}
+                <a href={explorer('asset', t.token_asset)} target="_blank"
+                   rel="noopener noreferrer">its page on the explorer</a></> : ''}.
+            </div>
+          </td></tr>
         <tr><th>Reclaim key</th><td><Hex value={t.reclaim_xonly} />
           <div className="dim small prose">
             the project signs with this to take back what did not sell, from the
