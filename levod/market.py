@@ -121,7 +121,10 @@ def validate_links(links):
         raise PlatformError("links must be an object of label: URL")
     out = {}
     for k, v in links.items():
-        label = _printable(str(k), "link label").strip()
+        label = _printable(str(k), "link label")
+        if "\n" in label or "\t" in label:
+            raise PlatformError("a link label is one line")
+        label = label.strip()
         if not label or len(label) > 24:
             raise PlatformError("each link label is 1 to 24 characters")
         if not isinstance(v, str):
@@ -636,9 +639,11 @@ class Platform:
                 need = -(-floor * terms.price_den // terms.price_num)
                 raise PlatformError(
                     "the smallest purchase this sale allows pays %d atoms to "
-                    "the treasury, and a node will not relay an output below "
-                    "%d atoms. Raise the price, or raise the minimum purchase to at "
-                    "least %d atoms of the token"
+                    "the treasury, and a node will not relay an output that "
+                    "small in the asset a fee is paid in -- which is this one "
+                    "for every buyer who does not name another. The floor is "
+                    "%d atoms. Raise the price, or raise the minimum purchase "
+                    "to at least %d atoms of the token"
                     % (least, floor, need))
         sale = self._make_sale(p, terms)
         # Identical terms derive an identical covenant address, and the address
@@ -955,13 +960,20 @@ class Platform:
         # A purchase whose treasury credit is below the node's dust rule is
         # refused here rather than at the node, which would be after the buyer
         # had signed it.
+        #
+        # The rule applies to outputs in the transaction's FEE asset and to no
+        # others (policy.cpp, IsStandardTx), so a buyer paying the fee in
+        # something else is not subject to it -- and refusing them would be
+        # Levo inventing a rule the chain does not have.
         floor = self.dust_atoms(p.sale.terms.payment_asset,
-                                spk_len=self._treasury_spk_len(p.sale.terms))
+                                spk_len=self._treasury_spk_len(p.sale.terms)) \
+            if fee_asset == p.sale.terms.payment_asset else None
         if floor and plan.payment_atoms < floor:
             raise PlatformError(
                 "this purchase pays %s to the treasury, and a node will not "
-                "relay an output that small. Buy a larger lot: %s is the least "
-                "that will move"
+                "relay an output that small in the asset the fee is paid in. "
+                "Buy a larger lot -- %s is the least that will move -- or pay "
+                "the fee in another asset"
                 % (p.sale.payment(plan.payment_atoms), p.sale.payment(floor)))
         built = TX.build_buy(p.sale, plan, buyer, hrp=self.hrp)
         built["token_atoms"] = plan.token_atoms
@@ -1247,7 +1259,10 @@ class Platform:
         sort = (sort or "new").lower()
         if sort not in SALE_SORTS:
             raise PlatformError("sort must be one of: %s" % ", ".join(SALE_SORTS))
-        needle = str(q or "").strip().lower()[:80]
+        # Normalised the same way the names it searches were: a project typed
+        # in one Unicode form and a search typed in another are the same word
+        # to a reader, and were two different strings here.
+        needle = unicodedata.normalize("NFC", str(q or "")).strip().lower()[:80]
         items = []
         # A listing created or withdrawn while this runs would otherwise change
         # the map mid-iteration and take the whole board down with a 500.
