@@ -165,3 +165,34 @@ test('a tier card quotes the cap in the deployment’s own units', () => {
   assert.match(tierSays(tier, 'USDX', 2), /10,000 USDX/)
   assert.match(tierSays(tier, 'USDX', 8), /0.01 USDX/)
 })
+
+// A close is the same moment everywhere.
+//
+// Every label the site prints for a time passes timeZone: 'UTC' and says so in
+// the text. The reason is not tidiness: a sale closes at one moment for
+// everyone, the covenant's locktime is that moment, and a reader in Lugano
+// comparing what the page says with what `levo verify` prints has to see the
+// same thing. Dropping the option would still read correctly on a machine set
+// to UTC, which is every machine this is developed and tested on -- so the
+// check has to be made somewhere else.
+test('the labels do not move with the reader\'s timezone', async () => {
+  const { execFileSync } = await import('node:child_process')
+  const script = `
+    import { closeLabel, closeIn, timeLabel } from './src/lib/format.js'
+    process.stdout.write(JSON.stringify([
+      closeLabel(1792307521),
+      timeLabel(1792307521),
+      closeIn(1792307521, null, 1792307521 - 86400),
+    ]))`
+  const under = (tz) => execFileSync(process.execPath, ['--input-type=module', '-e', script],
+    { env: { ...process.env, TZ: tz }, encoding: 'utf8' })
+
+  const utc = under('UTC')
+  assert.equal(JSON.parse(utc)[0], 'Oct 18 2026, 07:12 UTC', 'the label reads as it always has')
+  for (const tz of ['America/Los_Angeles', 'Asia/Kathmandu', 'Pacific/Chatham',
+                    'Australia/Lord_Howe', 'Europe/Zurich']) {
+    // Kathmandu and Chatham are offset by three quarters of an hour, so a label
+    // built in local time would differ in its minutes as well as its hour.
+    assert.equal(under(tz), utc, 'the same in ' + tz)
+  }
+})
