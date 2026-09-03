@@ -106,6 +106,14 @@ export default function Projects() {
           terms that address was derived from. Rebuild it before you buy, and
           you do not have to take Levo's word for anything.
         </p>
+        {/* The words on the pills, said once, where they are first read. */}
+        <p className="small dim">
+          <b>Open</b> means the tokens are locked and anyone with a tier may buy.
+          {' '}<b>Not funded</b> means the project has not sent its tokens to the
+          sale address yet. <b>Reclaimable</b> means the sale has passed its
+          close, so the project may take back whatever did not sell &mdash; until
+          it does, the sale can still be bought from.
+        </p>
       </div>
 
       <div className="board-filters">

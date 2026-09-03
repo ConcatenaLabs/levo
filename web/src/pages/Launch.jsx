@@ -308,7 +308,7 @@ const FIELD_WORDS = [
   ['treasury', /treasury/i],
   ['reclaim', /reclaim key|reclaim_xonly/i],
   ['price', /price/i],
-  ['min', /minimum lot|min_lot/i],
+  ['min', /minimum purchase|minimum lot|min_lot/i],
   ['total', /total_atoms|for sale/i],
   ['close', /close/i],
   ['decimals', /decimals/i],

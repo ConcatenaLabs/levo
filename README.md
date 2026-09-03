@@ -43,7 +43,7 @@ enforced by consensus:
 
 Two things are deliberately **not** consensus, and the code says so wherever
 they appear. **Per-buyer tier caps are Levo's allocation policy.** The sell leaf
-has a minimum lot but no maximum, and it is permissionless by design; see
+has a minimum purchase but no maximum, and it is permissionless by design; see
 [doc/tiers-are-policy.md](doc/tiers-are-policy.md). **The close date opens the
 reclaim path; it does not shut the sell path.** Levo stops planning purchases at
 the close, but a buyer who builds the transaction can still fill a sale until

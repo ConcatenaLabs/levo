@@ -10,7 +10,7 @@ import { Copy, Notice } from './ui'
 // to, so there is nothing to register and nothing to remember.
 
 export default function SignIn({ onDone, label = 'Sign in with your wallet' }) {
-  const { refresh, config } = useStore()
+  const { refresh, config, links } = useStore()
   const hrp = config.hrp || 'tb'
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState(null)
@@ -156,7 +156,10 @@ export default function SignIn({ onDone, label = 'Sign in with your wallet' }) {
       {!hasProvider() && (
         <p className="small dim" style={{ marginTop: '.9rem', marginBottom: 0 }}>
           No Sequentia wallet was found in this browser. You can still sign the
-          challenge with any wallet that signs messages and paste the result.
+          challenge with any wallet that signs messages and paste the result
+          {(links && (links.Wallet || links.wallet))
+            ? <>, or <a href={links.Wallet || links.wallet} target="_blank" rel="noopener noreferrer">get a wallet</a> first</>
+            : ''}.
         </p>
       )}
     </div>
