@@ -512,7 +512,7 @@ def run(ok, rig):
         t.vout[2].atoms += 50 * COIN
 
     (allowed, why), _ = raw_buy(A.sale, 1_000 * COIN, dust_remainder)
-    ok.ok(not allowed, "a remainder below the minimum lot is refused", why)
+    ok.ok(not allowed, "a remainder below the minimum purchase is refused", why)
 
     try:
         A.sale.plan_buy("x", tier, token_atoms=A.sale.locked_atoms - 50 * COIN, height=node.chain_height())

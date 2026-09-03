@@ -332,6 +332,11 @@ class App:
 class Handler(BaseHTTPRequestHandler):
     server_version = "levod"
     sys_version = ""
+    # Keep-alive. Every answer here carries an exact Content-Length (a 304
+    # carries none and needs none), which is the whole prerequisite. Without
+    # this the connection was torn down after every response, so a page load
+    # cost one TCP connection per file it asked for.
+    protocol_version = "HTTP/1.1"
     # How long one connection may take to send its request. A client that
     # opens a socket, sends a byte and stops is holding a handler slot for
     # exactly this long, and sixty-four of them hold every slot levod has.
@@ -447,7 +452,10 @@ class Handler(BaseHTTPRequestHandler):
     def _send(self, code, body, ctype, cache="no-store", headers=None):
         self.send_response(code)
         self.send_header("Content-Type", ctype)
-        self.send_header("Content-Length", str(len(body)))
+        # A 304 has no body by definition, and announcing a length for one is
+        # how a persistent connection loses its place.
+        if code != 304:
+            self.send_header("Content-Length", str(len(body)))
         self.send_header("Cache-Control", cache)
         for name, value in (headers or {}).items():
             self.send_header(name, value)
@@ -1010,7 +1018,16 @@ class Handler(BaseHTTPRequestHandler):
             cache = "public, max-age=31536000, immutable"
         else:
             cache = "no-cache"
-        self._send(200, body, ctype, cache=cache)
+        # `no-cache` means "ask me before reusing this", and a browser can only
+        # ask with a validator. Without one, every reload of the app shell and
+        # every icon came back in full, and the answer was always the same
+        # bytes. The tag is the file's own size and modification time, which is
+        # what changes when a build replaces it.
+        st = target.stat()
+        etag = '"%x-%x"' % (st.st_mtime_ns, st.st_size)
+        if self.headers.get("If-None-Match") == etag:
+            return self._send(304, b"", ctype, cache=cache, headers={"ETag": etag})
+        self._send(200, body, ctype, cache=cache, headers={"ETag": etag})
 
 
 class Unauthorised(Exception):

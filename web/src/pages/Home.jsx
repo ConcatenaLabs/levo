@@ -24,14 +24,16 @@ export default function Home() {
         <p className="eyebrow">Launchpad · Sequentia</p>
         <h1>Your stake is the counterweight.</h1>
         <p className="hero-lede">
-          Levo allocates by commitment. Stake Sequence and you can take a
-          position in a sale; stake enough and you can run one. Everything
-          in between is settled by a covenant that holds the project's tokens
-          from the moment they are locked to the moment they reach a buyer.
+          Levo allocates by commitment. Stake Sequence &mdash; the token
+          Sequentia is secured with, ticker {stake.label} &mdash; and you can
+          take a position in a sale; stake enough and you can run one.
+          Everything in between is settled by a covenant that holds the
+          project&rsquo;s tokens from the moment they are locked to the moment
+          they reach a buyer. Sales here are priced in {payment.label}.
         </p>
         <div className="hero-actions">
           <Link className="btn btn-primary" to="/projects">See the sales</Link>
-          <Link className="btn btn-ghost" to="/how-it-works">How a sale settles</Link>
+          <Link className="btn btn-ghost" to="/how-it-works">How it works</Link>
         </div>
 
         {list ? (
@@ -79,7 +81,9 @@ export default function Home() {
           <div className="card">
             <h3>Payment and delivery are one transaction</h3>
             <p className="small dim" style={{ marginBottom: 0 }}>
-              A buy spends the covenant and pays the treasury in the same spend.
+              A buy spends the covenant and pays the project&rsquo;s treasury
+              &mdash; an address the project fixed in the terms before the sale
+              opened &mdash; in the same spend.
               There is no moment where the project has been paid and you have
               not been delivered, and no moment where Levo holds either side.
             </p>
@@ -139,7 +143,10 @@ export default function Home() {
                 Sequentia has no privileged coin. Fees are payable in any
                 accepted asset and every issued asset stands equal. Staking is
                 the one exception the protocol itself makes, because only
-                Sequence can stake.
+                Sequence can stake. That every sale here is priced in{' '}
+                {payment.label} is Levo&rsquo;s own policy and not the
+                chain&rsquo;s: it is what lets any two sales be compared, and a
+                covenant will hold terms in any asset at all.
               </p>
               <p className="small dim" style={{ marginBottom: 0 }}>
                 Levo's tiers ride on that exception rather than on holdings. A
@@ -159,7 +166,11 @@ export default function Home() {
                   <li>Get testnet {stake.label} and {payment.label} from <a href={faucet} target="_blank" rel="noopener noreferrer">the faucet</a>.</li>
                 )}
                 <li>
-                  Stake {compact(firstAtoms)} {stake.label}.
+                  Stake {compact(firstAtoms, stake.decimals)} {stake.label}. From a
+                  node that holds them:{' '}
+                  <span className="mono">sequentia-cli registerstake &lt;staking pubkey&gt; &lt;amount&gt;</span>{' '}
+                  bonds the coins to that key and locks them for the unbonding
+                  delay; that key is the one you sign in with below.
                   {pools ? <> Delegating it to <a href={pools} target="_blank" rel="noopener noreferrer">a pool</a> afterwards
                     lends the block-signing rights and not the coins, so it still counts for you.</> : ''}
                 </li>

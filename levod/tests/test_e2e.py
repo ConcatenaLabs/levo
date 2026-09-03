@@ -422,7 +422,7 @@ def run(d):
                                             "terms": dict(terms, price_num=1, price_den=100_000,
                                                           min_lot=100)}, token=issuer_tok)
     ok.eq(code, 400, "a sale whose smallest purchase pays dust is refused")
-    ok.ok("minimum lot" in (r.get("error") or ""), "and the refusal says how to fix it",
+    ok.ok("minimum purchase" in (r.get("error") or ""), "and the refusal says how to fix it",
           r.get("error"))
     code, r = req("POST", "/api/projects", {"project": dict(meta, slug="x-lot"),
                                             "terms": dict(terms, min_lot=total + 1)}, token=issuer_tok)
@@ -903,6 +903,23 @@ def run(d):
     code, r, h = _req(d.base, "POST", "/index.html")
     ok.eq(code, 405, "a static file takes no POST")
     ok.eq(h.get("Allow"), "GET, HEAD, OPTIONS", "and says so")
+
+    # --- a file the browser already has ------------------------------------
+    #
+    # `no-cache` means "ask me before reusing this", and a browser can only ask
+    # with a validator. Without one every reload fetched the whole app shell
+    # again to be told the same bytes.
+    ok.section("caching")
+    code, body, h = _req(d.base, "GET", "/index.html")
+    ok.eq(code, 200, "the app shell is served")
+    tag = h.get("ETag")
+    ok.ok(bool(tag), "with a validator", tag)
+    code, body, h2 = _req(d.base, "GET", "/index.html", headers={"If-None-Match": tag})
+    ok.eq(code, 304, "and a browser holding that version is told so")
+    ok.eq(h2.get("ETag"), tag, "with the same validator back")
+    code, body, h3 = _req(d.base, "GET", "/index.html",
+                          headers={"If-None-Match": '"something-else"'})
+    ok.eq(code, 200, "while a different version is sent in full")
 
     # --- the ledger an issuer can read -------------------------------------
     ok.section("ledger")

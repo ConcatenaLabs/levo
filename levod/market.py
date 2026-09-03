@@ -637,7 +637,7 @@ class Platform:
                 raise PlatformError(
                     "the smallest purchase this sale allows pays %d atoms to "
                     "the treasury, and a node will not relay an output below "
-                    "%d atoms. Raise the price, or raise the minimum lot to at "
+                    "%d atoms. Raise the price, or raise the minimum purchase to at "
                     "least %d atoms of the token"
                     % (least, floor, need))
         sale = self._make_sale(p, terms)
@@ -1145,7 +1145,7 @@ class Platform:
                 % sale.tokens(sale.terms.total_atoms))
         if token_atoms < sale.terms.min_lot:
             raise PlatformError(
-                "the covenant refuses a purchase below its minimum lot of %s, "
+                "the covenant refuses a purchase below its minimum purchase of %s, "
                 "so no purchase of %s can have been made from this sale"
                 % (sale.tokens(sale.terms.min_lot), sale.tokens(token_atoms)))
         # The covenant charged at least this much; a lower figure would be a

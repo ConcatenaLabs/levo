@@ -167,7 +167,7 @@ class Sale:
                 "exactly the published allocation in one output"
                 % (self.tokens(value_atoms), self.tokens(self.terms.total_atoms)))
         if value_atoms < self.terms.min_lot:
-            raise SaleError("the locked amount is below the sale's own minimum lot")
+            raise SaleError("the locked amount is below the sale's own minimum purchase")
         self.terms.assert_no_overflow(value_atoms)
         self.funding = {"txid": str(txid).lower(), "vout": int(vout), "atoms": value_atoms}
         self.locked_atoms = value_atoms
@@ -299,7 +299,7 @@ class Sale:
             # The covenant refuses to leave dust behind, so the only valid buys
             # near the end are ones that clear the sale out.
             raise SaleError(
-                "that would leave %s behind, below the sale's minimum lot of %s; "
+                "that would leave %s behind, below the sale's minimum purchase of %s; "
                 "buy the remaining %s to clear the sale"
                 % (self.tokens(remainder), self.tokens(self.terms.min_lot),
                    self.tokens(locked)))

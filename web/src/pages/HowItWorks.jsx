@@ -67,6 +67,15 @@ export default function HowItWorks() {
         proof of control holds it. A stake delegated to a pool still counts for
         the person who owns it.
       </p>
+      <p>
+        Stake is made on a node, not here. {' '}
+        <span className="mono">sequentia-cli registerstake &lt;staking pubkey&gt; &lt;amount&gt;</span>{' '}
+        bonds coins to a staking key and locks them for the chain&rsquo;s
+        unbonding delay;{' '}
+        <span className="mono">sequentia-cli getstakerinfo true true</span>{' '}
+        lists the keys a node holds and what each has bonded. Sign in with one
+        of those keys and the tier it earns is on the first screen.
+      </p>
       {tiers && (
         <table className="terms" style={{ marginTop: '1.25rem' }}>
           <tbody>
@@ -119,7 +128,7 @@ export default function HowItWorks() {
       <h2 className="section-h">What is enforced, and by whom</h2>
       <p>
         The covenant enforces the price, the treasury that gets paid, the token a
-        remainder must be, the minimum lot, and the earliest moment the project can
+        remainder must be, the minimum purchase, and the earliest moment the project can
         reclaim. Once a sale is funded none of those can be changed, by the project
         or by Levo. One consequence is worth stating: the treasury is the project's
         own key, so a project can always buy its own sale out at the published
@@ -127,7 +136,7 @@ export default function HowItWorks() {
         is take the tokens by any other route.
       </p>
       <p>
-        Tier caps are different. The sell condition has a minimum lot and no
+        Tier caps are different. The sell condition has a minimum purchase and no
         maximum, and it takes no signature: anyone who can build the transaction
         can buy, whether or not they came through Levo. A cap is Levo's own
         allocation policy, applied to the purchases Levo plans. Nothing on chain
@@ -185,6 +194,44 @@ export default function HowItWorks() {
 
       <h2 className="section-h">Words this page uses</h2>
       <dl className="glossary">
+        <dt>Sequence ({stake.label})</dt>
+        <dd>
+          Sequentia's staking token. The network is Sequentia and the token is
+          Sequence; {stake.label} is its ticker, and it is what every stake
+          figure on this site is labelled with. Staking is the one thing only
+          Sequence can do. For everything else it is an asset like any other on
+          the chain, with no standing above the tokens sold here.
+        </dd>
+        <dt>{payment.label}</dt>
+        <dd>
+          The asset every sale on this Levo is priced and paid in: an ordinary
+          token issued on Sequentia, no more privileged by the chain than the
+          tokens being sold. Its asset id is on each sale page, beside
+          &ldquo;Paid in&rdquo;. Pricing every sale in one asset is this
+          deployment&rsquo;s own policy, so that any two sales can be compared;
+          a covenant will hold terms in any asset at all.
+        </dd>
+        <dt>Treasury</dt>
+        <dd>
+          The address a sale&rsquo;s payments land at: the project&rsquo;s own,
+          chosen before the sale opened and compiled into the sale address. The
+          covenant will not part with a token unless that address is paid, and
+          moving it would produce a different sale address.
+        </dd>
+        <dt>Leaf</dt>
+        <dd>
+          One of the spending conditions inside a taproot output. A sale
+          publishes two: the sell leaf, which anyone may spend through by
+          paying the treasury, and the reclaim leaf, which only the project can
+          spend, and only after the close.
+        </dd>
+        <dt>Blocksigner floor</dt>
+        <dd>
+          The least stake Sequentia itself counts. Blocks here are produced by
+          stakers, and stake below this floor is ignored when the chain decides
+          who signs the next one. Levo&rsquo;s first tier begins there rather
+          than at a threshold of its own.
+        </dd>
         <dt>Atom</dt>
         <dd>
           The smallest unit an asset has, the way a satoshi is Bitcoin's. Every

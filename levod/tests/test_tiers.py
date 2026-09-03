@@ -152,7 +152,7 @@ def test_dust_remainder_is_refused(t):
         s.plan_buy("buyer", tier, token_atoms=10**13 - 1, height=1)
         t.ok(False, "should refuse to leave dust")
     except S.SaleError as e:
-        t.ok("minimum lot" in str(e), "refuses a buy that would leave dust")
+        t.ok("minimum purchase" in str(e), "refuses a buy that would leave dust")
 
 
 def test_closed_sales_do_not_sell(t):

@@ -614,9 +614,13 @@ def build_reclaim(sale, destination_spk, fee_inputs, fee_atoms, fee_asset,
 
 def reclaim_witness(sale, signature):
     """The witness stack for input 0 of a reclaim, given the project's BIP340
-    signature over the sighash: [signature, leaf, control block]. Verifies the
-    signature against the sale's reclaim key first, so a wrong key is caught
-    here rather than at relay."""
+    signature over the sighash: [signature, leaf, control block].
+
+    This assembles; it does not check. `check_reclaim_signature` is what says
+    whether a signature is the reclaim key's, and a caller should ask it before
+    broadcasting -- a wrong key is then a sentence rather than a relay
+    rejection. `bin/levo` does, on both the reclaim and the rescue path.
+    """
     sig = bytes.fromhex(signature) if isinstance(signature, str) else bytes(signature)
     return sale.cov.reclaim_witness(sig)
 

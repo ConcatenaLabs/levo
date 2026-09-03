@@ -405,7 +405,7 @@ export default function BuyFlow({ project, tier, onSettled }) {
             </div>
             <p className="small dim" style={{ marginTop: '.75rem' }}>
               The cap is Levo's allocation policy. The covenant enforces the
-              price, the treasury, the token and the minimum lot; it has no
+              price, the treasury, the token and the minimum purchase; it has no
               per-buyer maximum.
             </p>
             {plan.quote && plan.quote.rail === 'btc' && (
@@ -472,6 +472,11 @@ export default function BuyFlow({ project, tier, onSettled }) {
                 {label} outputs, unblinded: anything you received at a {hrp}1… address is;
                 anything received at a confidential {blinded}1… address is not, and a
                 covenant cannot read it. Send those to a {hrp}1… address first.
+                {' '}To find yours on a node:{' '}
+                <span className="mono">sequentia-cli listunspent</span> prints a
+                txid and vout for each. Or let{' '}
+                <span className="mono">levo buy {project.slug} --tokens {tokens || '<amount>'}</span>{' '}
+                pick them and make the whole purchase from that node.
               </div>
             </div>
             <div className="field">

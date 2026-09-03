@@ -104,10 +104,18 @@ function NotOpen({ sale }) {
     reclaimed: 'This sale closed and the project has taken back what did not sell.',
     closed: 'This sale has passed its close, so the project may now reclaim whatever did not sell, and Levo no longer plans purchases from it. The covenant itself carries no closing date on the buying side: until the project reclaims, anyone holding the terms can still buy from it directly.',
   }[sale.status] || 'This sale is not open.'
+  const over = ['sold_out', 'reclaimed', 'closed'].includes(sale.status)
   return (
     <div className="card">
       <h3>Not open</h3>
-      <p className="small dim" style={{ marginBottom: 0 }}>{text}</p>
+      <p className="small dim" style={{ marginBottom: over ? '.75rem' : 0 }}>{text}</p>
+      {/* A page with nothing to do on it should say where the reader can go
+          next, the way the empty board and the 404 do. */}
+      {over && (
+        <div className="btn-row">
+          <Link className="btn btn-sm" to="/projects">See the open sales</Link>
+        </div>
+      )}
     </div>
   )
 }
@@ -570,13 +578,14 @@ export default function ProjectDetail() {
               )}
               {sale.strays && sale.strays.length > 0 && (
                 <Notice kind="bad" style={{ marginTop: '1rem' }}>
-                  <strong>More than the sale is resting at the sale address.</strong> The sell
-                  leaf reads the amount it spends and never which output it is, so a buyer can
-                  take any output at that address at the sale's price, whatever asset it holds.
-                  Anything below is outside what this sale locked. Move what was not meant to be
-                  sold before the close. After the close the project can spend what is left under
-                  its reclaim key, in a transaction it builds itself: Levo's own reclaim sweeps
-                  the sale's own funding and nothing else.
+                  <strong>More than the sale is resting at the sale address.</strong> A buy
+                  takes whatever output it spends at the sale's price, whatever that output
+                  actually holds &mdash; so anything listed below can be bought as if it were
+                  the token, by anyone. (The reason is in the spending condition itself: it
+                  reads the amount it is spending, and never which output that is.) Move what
+                  was not meant to be sold before the close. After the close the project can
+                  sweep what is left with its reclaim key, in a transaction it builds itself:
+                  Levo's own reclaim spends the sale's own funding and nothing else.
                   <ul className="small" style={{ margin: '.5rem 0 0', paddingLeft: '1.1rem' }}>
                     {sale.strays.map((s) => (
                       <li key={s.txid + s.vout}>
@@ -585,7 +594,7 @@ export default function ProjectDetail() {
                         {' '}at <Hex value={s.txid + ':' + s.vout}
                                     href={explorer('tx', s.txid)} short={14} />
                         {' '}&mdash; {s.sellable === false
-                          ? 'below the minimum lot, so the leaf will not sell it; sweep it after the close'
+                          ? 'below the minimum purchase, so a buy cannot take it; sweep it after the close'
                           : 'a buyer can take this at the sale price'}
                       </li>
                     ))}
