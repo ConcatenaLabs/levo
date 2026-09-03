@@ -1,4 +1,4 @@
-import { compact } from '../lib/format'
+import { big, compact } from '../lib/format'
 import { xFor, yFor } from '../lib/beam'
 
 // Levo's one drawing: the rule itself, plotted.
@@ -65,6 +65,7 @@ export default function Beam({ tiers, stakeAtoms = 0, compactMode = false, showM
         <span>Stake, {stakeLabel} →</span>
         <span>cap per sale, {paymentLabel}</span>
       </div>
+      <div className="beam-plot">
       <svg viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none"
            role="img" aria-label={label}>
         {/* the ground the steps stand on */}
@@ -107,14 +108,15 @@ export default function Beam({ tiers, stakeAtoms = 0, compactMode = false, showM
           squashed with them. */}
       <div className="beam-caps" aria-hidden="true">
         {steps.map((s) => (
-          s.tier.cap_atoms > 0 ? (
+          big(s.tier.cap_atoms) > 0n ? (
             <span key={'cap' + s.i} className="beam-cap"
                   style={{ left: (s.x0 / W) * 100 + '%',
-                           top: (s.y - (compactMode ? 15 : 19) + (compactMode ? 20 : 22)) + 'px' }}>
+                           top: ((s.y / H) * 100) + '%' }}>
               {compact(s.tier.cap_atoms, paymentDecimals)}
             </span>
           ) : null
         ))}
+      </div>
       </div>
       <div className="beam-labels" aria-hidden="true">
         {tiers.map((t, i) => (
@@ -127,6 +129,24 @@ export default function Beam({ tiers, stakeAtoms = 0, compactMode = false, showM
           </div>
         ))}
       </div>
+      {/* The same tiers as a list. Plotted names cannot be read on a narrow
+          screen (four of them in 320px overprint each other) and the figures
+          are what the panel is for. */}
+      <ul className="beam-list" aria-hidden="true">
+        {tiers.map((t) => (
+          <li key={t.level} className={stake >= Number(t.min_stake_atoms) ? 'reached' : ''}>
+            <b>{t.name}</b>
+            <span>
+              {Number(t.min_stake_atoms) === 0
+                ? 'no stake'
+                : compact(t.min_stake_atoms, stakeDecimals) + ' ' + stakeLabel}
+              {big(t.cap_atoms) > 0n
+                ? ' · up to ' + compact(t.cap_atoms, paymentDecimals) + ' ' + paymentLabel
+                : ''}
+            </span>
+          </li>
+        ))}
+      </ul>
     </div>
   )
 }

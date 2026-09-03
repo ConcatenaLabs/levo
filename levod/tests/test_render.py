@@ -208,6 +208,58 @@ def main():
                 failed.append("%s logged %s" % (path, complaints[:2]))
             else:
                 passed += 1
+        # --- and the same pages on a phone ---------------------------------
+        #
+        # A screenshot says a page painted; it does not say the words on it can
+        # be read. These two could not: four tier names plotted along an axis
+        # overprinted into one word at 320px, and the display face put the full
+        # stop of the heading on a line of its own.
+        try:
+            import cdp
+            page = cdp.Page(chromium)
+            try:
+                # 300, not 320: a phone at 320 with a visible scrollbar lays
+                # out in about 305, and that is where this first broke.
+                page.send("Emulation.setDeviceMetricsOverride", width=300,
+                          height=1200, deviceScaleFactor=1, mobile=True)
+                page.go(demo.base + "/", settle=2.0)
+                # A heading that wraps is fine; a line with nothing on it but
+                # the full stop is what a display face this wide does at 320px
+                # when its size does not follow the viewport.
+                # A Range over the text, not the element: an element has one
+                # box however many lines its text takes, and it is the LINES
+                # that are being measured.
+                runt = page.eval(
+                    "(function(){const h=document.querySelector('.hero h1');"
+                    "if(!h) return 0;"
+                    "const r=document.createRange(); r.selectNodeContents(h);"
+                    "const boxes=Array.from(r.getClientRects()).filter(b=>b.width>0);"
+                    "return boxes.length ? Math.round(Math.min.apply(null,"
+                    " boxes.map(x=>x.width))) : 0})()")
+                over = page.eval(
+                    "(function(){const h=document.querySelector('.hero h1');"
+                    "return h ? h.scrollWidth - h.clientWidth : 0})()")
+                if over and over > 1:
+                    failed.append("the heading overflows its column by %spx at 300px" % over)
+                elif runt and runt < 30:
+                    failed.append("the heading breaks onto a line %spx wide at 300px" % runt)
+                else:
+                    passed += 1
+                shape = page.eval(
+                    "(function(){const l=document.querySelector('.beam-list li');"
+                    "const p=document.querySelector('.beam-labels');"
+                    "return JSON.stringify([l?getComputedStyle(l).display:'none',"
+                    "p?getComputedStyle(p).display:'none'])})()")
+                listed, plotted = json.loads(shape or '[\"none\",\"none\"]')
+                if listed == "none" or plotted != "none":
+                    failed.append("at 300px the tiers are plotted (%s) rather than listed (%s)"
+                                  % (plotted, listed))
+                else:
+                    passed += 1
+            finally:
+                page.stop()
+        except Exception as e:
+            failed.append("the narrow-screen checks could not run: %s" % e)
     finally:
         demo.stop()
         shutil.rmtree(out_dir, ignore_errors=True)

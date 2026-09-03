@@ -276,6 +276,10 @@ p { margin: 0 0 1rem; }
 }
 .beam.compact .beam-head { font-size: .62rem; }
 
+/* The plot is its own positioning context, so a cap figure is placed against
+   the chart rather than against the card -- whose header is sized in rem and
+   moves with the reader's font size, which a pixel offset cannot follow. */
+.beam-plot { position: relative; }
 .beam-caps { position: absolute; inset: 0; pointer-events: none; }
 .beam-cap {
   position: absolute; margin-left: 7px;
@@ -296,9 +300,20 @@ p { margin: 0 0 1rem; }
 .beam-label b { display: block; font-weight: 500; color: var(--muted); }
 .beam-label.reached b { color: var(--ink); }
 .beam-label.reached { color: var(--ink-dim); }
+.beam-list { display: none; }
 @container (max-width: 420px) {
-  .beam-label span { display: none; }
-  .beam-labels { height: 1.6rem; }
+  /* Four plotted names in 320px overprint each other into one word. The list
+     says the same thing in the space there is. */
+  .beam-labels { display: none; }
+  .beam-list {
+    display: block; list-style: none; margin: .6rem 0 0; padding: 0;
+    font-family: var(--mono); font-size: .68rem; color: var(--muted);
+  }
+  .beam-list li { display: flex; justify-content: space-between; gap: .6rem; padding: .12rem 0; }
+  .beam-list li.reached { color: var(--ink-dim); }
+  .beam-list li.reached b { color: var(--ink); }
+  .beam-list b { font-weight: 500; }
+  .beam-list span { text-align: right; }
 }
 
 /* ---------- hero ---------- */
@@ -477,7 +492,7 @@ input[type="date"]::-webkit-calendar-picker-indicator { filter: invert(.85); }
   /* Sized so the longest word in the headline fits the line rather than
      breaking: a wide display face and a fourteen-letter word leave no slack,
      and a broken word costs more than the extra size buys. */
-  h1 { font-size: clamp(1.45rem, 6.6vw, 3rem); line-height: 1.08; }
+  h1 { font-size: clamp(1.3rem, 6.6vw, 3rem); line-height: 1.08; }
   .hero { padding-block-start: 2.5rem; }
   .hero-lede { font-size: 1rem; }
 
