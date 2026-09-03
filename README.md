@@ -235,7 +235,9 @@ watcher, a sell-out, a reclaim under both kinds of close, a sale whose treasury
 is a version-0 address, a funding that never lands, a reorg that unconfirms a
 funding and mines it again, a reorg that takes one away for good, a purchase
 whose fee is paid in a third asset -- neither the sale's nor bitcoin, which is
-what an open fee market means -- and every spend the covenant must refuse.
+what an open fee market means -- prices whose arithmetic does not come out even,
+where Levo's ceiling and the leaf's have to agree atom for atom, and every spend
+the covenant must refuse.
 
 The render test starts the demo server and paints every route in a headless
 Chromium, failing on a console error or a page that painted nothing. It is

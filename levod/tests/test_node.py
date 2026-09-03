@@ -467,6 +467,47 @@ def run(ok, rig):
     ok.eq(G.sale.status, S.LIVE, "locking again reopens the sale")
     ok.ok(G.sale.funding.get("block"), "now with the block it was mined in")
 
+    # --- prices whose arithmetic does not come out even --------------------
+    #
+    # A price is a ratio, and the covenant charges ceil(n * num / den) for n
+    # token atoms: computed by Levo in Python when it quotes, and by the leaf
+    # in Script when the chain validates. A disagreement of one atom either way
+    # is a purchase Levo prices and the chain refuses, or a treasury underpaid
+    # with the covenant's blessing. The drill's own price divides evenly; these
+    # do not.
+    for i, (num, den) in enumerate(((1, 3), (999_983, 1_000_000), (1, 100_000_000))):
+        tok = w("issueasset", assetamount=100_000, tokenamount=0, blind=False,
+                fee_asset="bitcoin")["asset"]
+        rig.mine()
+        slug = "ratio-%d" % i
+        least = max(COIN, -(-20 * den // num))     # clear of the node's dust rule
+        plat.list_project(issuer, {"slug": slug, "name": slug.title(), "ticker": "R%02d" % i,
+                                   "summary": "s", "description": "d"},
+                          dict(terms(node.chain_height() + 500, total=1_000),
+                               token_asset=tok, price_num=num, price_den=den,
+                               min_lot=least))
+        P = plat.projects[slug]
+        w("sendtoaddress", address=plat.sale_address(P.sale), amount="1000",
+          assetlabel=tok, fee_asset_label="bitcoin")
+        rig.mine()
+        plat.confirm_lock(issuer, slug)
+        want = least + 7 * 10 ** 7 + 1              # an amount that does not divide
+        cost = P.sale.terms.cost_for(want)
+        exact = (want * num) / den
+        ok.ok(cost >= exact and cost - exact < 1,
+              "%d/%d: levo charges the ceiling (%s for %.6f)" % (num, den, cost, exact))
+        plan = P.sale.plan_buy("x", tier, token_atoms=want, height=node.chain_height())
+        ins2 = pay_input(plan.payment_atoms + 2_000)
+        b = TX.build_buy(P.sale, plan, {"token_script_pubkey": dest_spk(),
+                                        "change_script_pubkey": dest_spk(),
+                                        "inputs": ins2, "fee_atoms": 2_000,
+                                        "fee_asset": pay})
+        signed = w("signrawtransactionwithwallet", b["unsigned_tx_hex"])
+        allowed, why = accept(signed["hex"])
+        ok.ok(allowed, "%d/%d: and the leaf agrees with that figure" % (num, den), why)
+        n("sendrawtransaction", signed["hex"])
+        rig.mine()
+
     # --- a fee paid in a third asset ---------------------------------------
     #
     # Sequentia has an open fee market: a fee may be paid in any asset the
