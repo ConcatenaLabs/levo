@@ -177,6 +177,15 @@ def run(ok, rig, levod, env):
     ok.eq(int(detail["sale"]["locked_atoms"]), 900 * COIN, "holding the remainder")
     positions = json.loads(levo("whoami").split("\n")[0]) if False else None
 
+    # --- a record that did not go through can be finished later ------------
+    out = levo("record", "cli-sale", "--txid", "ff" * 32, "--tokens", "10",
+               expect_failure=True)
+    ok.ok("has not seen" in out, "recording a transaction the node never saw is refused",
+          out[-160:])
+    ok.ok("wait a few seconds" in out or "on chain either way" in out,
+          "and says a just-broadcast purchase may simply not have arrived yet",
+          out[-200:])
+
     # --- sales lists it, and says how many there are -----------------------
     out = levo("sales")
     ok.ok("cli-sale" in out, "sales lists it", out[:200])

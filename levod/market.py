@@ -967,14 +967,20 @@ class Platform:
                 out = None
             if out is None and not self._node_has_seen(txid):
                 # Recording spends the caller's own headroom in this sale, and
-                # nothing gives it back. A transaction the node has never heard
-                # of is far more likely to be a purchase that was never
-                # broadcast -- or a typo -- than one already spent, and the
-                # caller can record it the moment it exists.
+                # nothing gives it back, so a transaction this node has never
+                # heard of is refused. It may simply not have arrived yet:
+                # Levo's node is not the node the buyer broadcast to, and a
+                # transaction takes a moment to cross the network. Nothing is
+                # lost by waiting -- the purchase is already on chain, the
+                # watcher will move the sale whatever happens here, and the
+                # record can be made at any time afterwards.
                 raise PlatformError(
-                    "the node has not seen %s. Broadcast the purchase first, "
-                    "then record it; recording spends your allocation in this "
-                    "sale and cannot be undone" % txid)
+                    "the node Levo reads has not seen %s yet. If you have just "
+                    "broadcast it, wait a few seconds and record it again; the "
+                    "purchase itself is on chain either way, and this is only "
+                    "the allocation ledger. If you have not broadcast it, do "
+                    "that first: recording spends your allocation in this sale "
+                    "and cannot be undone" % txid)
             if out is not None:
                 spk = ((out.get("scriptPubKey") or {}).get("hex") or "").lower()
                 want = TX.treasury_script_pubkey(sale.terms).hex()

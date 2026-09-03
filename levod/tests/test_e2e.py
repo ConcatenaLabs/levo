@@ -687,6 +687,11 @@ def run(d):
                   {"txid": "d9" * 32, "token_atoms": 100_000, "payment_atoms": 1}, token=buyer_tok)
     ok.eq(code, 400, "a purchase the node has never seen is refused")
     ok.ok("not seen" in (r.get("error") or ""), "saying so", r.get("error"))
+    ok.ok("wait a few seconds" in (r.get("error") or ""),
+          "and saying that a just-broadcast purchase may not have arrived yet",
+          r.get("error"))
+    ok.ok("on chain either way" in (r.get("error") or ""),
+          "and that the purchase itself is safe regardless", r.get("error"))
     # A purchase the node knows about, whose treasury output has since been
     # spent: it cannot be checked, and it still happened.
     node.txs["e1" * 32] = {"txid": "e1" * 32, "vin": [], "vout": []}
