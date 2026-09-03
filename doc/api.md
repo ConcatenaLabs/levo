@@ -135,10 +135,12 @@ be signed by the buyer.
 
 **`POST /api/projects/<slug>/confirm`** `{txid, token_atoms, payment_atoms}`
 (session) records the purchase against the caller's cap. This writes Levo's
-ledger and nothing else — the sale itself moves because the chain moved, whether
-or not anything was recorded here. levod refuses a transaction its node has
-never seen, and takes the amount from the treasury credit on chain when it can
-still read it.
+ledger and nothing else: the sale itself moves because the chain moved, whether
+or not anything is recorded here. levod refuses a transaction its own node has
+not seen -- which for a few seconds after a broadcast includes a real one, since
+Levo's node is not the node it was broadcast to -- so a client that has just
+broadcast should try again shortly. It takes the amount from the treasury credit
+on chain when it can still read it.
 
 ## Operating
 

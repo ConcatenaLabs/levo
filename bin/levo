@@ -18,6 +18,8 @@ the transaction, signs your inputs with your wallet, and broadcasts.
     levo buy <slug> --tokens 100            buy, end to end
     levo reclaim <slug> --to <address>      sweep what did not sell, after close
     levo withdraw <slug>                    remove an unfunded listing of yours
+    levo record <slug> --txid <id> --tokens 100
+                                            record a purchase Levo has not seen
     levo flag <slug> --notice "..."         operator: a notice on a listing
 
 Every command talks to a levod over HTTP and to your node over JSON-RPC. It
@@ -48,6 +50,7 @@ import os
 import secrets
 import subprocess
 import sys
+import time
 import urllib.error
 import urllib.request
 from decimal import Decimal
@@ -612,13 +615,56 @@ def cmd_buy(args):
     # The purchase is on chain now. Recording it against your allocation is a
     # bookkeeping step, so a failure here is worth saying out loud but must not
     # be reported as a failed purchase.
-    try:
-        api("POST", "/api/projects/%s/confirm" % args.slug,
-            {"txid": txid, "token_atoms": token_atoms,
-             "payment_atoms": plan["payment_atoms"]}, tok)
-    except SystemExit as e:
-        print("note: the purchase succeeded, but recording it against your "
-              "allocation did not (%s)" % e, file=sys.stderr)
+    _record(args.slug, txid, token_atoms, plan["payment_atoms"], tok)
+
+
+def _record(slug, txid, token_atoms, payment_atoms, tok, tries=5):
+    """Tell Levo about a purchase, patiently.
+
+    Levo reads its own node, which is not the node the transaction was
+    broadcast to, so for a few seconds after a broadcast it has not heard of it
+    yet. That is not a failure: the purchase is on chain either way and the
+    sale moves without any of this. Only the allocation ledger is at stake, so
+    it is worth a handful of tries before giving up -- and worth saying, when
+    it does give up, exactly how to finish it later.
+    """
+    body = {"txid": txid, "token_atoms": token_atoms, "payment_atoms": payment_atoms}
+    last = None
+    for attempt in range(tries):
+        try:
+            api("POST", "/api/projects/%s/confirm" % slug, body, tok)
+            return True
+        except SystemExit as e:
+            last = str(e)
+            if "has not seen" not in last:
+                break
+            if attempt < tries - 1:
+                time.sleep(2)
+    print("note: the purchase is on chain, and recording it against your "
+          "allocation did not go through (%s).\n"
+          "      Finish it whenever you like with:\n"
+          "        levo record %s --txid %s --tokens %s"
+          % (last, slug, txid, _units(token_atoms)), file=sys.stderr)
+    return False
+
+
+def cmd_record(args):
+    """Record a purchase that was made outside this command, or one whose
+    record did not go through at the time."""
+    tok = sign_in()
+    p = api("GET", "/api/projects/%s" % args.slug)
+    sale = p["sale"]
+    decimals = p.get("decimals", 8)
+    token_atoms = U.parse(args.tokens, decimals)
+    if token_atoms is None or token_atoms <= 0:
+        raise Fail("--tokens must be a number with at most %d decimal places" % decimals)
+    payment_atoms = int(args.payment) if args.payment is not None else \
+        -(-token_atoms * int(sale["terms"]["price_num"]) // int(sale["terms"]["price_den"]))
+    if not _record(args.slug, args.txid.lower(), token_atoms, payment_atoms, tok):
+        # The purchase may well be real; this command exists to record one, and
+        # it did not, so it says so in the way a script can act on.
+        raise Fail("the purchase was not recorded")
+    print("recorded %s against your allocation in %s" % (args.txid, args.slug))
 
 
 def cmd_reclaim(args):
@@ -729,6 +775,14 @@ def main():
                     help="which sales to list (default: all)")
     sl.add_argument("--limit", type=int, default=50, help="how many to show")
     sl.add_argument("--offset", type=int, default=0, help="where to start")
+
+    rd = sub.add_parser("record", help="tell Levo about a purchase it has not recorded")
+    rd.add_argument("slug")
+    rd.add_argument("--txid", required=True, help="the purchase transaction")
+    rd.add_argument("--tokens", required=True, help="how many tokens it bought")
+    rd.add_argument("--payment", type=int,
+                    help="what it paid, in atoms (default: the covenant's price)")
+    rd.set_defaults(fn=cmd_record)
 
     fg = sub.add_parser("flag", help="operator: hide a listing or put a notice on it")
     fg.add_argument("slug")
