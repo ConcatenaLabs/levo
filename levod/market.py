@@ -1422,6 +1422,30 @@ class Platform:
                             "blinded": blinded})
         return checked
 
+    def check_registry(self, limit=3):
+        """Ask the registry about listings nobody has asked about yet.
+
+        A listing made before this Levo had a registry -- or before it had one
+        configured -- carries no answer, and its page says so. That is true but
+        thin, and the answer costs one request. A few per poll fills them in
+        without a burst, and a listing that has been answered is never asked
+        again unless the answer said nothing.
+        """
+        if not self.registry_url:
+            return []
+        with self.lock:
+            waiting = [p for p in self.projects.values()
+                       if p.sale and not (p.registry or {}).get("checked")][:limit]
+        filled = []
+        for p in waiting:
+            answer = REG.look_up(self.registry_url, p.sale.terms.token_asset)
+            if not answer.checked:
+                continue                    # the registry is down; ask again later
+            with self.lock:
+                p.registry = answer.to_json()
+            filled.append(p.slug)
+        return filled
+
     def _issuer_standing(self, account):
         """The listing account's stake and tier, or nothing if the chain cannot
         be asked. Never a reason to fail a page: this is context, not a term."""
