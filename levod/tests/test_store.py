@@ -230,7 +230,7 @@ def test_a_listing_that_contradicts_the_registry_is_refused(t):
         def __init__(self, body): self.body = body
         def __enter__(self): return self
         def __exit__(self, *a): return False
-        def read(self): return json.dumps(self.body).encode()
+        def read(self, n=None): return json.dumps(self.body).encode()[:n]
 
     registered = {"contract": {"ticker": "REAL", "name": "The Real Token",
                                "precision": 2, "entity": {"domain": "example.test"}}}
@@ -270,9 +270,9 @@ def test_a_listing_made_before_the_registry_is_asked_about_later(t):
     class Entry:
         def __enter__(self): return self
         def __exit__(self, *a): return False
-        def read(self):
+        def read(self, n=None):
             return json.dumps({"contract": {"ticker": "ONE", "name": "One Token",
-                                            "precision": 2}}).encode()
+                                            "precision": 2}}).encode()[:n]
 
     real = REG.urllib.request.urlopen
     REG.urllib.request.urlopen = lambda url, timeout=None: Entry()

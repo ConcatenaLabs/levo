@@ -19,6 +19,9 @@ import urllib.error
 import urllib.request
 
 TIMEOUT = 4
+# The most of a registry's answer levod will read. A contract entry is a few
+# hundred bytes.
+MAX_ANSWER = 100_000
 
 
 class Answer:
@@ -92,7 +95,15 @@ def look_up(base_url, asset_id, timeout=TIMEOUT, opener=None):
     try:
         get = opener or urllib.request.urlopen
         with get(url, timeout=timeout) as r:
-            body = json.loads(r.read() or b"{}")
+            # A bounded read. This is another operator's HTTP service, reached
+            # while a listing is being made, and a body with no end to it would
+            # be levod's memory rather than theirs. A contract is a few hundred
+            # bytes; a hundred kilobytes is already generous.
+            raw = r.read(MAX_ANSWER + 1)
+            if len(raw) > MAX_ANSWER:
+                return Answer(error="the registry's answer is larger than %d bytes"
+                                    % MAX_ANSWER)
+            body = json.loads(raw or b"{}")
     except urllib.error.HTTPError as e:
         if e.code == 404:
             return Answer(checked=True, found=False)
