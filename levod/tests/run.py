@@ -17,7 +17,7 @@ sys.path.insert(0, str(HERE.parent))
 
 MODULES = ["test_crypto", "test_auth", "test_covenant", "test_address", "test_pset",
            "test_tiers", "test_precision", "test_rails", "test_rpc", "test_store",
-           "test_tx", "test_watcher"]
+           "test_tx", "test_watcher", "test_bundle"]
 
 
 class T:

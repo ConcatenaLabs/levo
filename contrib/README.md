@@ -43,29 +43,51 @@ start it again.
 
 ## Upgrading
 
-Reinstall the units as well as the code: a unit change in the repo reaches the
-box only here, and levod's own "do not restart me" status is a unit setting.
-
 ```sh
-cd /root/sequentia/levo && git pull --ff-only
-install -m 644 contrib/levod.service contrib/levo-backup.service contrib/levo-backup.timer /etc/systemd/system/
-systemctl daemon-reload
-PATH=/opt/node24/bin:$PATH LEVO_BASE=/levo/ npm --prefix web ci
-PATH=/opt/node24/bin:$PATH LEVO_SITE_ORIGIN=https://sequentiatestnet.com LEVO_BASE=/levo/ npm --prefix web run build
-systemctl restart levod
-curl -fsS http://127.0.0.1:8099/api/health | head -20
+cd /root/sequentia/levo && contrib/deploy.sh
 ```
 
-The build needs a Node inside Vite's engine range (20.19 or later, or 22.12 or
-later), which is why the two build lines put one in front: an older Node skips
-the bundler's native binding as an unmet engine and then dies on a missing
-module, which reads like a broken checkout rather than a version.
+`deploy.sh` fetches, checks out `origin/main`, builds the app, restarts levod
+and then asks levod what it is serving. It takes the checkout, the unit name
+and the health URL as arguments if this deployment uses others.
 
-The last line is the check: `ok` is false when the node is unreachable, the
-watcher has stalled or is failing every poll, the state file cannot be written,
-or the built app is missing. levod serves the app and the API from one origin,
-so an empty `web/dist` is a site that 404s every page while every other check
-passes.
+Every step is checked, and the build is the reason. A build that fails leaves
+the previous bundle exactly where it was: the pages still render, every API
+check still passes, and the site is however many commits behind with nothing
+saying so. A command that pipes the build through `tail` or `head` loses its
+exit status and reports that as success.
+
+Two things stand behind it. The build needs a Node inside Vite's engine range
+(20.19 or later, or 22.12 or later); the box keeps one at `/opt/node24/bin`,
+because upgrading the system Node under the other services on the machine to
+build one site would be the wrong trade. `web/scripts/check-node.mjs` refuses
+an older one with a sentence, since the failure it produces otherwise is a
+`SyntaxError` about `node:util`'s `styleText` export and reads like a broken
+checkout. And `/api/health` reports the bundle it is serving:
+
+```json
+"app": {"serving": true, "bundle": "assets/index-0V4hA41O.js",
+        "built_at": 1756890347, "source_newer_than_bundle": false}
+```
+
+`source_newer_than_bundle` is the deploy's own check: the checkout moved but
+the bundle beside it did not, which is the shape of a build that did not run.
+It does not make levod unhealthy -- a site serving an old bundle is still
+serving, and paging someone at 3am for it would be wrong -- so the deploy is
+what refuses.
+
+Reinstall the units when one changes in the repo; that reaches the box only
+here, and levod's own "do not restart me" status is a unit setting.
+
+```sh
+install -m 644 contrib/levod.service contrib/levo-backup.service contrib/levo-backup.timer /etc/systemd/system/
+systemctl daemon-reload
+```
+
+`ok` in health is false when the node is unreachable, the watcher has stalled
+or is failing every poll, the state file cannot be written, or the built app is
+missing. levod serves the app and the API from one origin, so an empty
+`web/dist` is a site that 404s every page while every other check passes.
 
 ## Restoring the state file
 
