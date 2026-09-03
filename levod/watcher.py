@@ -538,6 +538,12 @@ class Watcher:
         # Nothing anywhere. Before concluding that, wait for a second look with
         # a new block behind it: a buy's remainder sits in the mempool for a
         # block or two, and the confirmed-set scan cannot see it either.
+        #
+        # On a chain that has stopped producing blocks this waits for ever, and
+        # that is the right way round: a sale whose funding cannot be found is
+        # left exactly as it was rather than declared gone on the word of a
+        # chain that is not moving. It resolves itself within a block of the
+        # chain resuming.
         if sale.status == S.DRAFT or not sale.funding:
             return False
         misses = self._misses.get(slug, 0) + 1

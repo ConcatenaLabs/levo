@@ -467,6 +467,57 @@ def run(ok, rig):
     ok.eq(G.sale.status, S.LIVE, "locking again reopens the sale")
     ok.ok(G.sale.funding.get("block"), "now with the block it was mined in")
 
+    # --- a reorg under a funded sale ---------------------------------------
+    #
+    # Sequentia follows Bitcoin's reorgs in real time, so a block being replaced
+    # is an ordinary event here rather than an exotic one, and the README says a
+    # lock undone by one stops being investable. Everything above proves the
+    # ghost path on a lock that never confirmed; this proves it on one that DID,
+    # and proves the ordinary case first: a reorg that unconfirms a funding and
+    # then mines it again must leave the sale exactly as it was.
+    h = node.chain_height()
+    plat.list_project(issuer, {"slug": "reorged", "name": "Reorged", "ticker": "RRG",
+                               "summary": "s", "description": "d"},
+                      terms(h + 500, total=5_000))
+    R, rtxid = fund("reorged")
+    rig.mine()
+    plat.confirm_lock(issuer, "reorged")
+    watch.poll()
+    ok.eq(R.sale.status, S.LIVE, "the reorg sale is funded and live")
+    ok.ok(R.sale.funding.get("block"), "with the block it was mined in")
+    at = R.sale.funding["height"]
+    block = n("getblockhash", at)
+
+    n("invalidateblock", block)
+    watch.poll()
+    ok.eq(R.sale.status, S.LIVE,
+          "a reorg that unconfirms the funding leaves the sale alone: the "
+          "transaction is in the mempool, and the covenant still holds it")
+    ok.eq(R.sale.locked_atoms, 5_000 * COIN, "holding exactly what it held")
+
+    n("reconsiderblock", block)
+    watch.poll()
+    ok.eq(R.sale.status, S.LIVE, "and it is still live when the block comes back")
+    ok.ok(R.sale.funding.get("block"), "with a block noted again")
+
+    # Now the reorg that really takes it: the block is replaced and the
+    # transaction is never mined again, which on a chain that follows Bitcoin
+    # is what a lock undone by an anchor-driven reorg looks like.
+    n("invalidateblock", n("getblockhash", R.sale.funding["height"]))
+    rig.restart(["-walletbroadcast=0"])          # the mempool does not survive it
+    ok.eq(w("getrawmempool"), [], "the funding is in no mempool")
+    rig.mine(2)
+    for _ in range(3):
+        watch.poll()
+        rig.mine()          # the miss protocol wants a block between two looks
+    ok.eq(R.sale.status, S.GHOST,
+          "a funding whose block was reorged away and never mined again ghosts "
+          "the sale")
+    ok.eq(R.sale.funding, None, "and the sale holds no outpoint")
+    ok.eq(A.sale.status, S.PARTIAL, "with the sale beside it untouched")
+    w("abandontransaction", rtxid)
+    rig.restart()
+
     # --- the covenant refuses what it must ---------------------------------
     def raw_buy(sale, token_atoms, mutate=None, fee=1_000, late=False):
         if late:

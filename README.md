@@ -228,8 +228,9 @@ covenant bytes against frozen vectors. The node test starts `sequentiad` on a
 throwaway regtest chain (it looks at `SEQUENTIAD`, `SEQUENTIA_SRC/src`, then
 `~/Sequentia/src`) and runs a lock, a PSET purchase, a raw purchase, the
 watcher, a sell-out, a reclaim under both kinds of close, a sale whose treasury
-is a version-0 address, a funding that never lands, and every spend the
-covenant must refuse.
+is a version-0 address, a funding that never lands, a reorg that unconfirms a
+funding and mines it again, a reorg that takes one away for good, and every
+spend the covenant must refuse.
 
 The render test starts the demo server and paints every route in a headless
 Chromium, failing on a console error or a page that painted nothing. It is
