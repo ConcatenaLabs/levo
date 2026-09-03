@@ -207,6 +207,7 @@ python3 levod/tests/test_e2e.py   # the API end to end, against a stub node
 python3 levod/tests/test_node.py  # the whole life of a sale against a real sequentiad; skipped without one
 python3 levod/tests/test_render.py # every page, in a real browser; skipped without a chromium
 python3 levod/tests/test_cli.py   # bin/levo end to end against a real node; skipped without one
+python3 levod/tests/test_browser.py # a purchase made in a browser, with a wallet; skipped without either
 npm --prefix web test             # formatting, the beam's geometry, bech32
 npm --prefix web run build        # the frontend gate
 ```
@@ -231,6 +232,16 @@ The CLI test starts a node and a levod and drives `bin/levo` as a person would:
 sign in, list, lock, verify, price, buy, and reclaim after the close. The CLI
 has its own input handling, its own unit conversions and its own wallet calls,
 and nothing else here executes a line of it.
+
+The browser test makes a purchase the way a person does. It starts a node, a
+levod serving the built app, and a headless Chromium driven over the debugging
+protocol, and installs a wallet that is fake only in where it lives: it signs
+with the node's keys, spends the node's outputs and broadcasts to the node. It
+signs in, prices a purchase, lets the wallet pick the outputs, builds, signs
+the PSET, broadcasts, and then checks the transaction that came out -- the
+treasury paid what the covenant demands, the remainder re-rested at the sale's
+own address, the ledger moved, and the account page showing it -- with no
+console error anywhere in the sequence. It needs the app built first.
 
 No CI and no framework. Those commands are the whole gate.
 

@@ -74,3 +74,14 @@ def test_rates_are_cached_briefly(t):
     ns._at = 0
     ns.rates()
     t.eq(src.calls, 2, "and again once it is stale")
+
+
+def test_the_swap_step_is_quoted_at_the_payment_asset_precision(t):
+    """The swap step names an amount a buyer goes and obtains. On a two-place
+    asset, printing it at eight places is wrong by a factor of a million."""
+    r = R.Rails(USDX, "USDX", R.NodeRateSource(Src({"SBTC": 6_400_000_000_000,
+                                                    "USDX": 100_000_000})),
+                payment_decimals=2)
+    q = r.quote("btc", 12_345)          # 123.45 USDX at two places
+    t.ok("123.45 USDX" in q["steps"][0],
+         "the swap step names the amount in the asset's own units", q["steps"][0])
