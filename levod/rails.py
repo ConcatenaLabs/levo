@@ -105,11 +105,15 @@ class NodeRateSource:
 
 class Rails:
     def __init__(self, payment_asset, payment_label="USDX", rate_source=None,
-                 quote_ttl=90):
+                 quote_ttl=90, payment_decimals=8):
         self.payment_asset = payment_asset
         self.payment_label = payment_label
         self.rate_source = rate_source
         self.quote_ttl = quote_ttl
+        # How finely the payment asset divides. The swap step tells a buyer an
+        # amount to obtain, and an amount printed at eight places on a
+        # two-place asset is wrong by a factor of a million.
+        self.payment_decimals = int(payment_decimals)
 
     def _btc_ready(self):
         if self.rate_source is None:
@@ -176,7 +180,8 @@ class Rails:
             "taken_at": now, "expires_at": now + self.quote_ttl,
             "steps": [
                 "swap %s BTC for %s over Lightning in your own wallet's swap"
-                % (_btc(sats), U.fmt(payment_atoms, 8, self.payment_label)),
+                % (_btc(sats), U.fmt(payment_atoms, self.payment_decimals,
+                                     self.payment_label)),
                 "fill the covenant with that %s, which is the step that hands "
                 "you your tokens" % self.payment_label,
             ],

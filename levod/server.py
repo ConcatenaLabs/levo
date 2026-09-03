@@ -159,7 +159,8 @@ class App:
                              R.NodeRateSource(
                                  self.node,
                                  btc_label=os.environ.get("LEVOD_BTC_RATE_LABEL")
-                                 or R.BTC_RATE_LABEL))
+                                 or R.BTC_RATE_LABEL),
+                             payment_decimals=self.payment_decimals)
         self.watcher = None
         self.operators = _accounts(os.environ.get("LEVOD_OPERATORS"))
         # An asset registry to check a listing's claims against, if this
