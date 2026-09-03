@@ -41,6 +41,7 @@ derives a different address, and a project that funded it would have locked its
 tokens somewhere no one can ever spend.
 """
 
+import re
 import json
 from pathlib import Path
 
@@ -49,6 +50,13 @@ import secp256k1 as EC
 from script import Op, NUMS
 
 VECTORS_PATH = Path(__file__).with_name("vectors.json")
+
+
+# `str.isdigit()` is true of a superscript, of another script's digits,
+# and of a string int() then refuses; it is a question about characters,
+# not about numbers. The numbers here are amounts, so the gate is the
+# shape of a written integer and nothing else.
+WHOLE_NUMBER = re.compile(r"^-?[0-9]+$")
 
 
 class CovenantDrift(RuntimeError):
@@ -114,7 +122,7 @@ def _price_part(v, name):
         raise ValueError(
             "%s must be a whole number: a price is a ratio of two whole "
             "numbers, so write 1/4 rather than 0.25/1" % name)
-    if isinstance(v, str) and v.strip().lstrip("-").isdigit():
+    if isinstance(v, str) and WHOLE_NUMBER.match(v.strip()):
         return int(v.strip())
     raise ValueError(
         "%s must be a whole number written in digits: a price is a ratio of "
@@ -252,7 +260,7 @@ def _int(v, name):
         raise ValueError("%s must be a whole number" % name)
     if isinstance(v, int):
         return v
-    if isinstance(v, str) and v.strip().lstrip("-").isdigit():
+    if isinstance(v, str) and WHOLE_NUMBER.match(v.strip()):
         return int(v.strip())
     if isinstance(v, float) and v.is_integer():
         return int(v)

@@ -85,3 +85,23 @@ def test_the_swap_step_is_quoted_at_the_payment_asset_precision(t):
     q = r.quote("btc", 12_345)          # 123.45 USDX at two places
     t.ok("123.45 USDX" in q["steps"][0],
          "the swap step names the amount in the asset's own units", q["steps"][0])
+
+
+def test_a_registry_answer_is_held_to_the_same_rule_as_a_lister(t):
+    """A registry is another operator's HTTP service and its answer is printed
+    on a Levo page beside the project's own words. A rule enforced only against
+    the people who can be identified is not a rule."""
+    import registry as REG
+    a = REG.Answer(checked=True, found=True, contract={
+        "ticker": "SB\u202eTC",
+        "name": "Pegged Bitcoin\u200b",
+        "entity": {"domain": "ok.test "}})
+    t.eq(a.ticker, "SBTC", "a bidi override is dropped from a ticker")
+    t.eq(a.name, "Pegged Bitcoin", "and an invisible character from a name")
+    t.eq(a.domain, "ok.test", "and the whitespace around a domain")
+    t.eq(REG.Answer(checked=True, found=True,
+                    contract={"ticker": "\u200b\u200b"}).ticker, None,
+         "a ticker of nothing but invisible characters is no ticker")
+    t.eq(REG.Answer(checked=True, found=True,
+                    contract={"name": "Ordinary Token"}).name, "Ordinary Token",
+         "and ordinary text is untouched")

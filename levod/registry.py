@@ -14,6 +14,7 @@ being listed.
 """
 
 import json
+import unicodedata
 import urllib.error
 import urllib.request
 
@@ -33,13 +34,18 @@ class Answer:
         self.contract = contract or {}
         self.error = error
 
+    # A registry is another operator's HTTP service, and what it answers is
+    # rendered on a Levo page beside the project's own words. A lister's words
+    # go through a rule that refuses control characters, bidi overrides and
+    # invisible ones; text from a registry has to clear the same bar, or the
+    # rule is only enforced against the people who can be identified.
     @property
     def ticker(self):
-        return str(self.contract.get("ticker") or "") or None
+        return _plain(self.contract.get("ticker"), 12)
 
     @property
     def name(self):
-        return str(self.contract.get("name") or "") or None
+        return _plain(self.contract.get("name"), 80)
 
     @property
     def precision(self):
@@ -48,13 +54,29 @@ class Answer:
 
     @property
     def domain(self):
-        return ((self.contract.get("entity") or {}).get("domain")) or None
+        return _plain((self.contract.get("entity") or {}).get("domain"), 120)
 
     def to_json(self):
         return {"checked": self.checked, "found": self.found,
                 "ticker": self.ticker, "name": self.name,
                 "precision": self.precision, "domain": self.domain,
                 "error": self.error}
+
+
+# Characters that are not text, whatever a font does with them: the same set
+# the platform refuses in a lister's own words.
+_BAD = set(chr(c) for c in list(range(0, 32)) + [127] + list(range(128, 160)))
+_BAD |= set("\u200b\u200c\u200d\u200e\u200f\u202a\u202b\u202c\u202d"
+            "\u202e\u2066\u2067\u2068\u2069\ufeff")
+
+
+def _plain(value, limit):
+    """A registry's string, as something safe to print anywhere, or None."""
+    if value is None:
+        return None
+    text = unicodedata.normalize("NFC", str(value))
+    text = "".join(c for c in text if c not in _BAD).strip()[:limit]
+    return text or None
 
 
 def look_up(base_url, asset_id, timeout=TIMEOUT, opener=None):

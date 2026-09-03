@@ -41,10 +41,18 @@ the close, and a project should reclaim promptly, because until it does a buyer
 who builds the transaction can still fill the sale.
 """
 
+import re
 import time
 
 import covenant as C
 import units as U
+
+
+# `str.isdigit()` is true of a superscript, of another script's digits,
+# and of a string int() then refuses; it is a question about characters,
+# not about numbers. The numbers here are amounts, so the gate is the
+# shape of a written integer and nothing else.
+WHOLE_NUMBER = re.compile(r"^-?[0-9]+$")
 
 
 DRAFT = "draft"          # terms fixed, address derived, tokens not yet locked
@@ -468,7 +476,7 @@ def _atoms(v, name):
         raise SaleError("%s must be a whole number of atoms" % name)
     if isinstance(v, int):
         return v
-    if isinstance(v, str) and v.strip().lstrip("-").isdigit():
+    if isinstance(v, str) and WHOLE_NUMBER.match(v.strip()):
         return int(v.strip())
     if isinstance(v, float) and v.is_integer():
         return int(v)

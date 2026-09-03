@@ -272,3 +272,25 @@ def test_a_reclaim_key_must_be_a_key(t):
     real = EC.xonly_pubkey(0x2222222222222222222222222222222222222222222222222222222222222222).hex()
     terms = C.SaleTerms(GOLD, USDX, 1, 4, "22" * 32, 10 ** 8, 900_000, real, 1000 * 10 ** 8)
     t.eq(terms.reclaim_xonly, real, "and a real key is taken")
+
+
+def test_a_number_is_a_number_and_not_a_character_class(t):
+    """`str.isdigit()` is true of a superscript, of other scripts' digits and
+    of strings int() then refuses: it asks about characters, not about
+    numbers. These are amounts of money."""
+    for bad in ("²", "٢٣", "--5", "１２", "1_000", "1e3", ""):
+        try:
+            C.SaleTerms.from_json({"token_asset": "aa" * 32, "payment_asset": "bb" * 32,
+                                   "price_num": bad, "price_den": 4,
+                                   "treasury_prog": "11" * 32, "min_lot": 1,
+                                   "close_locktime": 2_000_000_000,
+                                   "reclaim_xonly": "22" * 32, "total_atoms": 10})
+            t.ok(False, "%r is not a whole number" % bad)
+        except ValueError:
+            t.ok(True, "%r is not a whole number" % bad)
+    terms = C.SaleTerms.from_json({"token_asset": "aa" * 32, "payment_asset": "bb" * 32,
+                                   "price_num": " 25 ", "price_den": 100,
+                                   "treasury_prog": "11" * 32, "min_lot": 1,
+                                   "close_locktime": 2_000_000_000,
+                                   "reclaim_xonly": "22" * 32, "total_atoms": 10})
+    t.eq(terms.price_num, 25, "while an ordinary integer with spaces around it is read")

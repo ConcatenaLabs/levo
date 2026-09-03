@@ -63,6 +63,13 @@ MAX_HANDLERS = 64                 # concurrent requests before the rest wait
 WATCHER_FAILURES_BEFORE_UNHEALTHY = 3
 
 
+# `str.isdigit()` is true of a superscript, of another script's digits,
+# and of a string int() then refuses; it is a question about characters,
+# not about numbers. The numbers here are amounts, so the gate is the
+# shape of a written integer and nothing else.
+WHOLE_NUMBER = re.compile(r"^-?[0-9]+$")
+
+
 class RateLimit:
     """A token bucket per client, for the endpoints anybody can hit.
 
@@ -1155,7 +1162,7 @@ def _int_param(query, name):
     v = _one(query, name)
     if v is None:
         return None
-    if not v.lstrip("-").isdigit():
+    if not WHOLE_NUMBER.match(v):
         raise M.PlatformError("%s must be a whole number" % name)
     return int(v)
 
