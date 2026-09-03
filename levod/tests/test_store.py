@@ -495,3 +495,66 @@ def test_a_link_is_one_address_and_says_where_it_goes(t):
             t.ok(True, "%r is refused as a link" % url)
     t.eq(M.validate_links({"Site": "https://ok.test/a?b=c#d"}),
          {"Site": "https://ok.test/a?b=c#d"}, "an ordinary URL is kept as it is")
+
+
+def test_a_name_has_to_be_made_of_characters_that_draw_something(t):
+    """The first rule named fifteen code points, and Unicode has dozens more
+    that render as nothing. The test is the character's own category now --
+    and, for a name, that at least one character actually marks the page: a
+    hangul filler and a blank braille pattern are an ordinary letter and an
+    ordinary symbol by category, and draw nothing at all."""
+    invisible = ["\u2060", "\u061c", "\u180e", "\ufff9", "\u00ad"]
+    for ch in invisible:
+        try:
+            M._text(ch * 4, "name", 80, required=True, oneline=True, must_ink=True)
+            t.ok(False, "U+%04X is refused in a name" % ord(ch))
+        except M.PlatformError as e:
+            t.ok("not text" in str(e), "U+%04X is refused in a name" % ord(ch))
+    for ch in ["\u3164", "\u2800", "\u115f"]:
+        try:
+            M._text(ch * 4, "name", 80, required=True, oneline=True, must_ink=True)
+            t.ok(False, "a name of nothing but U+%04X is refused" % ord(ch))
+        except M.PlatformError as e:
+            t.ok("nothing visible" in str(e),
+                 "a name of nothing but U+%04X is refused" % ord(ch), str(e)[:60])
+    for good in ("Helios Grid", "\u00c9clair", "\u4e1c\u4eac Tokyo", "Grid 2000"):
+        t.eq(M._text(good, "name", 80, required=True, oneline=True, must_ink=True),
+             good, "%r is an ordinary name" % good)
+    # A soft hyphen in a DESCRIPTION is a paste from a word processor, not a
+    # defacement: prose is not refused over a character nobody can see, it is
+    # quietly dropped, which changes nothing a reader reads.
+    t.eq(M._text("a\u00adb", "description", 80), "ab",
+         "prose loses what a paste brought and keeps the listing")
+
+
+def test_a_url_is_judged_on_what_it_carries_not_on_its_normal_form(t):
+    """A URL that merely arrived in another Unicode normalisation form is a
+    URL. Comparing it against a normalised copy refused `caf\u00e9` written
+    with a combining accent for three faults it did not have -- and storing the
+    normalised form would have been worse, since normalising a percent-encoded
+    path can point a link somewhere else."""
+    decomposed = "https://ok.test/cafe\u0301"
+    t.eq(M.validate_links({"Site": decomposed}), {"Site": decomposed},
+         "a decomposed accent is kept exactly as it was sent")
+    t.eq(M.validate_links({"Site": "https://ok.test/\u212b"}),
+         {"Site": "https://ok.test/\u212b"}, "and so is an angstrom sign")
+    for bad in ("https://ok.test/a b", "https://ok.test/\u2060x"):
+        try:
+            M.validate_links({"Site": bad})
+            t.ok(False, "%r is refused" % bad)
+        except M.PlatformError:
+            t.ok(True, "%r is refused" % bad)
+
+
+def test_two_labels_that_are_one_label_are_refused(t):
+    """Stripped, `Site ` and ` Site` are the same label, and the second
+    silently replaced the first: a hand-written listing file lost a link with
+    no error at all."""
+    try:
+        M.validate_links({"Site ": "https://a.test/", " Site": "https://b.test/"})
+        t.ok(False, "a label given twice is refused")
+    except M.PlatformError as e:
+        t.ok("twice" in str(e), "a label given twice is refused", str(e)[:60])
+    t.eq(M.validate_links({"Site": "https://a.test/", "Docs": "https://b.test/"}),
+         {"Site": "https://a.test/", "Docs": "https://b.test/"},
+         "two different labels are two links")

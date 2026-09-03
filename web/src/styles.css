@@ -532,7 +532,8 @@ input[type="date"]::-webkit-calendar-picker-indicator { filter: invert(.85); }
   .terms th, .terms td { break-inside: avoid; }
   a { text-decoration: none; }
   /* On paper a link is only useful if its address is on the page. */
-  .prose a[href^="http"]::after, p a[href^="http"]::after {
+  .prose a[href^="http"]::after, p a[href^="http"]::after,
+  .links-list a[href^="http"]::after {
     content: " (" attr(href) ")";
     font-size: .8em;
     color: #555;

@@ -137,13 +137,27 @@ def validate_links(links):
         # A URL is one token: no spaces, no line breaks, nothing invisible.
         # A link carrying a right-to-left override reads as a different address
         # than it goes to, and one carrying a space is simply broken.
-        if any(c.isspace() for c in url) or url != _printable(url, "link %r" % label):
+        #
+        # `_printable` is called for its refusal, not for its answer: it
+        # normalises, and a URL that merely arrived in another normalisation
+        # form is a URL, not a fault -- comparing against the normalised copy
+        # refused `café` with a decomposed accent for three things it had not
+        # done. The submitted bytes are what is kept, because normalising a
+        # percent-encoded path can point a link somewhere else.
+        _printable(url, "link %r" % label)
+        if any(c.isspace() for c in url):
             raise PlatformError(
-                "link %r must be a single URL with no spaces, line breaks or "
-                "invisible characters in it" % label)
+                "link %r must be a single URL with no spaces or line breaks "
+                "in it" % label)
         parsed = urlparse(url)
         if parsed.scheme not in ("http", "https") or not parsed.netloc:
             raise PlatformError("link %r must be an http or https URL" % label)
+        if label in out:
+            # Two labels that differ only in the spaces around them are one
+            # label after stripping, and the second silently replaced the
+            # first -- a hand-written listing file lost a link with no error.
+            raise PlatformError(
+                "link %r is given twice; each label appears once" % label)
         if "@" in parsed.netloc:
             # `https://sequentia.example@evil.test/` reads as one site and goes
             # to another. Nothing legitimate on a public page needs it.
@@ -170,13 +184,29 @@ BIDI_AND_INVISIBLE = (
     "\u2066\u2067\u2068\u2069"            # the isolates
     "\ufeff"                                # a zero-width no-break space
 )
+# Characters that ARE letters or symbols by category and draw nothing at all.
+BLANK_GLYPHS = "\u3164\uffa0\u2800\u115f\u1160\u17b4\u17b5"
 
 
-def _printable(v, name):
-    """The same text with nothing in it that is not text, or a refusal."""
+def _printable(v, name, strict=True):
+    """The same text with nothing in it that is not text, or a refusal.
+
+    A property, not a list. The first version named fifteen code points, and
+    Unicode has dozens more that render as nothing -- word joiners, the Arabic
+    letter mark, the Mongolian vowel separator, interlinear annotation marks --
+    so the test is the character's own CATEGORY: a format, control, surrogate
+    or private-use character is not text here whatever its number.
+    """
     v = unicodedata.normalize("NFC", v)
-    bad = [c for c in v if (ord(c) < 32 and c not in "\n\t")
-           or ord(c) == 127 or 128 <= ord(c) <= 159 or c in BIDI_AND_INVISIBLE]
+    bad = [c for c in v
+           if unicodedata.category(c) in ("Cf", "Cc", "Cs", "Co", "Cn")
+           and c not in "\n\t"]
+    if bad and not strict:
+        # Prose is pasted from word processors, and a soft hyphen or a word
+        # joiner in a paragraph is a paste rather than a defacement. Dropping
+        # them changes nothing a reader sees; refusing would cost a lister
+        # their listing over a character they cannot see either.
+        return "".join(c for c in v if c not in bad)
     if bad:
         raise PlatformError(
             "the %s carries characters that are not text (%s). A name is read "
@@ -186,7 +216,21 @@ def _printable(v, name):
     return v
 
 
-def _text(v, name, limit, required=False, oneline=False):
+def _inks(v):
+    """Whether any of this actually marks the page.
+
+    Refusing the format characters is not enough on its own: U+3164 HANGUL
+    FILLER and U+2800 BRAILLE PATTERN BLANK are ordinary letters and symbols by
+    category and draw nothing at all, so a name made of them is a board row
+    with no name on it.
+    """
+    return any(not c.isspace()
+               and unicodedata.category(c) not in ("Cf", "Cc", "Cs", "Co", "Cn", "Zs")
+               and c not in BLANK_GLYPHS
+               for c in v)
+
+
+def _text(v, name, limit, required=False, oneline=False, must_ink=False):
     """A field a person typed, as text this platform will print anywhere.
 
     `oneline` is for the fields that appear in a row: a name with a line break
@@ -197,13 +241,18 @@ def _text(v, name, limit, required=False, oneline=False):
         v = ""
     if not isinstance(v, str):
         raise PlatformError("%s must be text" % name)
-    v = _printable(v, name)
+    v = _printable(v, name, strict=oneline or must_ink)
     if oneline and ("\n" in v or "\t" in v):
         raise PlatformError("the %s is one line: it cannot contain a line "
                             "break or a tab" % name)
     v = v.strip()
     if required and not v:
         raise PlatformError("a project needs a %s" % name)
+    if must_ink and v and not _inks(v):
+        raise PlatformError(
+            "the %s has nothing visible in it: every character in it draws "
+            "nothing, so the listing would show a blank where its %s should be"
+            % (name, name))
     if len(v) > limit:
         raise PlatformError("the %s is limited to %d characters" % (name, limit))
     return v
@@ -230,7 +279,7 @@ class Project:
         if not isinstance(ticker, str) or not re.match(r"^[A-Z0-9]{2,12}$", ticker or ""):
             raise PlatformError("the ticker must be 2 to 12 uppercase letters or digits")
         self.slug = slug
-        self.name = _text(name, "name", 80, required=True, oneline=True)
+        self.name = _text(name, "name", 80, required=True, oneline=True, must_ink=True)
         self.ticker = ticker
         self.summary = _text(summary, "summary", 200, oneline=True)
         self.description = _text(description, "description", 8000)
@@ -263,7 +312,8 @@ class Project:
         if not isinstance(meta, dict):
             raise PlatformError("send the fields to change as an object")
         if "name" in meta:
-            self.name = _text(meta.get("name"), "name", 80, required=True, oneline=True)
+            self.name = _text(meta.get("name"), "name", 80, required=True,
+                              oneline=True, must_ink=True)
         if "summary" in meta:
             self.summary = _text(meta.get("summary"), "summary", 200, oneline=True)
         if "description" in meta:

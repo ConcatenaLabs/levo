@@ -60,7 +60,7 @@ export default function LockPanel({ project, onLocked }) {
       <div className="field">
         <div className="field-title" id="lockaddr-title">Sale address</div>
         <div className="hex small" aria-labelledby="lockaddr-title">
-          <Hex value={project.address} href={explorer('address', project.address)} />
+          <Hex value={project.address} href={explorer('address', project.address)} label="sale address" />
         </div>
       </div>
       <div className="kv"><span>Amount</span><b>{amount(sale.terms.total_atoms, decimals)} {project.ticker}</b></div>

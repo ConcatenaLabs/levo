@@ -365,7 +365,7 @@ export default function BuyFlow({ project, tier, onSettled }) {
             Levo could record it against your cap, which is bookkeeping and
             nothing more: the sale has moved either way. Sign in and record it.
             <div style={{ marginTop: '.4rem' }}>
-              <Hex value={sentTxid} href={explorer('tx', sentTxid)} />
+              <Hex value={sentTxid} href={explorer('tx', sentTxid)} label="transaction id" />
             </div>
           </Notice>
         ) : (
@@ -686,7 +686,7 @@ export default function BuyFlow({ project, tier, onSettled }) {
           <strong>Broadcast.</strong> Your tokens and the project's payment are in
           one transaction; the purchase settles when it confirms.
           <div style={{ marginTop: '.4rem' }}>
-            <Hex value={sentTxid} href={explorer('tx', sentTxid)} />
+            <Hex value={sentTxid} href={explorer('tx', sentTxid)} label="transaction id" />
           </div>
           {recorded === 'failed' && (
             <div style={{ marginTop: '.6rem' }}>

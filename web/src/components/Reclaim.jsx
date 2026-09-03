@@ -137,7 +137,7 @@ export default function Reclaim({ project }) {
               Put [signature, leaf, control block] in input 0's witness, sign your fee
               inputs with your wallet, and broadcast. Levo recognises the reclaim by its
               transaction id, which is{' '}
-              <Hex value={built.txid} short={12} />, once it is on chain.
+              <Hex value={built.txid} short={12} label="transaction id" />, once it is on chain.
             </div>
           </div>
         </div>

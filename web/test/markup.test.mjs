@@ -81,3 +81,17 @@ test('no rendered passage sets a dash as two hyphens', () => {
   }
   assert.deepEqual(wrong, [], 'rendered text with a double hyphen')
 })
+
+test('no two buttons on a page share one accessible name for different things', () => {
+  // A screen reader's button list is names only. Seven "Copy"s on the sale
+  // page were seven identical entries for seven different values.
+  const bare = []
+  for (const { path, text } of files) {
+    for (const m of text.matchAll(/<Hex\b[^>]*\/>/g)) {
+      if (!/label=/.test(m[0]) && !/copy=\{false\}/.test(m[0])) {
+        bare.push(path + ': ' + m[0].slice(0, 60))
+      }
+    }
+  }
+  assert.deepEqual(bare, [], 'Hex without a label for its copy button')
+})
