@@ -904,6 +904,66 @@ def run(d):
     ok.eq(code, 405, "a static file takes no POST")
     ok.eq(h.get("Allow"), "GET, HEAD, OPTIONS", "and says so")
 
+    # --- a request levod cannot parse --------------------------------------
+    #
+    # The stdlib answers these before any handler runs, and levod's own logger
+    # ran into them: it read a path and a header block that a failed parse
+    # never produced, raised inside the logger, and the client got nothing at
+    # all -- with the fault printed as a traceback rather than a line.
+    ok.section("malformed")
+    import socket as _socket
+    host, port = d.base.split("//")[1].split(":")
+    # A request that never parsed is not an HTTP/1.x request, so the answer to
+    # it carries no status line -- that is the protocol, not a fault. What
+    # matters is that the client is told something and the service survives.
+    for name, raw in (
+        ("a request line that is not one", b"BADLINE\r\n\r\n"),
+        ("a version this does not speak", b"GET / HTTP/9.9\r\n\r\n"),
+    ):
+        conn = _socket.create_connection((host, int(port)), timeout=5)
+        conn.sendall(raw)
+        got = b""
+        try:
+            while len(got) < 4096:      # headers and body can arrive apart
+                chunk = conn.recv(1024)
+                if not chunk:
+                    break
+                got += chunk
+        except Exception:
+            pass
+        conn.close()
+        ok.ok(bool(got), "%s is answered at all" % name, got[:60])
+        ok.ok(b'{"error"' in got, "in JSON, like everything else here", got[:80])
+    code, r = req("GET", "/api/health")
+    ok.eq(code, 200, "and the service is still up afterwards")
+
+    # One address cannot take every handler slot.
+    #
+    # A socket timeout re-arms on every read, so a client sending a byte every
+    # few seconds holds a slot indefinitely; sixty-four of them held the site.
+    # A reverse proxy is exempt on purpose -- every request behind one arrives
+    # from the same address -- so this is the directly-exposed case.
+    was_proxies, was_cap = d.app.trusted_proxies, d.app.per_peer
+    d.app.trusted_proxies, d.app.per_peer = set(), 2
+    held = []
+    try:
+        for _ in range(2):
+            conn = _socket.create_connection((host, int(port)), timeout=5)
+            conn.sendall(b"G")                 # a request that never finishes
+            held.append(conn)
+        time.sleep(0.3)
+        conn = _socket.create_connection((host, int(port)), timeout=5)
+        conn.sendall(b"GET /api/health HTTP/1.1\r\nHost: x\r\n\r\n")
+        answer = conn.recv(200)
+        conn.close()
+        ok.ok(b"429" in answer, "a third connection from the same address is refused",
+              answer[:60])
+        ok.ok(b"too many connections" in answer, "and says why", answer[:80])
+    finally:
+        for conn in held:
+            conn.close()
+        d.app.trusted_proxies, d.app.per_peer = was_proxies, was_cap
+
     # --- a file the browser already has ------------------------------------
     #
     # `no-cache` means "ask me before reusing this", and a browser can only ask

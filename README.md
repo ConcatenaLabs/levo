@@ -341,6 +341,8 @@ reaches the box nowhere else.
 | `LEVOD_LINKS` | — | JSON of label to URL for the rest of the deployment (wallet, faucet, staking pools), shown on the site. |
 | `LEVOD_REGISTRY_URL` | — | An asset registry, read as `<url>/<asset id>`. A listing whose ticker or decimals contradict a registered contract is refused; an unregistered asset lists as it is. A registry that cannot be reached blocks nothing. |
 | `LEVOD_WATCH_SECONDS` | `60` | How often the watcher reconciles. |
+| `LEVOD_REQUEST_DEADLINE` | `20` | Seconds one request may take from its first byte to its last, head and body together. A socket timeout re-arms on every read and bounds nothing on its own; this is the wall clock. |
+| `LEVOD_PER_PEER` | `8` | Handler slots one address may hold at once. Addresses in `LEVOD_TRUSTED_PROXIES` are exempt, because every request behind a proxy arrives from the same address. Set it 0 to disable. |
 | `LEVOD_CLIENT_TIMEOUT` | `10` | Seconds one connection may take to send its request. A client that opens a socket and stops holds a handler slot for exactly this long. Raise it only where levod is exposed directly to slow links rather than through a reverse proxy. |
 | `LEVOD_API_ONLY` | off | Serve the API and no app. Set it when nothing is built into `web/dist`, so the health endpoint does not report a site that answers 404 for every page as healthy. |
 | `LEVOD_DUST_RELAY` | `100` | The node's dust rate, in reference units per kvB. A node will not relay an output worth less than this rate charges for it, and it does not report the figure, so it is set here. Levo refuses a sale whose smallest purchase would pay the treasury less than that, and a purchase that would. Match it to the node if it was built with another figure. |
