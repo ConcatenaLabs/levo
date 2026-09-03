@@ -379,8 +379,15 @@ p { margin: 0 0 1rem; }
   text-decoration: none; color: inherit;
 }
 .row:hover { background: var(--surface); box-shadow: inset 2px 0 var(--brass); }
-.row-name { font-family: var(--display); font-weight: 700; font-size: 1.1rem; }
-.row-sum { color: var(--muted); font-size: .875rem; margin-top: .2rem; }
+/* A listing's own words, in a row a lister does not control the width of. A
+   name is eighty characters and may legitimately contain no spaces at all --
+   a Chinese or Japanese name, or an issuer being awkward -- and without this
+   one such row pushed the whole board sideways by fifteen hundred pixels on a
+   phone. Headings already wrap this way; rows did not. */
+.row-name { font-family: var(--display); font-weight: 700; font-size: 1.1rem;
+            overflow-wrap: anywhere; }
+.row-sum { color: var(--muted); font-size: .875rem; margin-top: .2rem;
+           overflow-wrap: anywhere; }
 .row-ticker {
   font-family: var(--mono); font-size: .7rem; color: var(--brass);
   border: 1px solid var(--brass-dim); border-radius: 2px; padding: .1rem .35rem;

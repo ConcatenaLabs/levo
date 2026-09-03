@@ -245,6 +245,20 @@ def main():
                     failed.append("the heading breaks onto a line %spx wide at 300px" % runt)
                 else:
                     passed += 1
+                # A listing's own words, in a row whose width a lister does
+                # not control: eighty characters with no spaces in them is a
+                # name levod accepts, and it pushed the whole board sideways.
+                page.go(demo.base + "/projects", settle=1.5)
+                spill = page.eval(
+                    "(function(){const r=document.querySelector('.row-name');"
+                    "if(!r) return 0; r.firstChild.textContent='W'.repeat(80);"
+                    "const d=document.documentElement;"
+                    "return d.scrollWidth - d.clientWidth})()")
+                if spill and spill > 1:
+                    failed.append("a long name pushes the board %spx sideways" % spill)
+                else:
+                    passed += 1
+                page.go(demo.base + "/", settle=1.5)
                 shape = page.eval(
                     "(function(){const l=document.querySelector('.beam-list li');"
                     "const p=document.querySelector('.beam-labels');"
