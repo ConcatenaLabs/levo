@@ -187,6 +187,16 @@ def run(ok, rig, levod, env):
           "and says a just-broadcast purchase may simply not have arrived yet",
           out[-200:])
 
+    # --- verify judges the LISTING, not how far the sale has got -----------
+    #
+    # A sold-out, reclaimed or just-bought sale has no unspent funding, and
+    # calling that a failure told a reader "do not buy from this listing" about
+    # every sale that reached its natural end -- and exited 1, which any script
+    # gating on it would read as a compromised sale.
+    out = levo("verify", "cli-sale")
+    ok.ok("OK" in out and "FAILED" not in out,
+          "verify still passes after a purchase has moved the sale", out[-240:])
+
     # --- sales lists it, and says how many there are -----------------------
     out = levo("sales")
     ok.ok("cli-sale" in out, "sales lists it", out[:200])
@@ -228,6 +238,13 @@ def run(ok, rig, levod, env):
     ok.ok(int(detail["sale"]["locked_atoms"]) == 0 or detail["sale"]["status"] in
           ("closed", "reclaimed"), "and the covenant is empty",
           "%s / %s" % (detail["sale"]["status"], detail["sale"]["locked_atoms"]))
+    # A swept sale has no unspent funding, which is what the end of a sale
+    # looks like -- not a listing to be warned away from.
+    out = levo("verify", "cli-sale")
+    ok.ok("OK" in out and "FAILED" not in out,
+          "verify passes on a sale that has been reclaimed", out[-260:])
+    ok.ok("Nothing is resting at it now" in out,
+          "and says separately that nothing rests there", out[-260:])
 
     # --- and the same sweep with no Levo in it at all -----------------------
     #

@@ -74,7 +74,7 @@ window.sequentia = {
 class Levod:
     """The real server against the rig's node, serving the built app."""
 
-    def __init__(self, rig, port, payment_asset):
+    def __init__(self, rig, port, payment_asset, operator=None):
         self.state = Path(tempfile.mkdtemp()) / "state.json"
         env = dict(
             os.environ,
@@ -87,6 +87,10 @@ class Levod:
             LEVOD_CHAIN_TTL="0",
             LEVOD_TIERS=json.dumps([{"name": "Everyone", "min_stake": 0,
                                      "cap": 1000000, "may_list": True}]),
+            # The browser's own account is an operator here, so the test can
+            # open the ledger panel -- the issuer-only view that shipped a
+            # blank page because nothing could reach it.
+            LEVOD_OPERATORS=operator or "",
         )
         self.log = open(os.path.join(tempfile.mkdtemp(), "levod.log"), "w+")
         self.proc = subprocess.Popen([sys.executable, str(ROOT / "levod" / "server.py")],
@@ -118,17 +122,13 @@ class Levod:
 class Wallet:
     """What the page's wallet calls actually do: the node, in this process."""
 
-    def __init__(self, rig, payment_asset):
+    def __init__(self, rig, payment_asset, key=None, account=None):
         self.rig = rig
         self.payment_asset = payment_asset
         self.seen = []
         self.broadcast = []               # every txid this wallet actually relayed
-        # The key this browser signs in with. levod recovers the account from
-        # the signature, so this one key is the browser's identity for the run.
-        # It comes from the node's own wallet: a key written into a test is a
-        # key for one chain's address version, and this suite runs on a custom
-        # chain whose version is set by the rig.
-        self.key = rig.w("dumpprivkey", rig.w("getnewaddress", "", "bech32"))
+        self.key = key
+        self.account = account
 
     def handle(self, method, params):
         self.seen.append(method)
@@ -296,6 +296,20 @@ def run(ok, rig, levod, page, wallet, slug):
     ok.ok("100" in page.text(), "the account page shows the position it just bought",
           page.text()[:200])
 
+    # --- the issuer's own view of the ledger -------------------------------
+    #
+    # This panel is behind a session that only an issuer or an operator has,
+    # which is why a page-painting test could never reach it -- and it shipped
+    # calling a helper it never imported, so opening it unmounted the entire
+    # sale page, nav and footer included.
+    page.go(levod.url + "/p/" + slug, settle=2.0)
+    page.click("See what Levo recorded")
+    wait(page, wallet, has(page, "what levo recorded"), timeout=60)
+    ok.ok(len(page.text()) > 400, "the sale page survives opening its own ledger",
+          page.text()[:200])
+    ok.ok("for" in page.text().lower() and "HLX" in page.text(),
+          "and the ledger lists the purchase")
+
     errors = page.errors()
     ok.eq(errors, [], "the whole purchase ran with no console error")
 
@@ -359,11 +373,17 @@ def main():
         Path(rig.root, "elements.conf").write_text(
             "chain=elementsregtest\n[elementsregtest]\n"
             "rpcport=%d\nrpcuser=levo\nrpcpassword=levo\n" % rig.port)
-        levod = Levod(rig, free_port(), pay)
+        # The browser's identity, made before levod starts so levod can be
+        # told about it. A key written into a test is a key for one chain's
+        # address version, and this suite runs on a custom chain.
+        addr = rig.w("getnewaddress", "", "bech32")
+        account = rig.w("getaddressinfo", addr)["pubkey"]
+        levod = Levod(rig, free_port(), pay, operator=account)
         slug = setup_sale(rig, levod, ok)
         page = cdp.Page(chromium)
         page.on_new_document(WALLET_JS)
-        run(ok, rig, levod, page, Wallet(rig, pay), slug)
+        run(ok, rig, levod, page,
+            Wallet(rig, pay, key=rig.w("dumpprivkey", addr), account=account), slug)
     except Exception:
         import traceback
         ok.failed.append("the drive raised:\n" + traceback.format_exc())

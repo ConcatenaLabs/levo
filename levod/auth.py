@@ -216,7 +216,16 @@ def _ripemd160(data):
 B58 = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
 
 
+# The longest base58check string that can be an address: 25 bytes of payload
+# is 34 characters, and nothing legitimate is near this. The bound matters
+# because the decode below is quadratic in its input -- 200 KB of "2" costs
+# four seconds of CPU, on a single-process server, which is everyone's latency.
+MAX_B58 = 120
+
+
 def _b58check_decode(s):
+    if len(s) > MAX_B58:
+        raise ValueError("too long for a base58check address")
     n = 0
     for ch in s:
         if ch not in B58:

@@ -327,7 +327,12 @@ class App:
 class Handler(BaseHTTPRequestHandler):
     server_version = "levod"
     sys_version = ""
-    timeout = 30                       # a client that stops sending frees its thread
+    # How long one connection may take to send its request. A client that
+    # opens a socket, sends a byte and stops is holding a handler slot for
+    # exactly this long, and sixty-four of them hold every slot levod has.
+    # Ten seconds is longer than any real client needs on a loopback or a LAN,
+    # and a slow public link is the reverse proxy's problem, not levod's.
+    timeout = float(os.environ.get("LEVOD_CLIENT_TIMEOUT") or 10)
     app = None
 
     def version_string(self):
@@ -407,17 +412,29 @@ class Handler(BaseHTTPRequestHandler):
 
     # --- plumbing -----------------------------------------------------------
 
+    # A journal line is read in a terminal, so a request line that carries
+    # control characters is a request that can write whatever it likes there:
+    # escape sequences recolour, move the cursor and overwrite what is above.
+    # The standard library escapes them and this override used to lose that.
+    LOG_ESCAPES = {c: "\\x%02x" % c for c in list(range(0, 32)) + [127]}
+
     def log_message(self, fmt, *args):
         if not self.app or not self.app.verbose:
             # Health checks, tier tables and asset fetches say nothing when
             # they succeed; the journal is for what an operator acts on.
-            path = urlparse(self.path).path
+            #
+            # `path` is only set once a request line has PARSED. A malformed
+            # or over-long one is logged before that, and reading it here
+            # raised AttributeError from inside the logger, which left the
+            # client with no answer at all.
+            path = urlparse(getattr(self, "path", "") or "").path
             code = str(args[1]) if len(args) > 1 else ""
             quiet = path in ("/api/health", "/api/tiers", "/api/rails", "/api/config") \
                 or path.startswith("/assets/") or path.endswith((".svg", ".png", ".woff2"))
             if quiet and code.startswith("2"):
                 return
-        sys.stderr.write("levod %s %s\n" % (self.client(), fmt % args))
+        sys.stderr.write("levod %s %s\n"
+                         % (self.client(), (fmt % args).translate(self.LOG_ESCAPES)))
 
     def log_error(self, fmt, *args):
         pass                            # the request line is logged once, above
@@ -526,14 +543,30 @@ class Handler(BaseHTTPRequestHandler):
         self._method_not_allowed()
 
     def _method_not_allowed(self):
-        body = json.dumps({"error": "method not allowed"}).encode()
-        self.send_response(405)
-        self.send_header("Allow", "GET, HEAD, POST, PATCH, DELETE, OPTIONS")
-        self.send_header("Content-Type", "application/json")
-        self.send_header("Content-Length", str(len(body)))
-        self.end_headers()
-        if self.command != "HEAD":
-            self.wfile.write(body)
+        """The verbs THIS path takes, and the site's own headers with them.
+
+        A blanket list is a lie a scanner or a cache will act on -- it said
+        every path took POST, PATCH and DELETE, including a static file and a
+        read-only endpoint, and contradicted what OPTIONS answered for the same
+        URL a moment earlier. Going through the ordinary responder also means
+        the answer carries nosniff and the frame and referrer policies, which
+        this one wrote itself and left out.
+        """
+        path = urlparse(getattr(self, "path", "") or "").path
+        parts = [p for p in path.split("/") if p]
+        allowed = _methods_for(parts[1:]) if parts[:1] == ["api"] else None
+        if allowed is None:
+            allowed = [] if path.startswith("/api/") else ["GET", "HEAD"]
+        # The same list OPTIONS gives for this URL, HEAD included where GET is.
+        verbs = list(allowed)
+        if "GET" in verbs and "HEAD" not in verbs:
+            verbs.append("HEAD")
+        self._json(405, {"error": "%s is not allowed here%s"
+                                  % (self.command,
+                                     ("; this path takes " + ", ".join(allowed))
+                                     if allowed else "")},
+                   headers={"Allow": ", ".join(verbs + ["OPTIONS"]) if verbs
+                            else "OPTIONS"})
 
     def _dispatch(self, method):
         path = urlparse(self.path).path
@@ -703,6 +736,11 @@ class Handler(BaseHTTPRequestHandler):
             app.challenges.redeem(message)          # burns the nonce first
             pubkey = A.recover_pubkey(message, _str(b, "signature"))
             address = b.get("address")
+            if address is not None and len(str(address)) > 200:
+                # An address is at most about ninety characters on any chain
+                # here. A field this size is not an address, and the decoders
+                # behind it are not free.
+                raise A.BadSignature("that is not an address")
             if address:
                 # The caller names the address it signed with, so a signature
                 # over slightly different bytes is a clear error rather than a

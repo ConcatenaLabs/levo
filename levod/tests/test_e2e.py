@@ -892,6 +892,17 @@ def run(d):
     ok.ok("GET" in (h.get("Allow") or ""), "with the verbs it does take", h.get("Allow"))
     code, r, _ = _req(d.base, "GET", "/api/no-such-thing")
     ok.eq(code, 404, "while a path that does not exist is still 404")
+    # PUT went through a hand-written reply that named every verb for every
+    # path, contradicting the OPTIONS answer for the same URL and skipping the
+    # site's own headers.
+    code, r, h = _req(d.base, "PUT", "/api/health")
+    ok.eq(code, 405, "PUT is refused")
+    ok.eq(h.get("Allow"), "GET, HEAD, OPTIONS", "with the same list OPTIONS gives")
+    ok.eq(h.get("X-Content-Type-Options"), "nosniff",
+          "and the site's own headers on it")
+    code, r, h = _req(d.base, "POST", "/index.html")
+    ok.eq(code, 405, "a static file takes no POST")
+    ok.eq(h.get("Allow"), "GET, HEAD, OPTIONS", "and says so")
 
     # --- the ledger an issuer can read -------------------------------------
     ok.section("ledger")

@@ -106,3 +106,20 @@ def test_rate_limit_is_a_token_bucket_per_client(t):
     t.ok(rl.allow("b", now), "another client has its own bucket")
     t.ok(rl.allow("a", now + 10), "and a tenth of a minute later one token is back")
     t.ok(not rl.allow("a", now + 10), "but only one")
+
+
+def test_an_address_that_is_not_an_address_costs_nothing(t):
+    """The base58 decoder is quadratic in its input, and this is a public
+    endpoint on a single-process server: two hundred kilobytes of one character
+    burned four seconds of CPU, which on one interpreter is everyone's
+    latency."""
+    import time
+    start = time.time()
+    for n in (10_000, 200_000):
+        try:
+            auth.key_matches_address("02" + "11" * 32, "2" * n)
+            t.ok(False, "a %d-character address is refused" % n)
+        except ValueError:
+            t.ok(True, "a %d-character address is refused" % n)
+    t.ok(time.time() - start < 0.5, "and refusing it is instant",
+         "%.2fs" % (time.time() - start))
