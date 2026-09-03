@@ -504,7 +504,7 @@ def _as_bytes(v):
 
 
 def build_reclaim(sale, destination_spk, fee_inputs, fee_atoms, fee_asset,
-                  genesis_hash, locktime=None, change_spk=None):
+                  genesis_hash, locktime=None, change_spk=None, sweep_asset=None):
     """Sweep whatever did not sell, after the sale's close.
 
     The reclaim leaf is the one place where a covenant spend carries a
@@ -519,6 +519,12 @@ def build_reclaim(sale, destination_spk, fee_inputs, fee_atoms, fee_asset,
     `change_spk` -- never to the token destination. A project sweeping to a
     cold wallet, a custodian or a deposit address that credits only the token
     would otherwise send the whole of a fee input there with it.
+
+    `sweep_asset` names what the covenant input actually holds, for the case
+    that is not the sale's own token: the reclaim leaf constrains no output and
+    checks no asset, so the project's key can take back a payment somebody sent
+    to the sale address by mistake exactly as it takes back unsold tokens. The
+    sale's token is the default because that is the ordinary sweep.
     """
     if not sale.funding or sale.locked_atoms <= 0:
         raise BuildError("this sale holds nothing to reclaim")
@@ -564,7 +570,8 @@ def build_reclaim(sale, destination_spk, fee_inputs, fee_atoms, fee_asset,
                          % (supplied.get(fee_asset.lower(), 0), fee_asset, fee_atoms))
 
     change_spk = _need_spk(change_spk, "change_script_pubkey") if change_spk else None
-    tx.vout.append(TxOut(sale.terms.token_asset, sale.locked_atoms, destination_spk))
+    tx.vout.append(TxOut(sweep_asset or sale.terms.token_asset,
+                         sale.locked_atoms, destination_spk))
     for asset, brought in sorted(supplied.items()):
         left = brought - (int(fee_atoms) if asset == fee_asset.lower() else 0)
         if left:
@@ -579,7 +586,11 @@ def build_reclaim(sale, destination_spk, fee_inputs, fee_atoms, fee_asset,
     if fee_atoms:
         tx.vout.append(TxOut(fee_asset, int(fee_atoms), b""))
 
-    spent = [(sale.terms.token_asset, sale.locked_atoms, sale.cov.script_pubkey)]
+    # The covenant input as the chain sees it: a taproot signature commits to
+    # the asset and amount of every output being spent, so this has to be what
+    # is actually there rather than what the sale usually holds.
+    spent = [(sweep_asset or sale.terms.token_asset, sale.locked_atoms,
+              sale.cov.script_pubkey)]
     for i in fee_inputs or []:
         spent.append((str(i["asset"]).lower(), int(i["value_atoms"]),
                       _as_bytes(i["script_pubkey"])))

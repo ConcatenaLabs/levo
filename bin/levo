@@ -288,9 +288,16 @@ def unblinded_inputs(asset_hex, need_atoms):
         if total >= need_atoms:
             return picked, total
     raise Fail(
-        "not enough UNBLINDED %s to cover %s (found %s). Send some to an "
-        "unblinded address first: a covenant reads the amounts it checks, so it "
-        "cannot be filled with confidential outputs."
+        "not enough UNBLINDED %s to cover %s (found %s).\n"
+        "      A covenant reads the amounts it checks, so it cannot be filled "
+        "with confidential outputs -- and an ordinary `sendtoaddress` blinds "
+        "the change of every asset it touches, which is usually how a wallet "
+        "ends up here.\n"
+        "      To get explicit outputs back, fund a send to one of your own "
+        "addresses yourself: `createrawtransaction`, then `fundrawtransaction` "
+        "with options {\"fee_asset\": ..., \"changeAddress\": {<asset>: "
+        "<your address>}}, then sign and send. `levo lock` funds its own send "
+        "that way, which is why it does not leave a wallet like this."
         % (asset_hex[:12], U.fmt(need_atoms), U.fmt(total)))
 
 
@@ -981,11 +988,34 @@ def cmd_rescue(args):
     scan = node("scantxoutset", "start", ["raw(%s)" % cov.spk_hex])
     if not scan or not scan.get("success"):
         raise Fail("your node could not scan for the sale's outputs")
-    resting = [u for u in scan.get("unspents") or []
-               if (u.get("asset") or "").lower() == terms.token_asset]
-    if not resting:
-        raise Fail("nothing of %s is resting at %s; there is nothing to reclaim"
-                   % (terms.token_asset[:12], addr))
+    unspents = scan.get("unspents") or []
+    if args.outpoint:
+        # One named output, whatever asset it holds. The reclaim leaf checks a
+        # locktime and a signature and nothing else, so the project's key can
+        # take back a payment somebody sent to the sale address by mistake
+        # exactly as it takes back unsold tokens -- and until this, no shipped
+        # command could, which left that money visible and unreachable.
+        want_txid, _, want_vout = args.outpoint.partition(":")
+        resting = [u for u in unspents
+                   if u.get("txid") == want_txid.strip()
+                   and str(u.get("vout")) == want_vout.strip()]
+        if not resting:
+            raise Fail("%s is not resting at %s. `levo rescue --terms <file>` "
+                       "with no --outpoint prints what is" % (args.outpoint, addr))
+    else:
+        resting = [u for u in unspents
+                   if (u.get("asset") or "").lower() == terms.token_asset]
+        if not resting:
+            others = [u for u in unspents]
+            if others:
+                raise Fail(
+                    "nothing of %s is resting at %s, but %d other output(s) "
+                    "are. They are not this sale's token -- a payment sent "
+                    "here by mistake, most likely -- and your reclaim key can "
+                    "take them back one at a time: rerun with --outpoint "
+                    "%s:%s" % (terms.token_asset[:12], addr, len(others),
+                               others[0]["txid"], others[0]["vout"]))
+            raise Fail("nothing is resting at %s; there is nothing to reclaim" % addr)
     biggest = max(resting, key=lambda u: atoms(u.get("amount", 0)))
     held = atoms(biggest.get("amount", 0))
     dp = spec.get("token_decimals")
@@ -998,8 +1028,11 @@ def cmd_rescue(args):
     # published. `confirm_lock` is the listing-time check and refuses exactly
     # that, so a rescue that went through it could sweep only a sale nobody had
     # ever bought from -- which is not the sale a rescue is for.
-    if (biggest.get("asset") or "").lower() != terms.token_asset:
-        raise Fail("that output does not hold this sale's token")
+    sweep_asset = (biggest.get("asset") or "").lower()
+    if sweep_asset != terms.token_asset:
+        print("note           this output holds %s, not the sale's token. The "
+              "reclaim leaf checks a locktime and a signature, so your key can "
+              "take it back all the same." % sweep_asset[:12])
     sale.rest_on(biggest["txid"], int(biggest["vout"]), held)
     dest = args.to or node("getnewaddress", "levo-rescue")
     dest_spk = ADDR.to_script_pubkey(dest, hrp).hex()
@@ -1022,7 +1055,8 @@ def cmd_rescue(args):
     built = TXMOD.build_reclaim(sale, destination_spk=dest_spk, fee_inputs=ins,
                                 fee_atoms=fee_atoms, fee_asset=fee_asset,
                                 genesis_hash=node("getblockhash", 0),
-                                locktime=args.locktime, change_spk=change_spk)
+                                locktime=args.locktime, change_spk=change_spk,
+                                sweep_asset=sweep_asset)
     sig = S.schnorr_sign(bytes.fromhex(built["sighash"]), int(key, 16))
     if not S.schnorr_verify(bytes.fromhex(built["sighash"]), sig,
                             bytes.fromhex(terms.reclaim_xonly)):
@@ -1040,7 +1074,8 @@ def cmd_rescue(args):
         return
     txid = node("sendrawtransaction", hexed)
     print("reclaimed. %s" % txid)
-    _report_what_is_left(cov.spk_hex, addr, txid, dp)
+    _report_what_is_left(cov.spk_hex, addr,
+                         (biggest["txid"], int(biggest["vout"])), dp)
 
 
 def cmd_terms(args):
@@ -1078,7 +1113,7 @@ def cmd_terms(args):
         print(text)
 
 
-def _report_what_is_left(spk_hex, addr, swept_txid, decimals=8):
+def _report_what_is_left(spk_hex, addr, swept, decimals=8):
     """After a sweep, what is still sitting at the sale address.
 
     A reclaim spends ONE output: the sale's own funding. Anything else that was
@@ -1092,7 +1127,12 @@ def _report_what_is_left(spk_hex, addr, swept_txid, decimals=8):
         return
     if not scan.get("success"):
         return
-    left = [u for u in scan.get("unspents") or [] if u.get("txid") != swept_txid]
+    # The scan runs against the confirmed set, which still holds the output
+    # this sweep just spent: it is spent in the mempool, not yet in a block.
+    # `swept` is that OUTPOINT, and leaving it in the report would tell a
+    # project the thing they just recovered is still sitting there.
+    left = [u for u in scan.get("unspents") or []
+            if (u.get("txid"), int(u.get("vout", -1))) != swept]
     if not left:
         print("nothing else is resting at %s" % addr)
         return
@@ -1216,7 +1256,8 @@ def cmd_reclaim(args):
     txid = node("sendrawtransaction", hexed)
     print("reclaimed. %s" % txid)
     _report_what_is_left(sale["script_pubkey"], p.get("address") or "the sale address",
-                         txid, int(p.get("decimals", 8)))
+                         (funding.get("txid"), int(funding.get("vout", -1))),
+                         int(p.get("decimals", 8)))
 
 
 def cmd_flag(args):
@@ -1286,6 +1327,9 @@ def main():
                     help="the chain's address prefix (default: the one the "
                          "terms file's own sale address was written with)")
     rs.add_argument("--locktime", type=int, help="override the reclaim's locktime")
+    rs.add_argument("--outpoint", help="sweep this txid:vout at the sale address, "
+                                       "whatever asset it holds (default: the "
+                                       "largest output of the sale's own token)")
     rs.add_argument("--dry-run", action="store_true")
     rs.set_defaults(fn=cmd_rescue)
 

@@ -77,9 +77,14 @@ export default function LockPanel({ project, onLocked }) {
         <summary style={{ cursor: 'pointer' }}>Send it from a node instead</summary>
         <p style={{ marginTop: '.6rem' }}>
           <span className="mono">levo lock {project.slug}</span> sends the tokens and
-          confirms the lock in one step. To do it by hand, the command is below; it
-          names the asset by its id, because a label only exists on a node that was
-          told about it.
+          confirms the lock in one step, and it funds the send so that your change
+          stays explicit. Use it if you can: an ordinary{' '}
+          <span className="mono">sendtoaddress</span> blinds the change of every
+          asset it touches, and a covenant cannot read a confidential output &mdash;
+          so afterwards your own reclaim, and any purchase you make from your own
+          sale, will say it cannot find unblinded funds. To do it by hand anyway,
+          the command is below; it names the asset by its id, because a label only
+          exists on a node that was told about it.
         </p>
         <div className="field" style={{ marginBottom: 0 }}>
           <label htmlFor="lockcmd">
@@ -90,7 +95,12 @@ export default function LockPanel({ project, onLocked }) {
                     onFocus={(e) => e.target.select()} />
           <div className="hint">
             Replace the fee asset with one your node accepts fees in, and use the
-            wallet that holds the tokens.
+            wallet that holds the tokens. Your change comes back confidential: to
+            get spendable-by-a-covenant outputs again, fund the send yourself
+            instead &mdash; <span className="mono">createrawtransaction</span>, then{' '}
+            <span className="mono">fundrawtransaction</span> with a{' '}
+            <span className="mono">changeAddress</span> per asset, then sign and
+            send. That is what <span className="mono">levo lock</span> does.
           </div>
         </div>
       </details>

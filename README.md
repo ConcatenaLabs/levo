@@ -18,7 +18,12 @@ enforced by consensus:
 - **Sale covenants**, enforced by consensus. A sale is a taproot output with a
   NUMS internal key and two leaves. Tokens can leave it by being sold at the
   published price to the published treasury, or by being reclaimed by the
-  project from the close date on. Nothing else.
+  project from the close date on. Nothing else. The leaf reads the amount it is
+  spending and never which output that is, so this is true of EVERY output at
+  the sale address: anything else sent there is buyable at the sale's price
+  too, which is why the lock instructions say to send once and send nothing
+  else, and why the sale page reports whatever is resting there beside the
+  sale.
 - **Settlement**, enforced by consensus. A buy spends the covenant, pays the
   treasury and delivers the tokens in one transaction. Levo builds that
   transaction unsigned; only the buyer's wallet can complete it.
@@ -104,8 +109,9 @@ sale's terms beside that key: `bin/levo terms <sale> --out sale.json`, or the
 same file from the sale's own page. The address is made of those values, and so
 is the leaf the key spends through, so with the file, the key and any node,
 `bin/levo rescue --terms sale.json` sweeps what is left after the close whether
-or not Levo still exists. `bin/levo keygen` makes
-one. The treasury may be any witness address the project's wallet hands out,
+or not Levo still exists, and `--outpoint <txid>:<vout>` sweeps any one output
+at that address whatever asset it holds, because the reclaim leaf checks a
+locktime and a signature and nothing else. `bin/levo keygen` makes one. The treasury may be any witness address the project's wallet hands out,
 taproot or version-0: the version is compiled into the leaf beside the program,
 so a wallet without taproot addresses can still run a sale. The project locks
 its tokens by sending them to the sale address, and Levo finds the lock on
@@ -126,8 +132,11 @@ chain; after the close, `bin/levo reclaim` sweeps what did not sell.
 | `levod/tx.py`, `levod/pset.py` | The transaction that settles a buy (as raw hex and as a PSET), and the one that reclaims what did not sell. |
 | `levod/watcher.py` | Reconciles sales against the UTXO set and the mempool; the chain is the source of truth. |
 | `levod/secp256k1.py`, `levod/script.py`, `levod/address.py` | Curve, script and address primitives. Levo carries its own so it needs no node source checkout. |
+| `levod/rpc.py`, `levod/units.py` | The node connection, and atoms to and from the decimal strings everything else speaks. |
+| `levod/registry.py` | What an asset registry says a token is, if one is configured. Advisory: a listing that contradicts a registered contract is refused, an unregistered asset lists as it is, and a registry that cannot be reached blocks nothing. |
 | `tools/gen_vectors.py` | Regenerates `levod/vectors.json`. Running it is a migration, not a refresh; see `CLAUDE.md`. |
 | `bin/levo` | A CLI that runs the whole flow against your own node. |
+| `levod/tests/cdp.py` | A small Chrome DevTools client, so the browser suite can press the buttons rather than only look at the pixels. |
 | `web/` | The single-page app: Vite and React, plain CSS, fonts served from the app itself. |
 | `contrib/` | The systemd unit, an environment file to fill in, and a backup timer for the state file. |
 | `doc/` | The design notes worth keeping outside the code, and `doc/api.md`, the HTTP API. |
@@ -226,7 +235,9 @@ The render test starts the demo server and paints every route in a headless
 Chromium, failing on a console error or a page that painted nothing. It is
 there because every other test reads code or talks to the API: a change can
 leave the bundle building and the routes answering and still ship a white
-screen.
+screen. It then drives a 300-pixel viewport over the debugging protocol and
+fails on the two things a screenshot cannot see: a heading that breaks onto a
+line with nothing on it, and a panel still plotted where its labels cannot fit.
 
 The CLI test starts a node and a levod and drives `bin/levo` as a person would:
 sign in, list, lock, verify, price, buy, and reclaim after the close. The CLI

@@ -558,3 +558,20 @@ def test_two_labels_that_are_one_label_are_refused(t):
     t.eq(M.validate_links({"Site": "https://a.test/", "Docs": "https://b.test/"}),
          {"Site": "https://a.test/", "Docs": "https://b.test/"},
          "two different labels are two links")
+
+
+def test_every_setting_levod_reads_is_documented_and_offered(t):
+    """A setting nobody can find is a setting nobody sets. These three lists
+    drift apart silently: the code grows one, the README keeps the old table,
+    and the file an operator actually copies never hears about it."""
+    import re
+    root = Path(__file__).resolve().parent.parent.parent
+    code = " ".join((root / "levod" / f).read_text()
+                    for f in os.listdir(str(root / "levod")) if f.endswith(".py"))
+    names = sorted(set(re.findall(r'os\.environ\.get\("(LEVOD_[A-Z_]+)"', code)))
+    t.ok(len(names) > 20, "the settings were found at all", len(names))
+    readme = (root / "README.md").read_text()
+    example = (root / "contrib" / "levod.env.example").read_text()
+    t.eq([n for n in names if n not in readme], [], "every setting is in the README")
+    t.eq([n for n in names if n not in example], [],
+         "and in the file an operator copies")

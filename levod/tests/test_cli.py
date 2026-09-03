@@ -303,6 +303,40 @@ def run(ok, rig, levod, env):
     out = levo("rescue", "--terms", str(rescue_terms), "--hrp", "ert",
                "--reclaim-key", keys2["reclaim_secret_hex"])
     ok.ok("reclaimed." in out, "and really swept", out[-160:])
+    rig.mine()
+
+    # --- everything at the address, not only the sale ----------------------
+    #
+    # A sale address can hold more than the sale: a second lot of the token, an
+    # amount below the minimum purchase, a payment somebody sent there by
+    # mistake. The reclaim leaf checks a locktime and a signature and nothing
+    # else, so the project's key can take back any of them -- and until it
+    # could, a misdirected payment was money the page showed and no shipped
+    # command could reach.
+    def resting_at(slug):
+        spk = json.loads(levo("show", slug))["sale"]["script_pubkey"]
+        return (rig.n("scantxoutset", "start", ["raw(%s)" % spk]) or {}).get("unspents") or []
+
+    shown = json.loads(levo("show", "rescue-me"))
+    addr2 = shown["address"]
+    w("sendtoaddress", address=addr2, amount="4.0",
+      assetlabel=shown["sale"]["terms"]["payment_asset"], fee_asset_label="bitcoin")
+    rig.mine()
+    out = levo("rescue", "--terms", str(rescue_terms),
+               "--reclaim-key", keys2["reclaim_secret_hex"], expect_failure=True)
+    ok.ok("not this sale's token" in out and "--outpoint" in out,
+          "a rescue with none of its own token left names what else is there",
+          out[-260:])
+    left = resting_at("rescue-me")
+    ok.eq(len(left), 1, "one output is left at the address")
+    out = levo("rescue", "--terms", str(rescue_terms),
+               "--reclaim-key", keys2["reclaim_secret_hex"],
+               "--outpoint", "%s:%s" % (left[0]["txid"], left[0]["vout"]))
+    ok.ok("reclaimed." in out,
+          "and the reclaim key sweeps it, whatever asset it holds", out[-200:])
+    rig.mine()
+    ok.eq(len(resting_at("rescue-me")), 0,
+          "nothing at all is left at the sale address")
 
 
 def main():
