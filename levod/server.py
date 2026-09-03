@@ -150,7 +150,10 @@ class App:
             payment_decimals=self.payment_decimals)
         self.reader = T.StakeReader(self.node, self.links, self.policy,
                                     floor=lambda: self.staking_floor)
-        self.store = ST.Store()
+        # The service takes the state file for itself: two levods on one file
+        # overwrite each other's ledgers, and each believes it wrote what it
+        # holds.
+        self.store = ST.Store(exclusive=True)
         payment_asset = os.environ.get("LEVOD_PAYMENT_ASSET", M.DEFAULT_PAYMENT_ASSET).lower()
         if not M.ASSET_RE.match(payment_asset):
             # Every sale is priced in this. A typo here first reaches a PROJECT
