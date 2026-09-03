@@ -374,3 +374,30 @@ def test_a_printed_amount_is_one_the_tools_accept_back(t):
             printed = units(atoms, decimals)
             t.eq(U.parse(printed, decimals), atoms,
                  "%s at %d places parses back" % (printed, decimals))
+
+
+def test_an_account_holds_a_bounded_number_of_staking_keys(t):
+    """Every link rewrites the whole state file and every reading of an
+    account's standing asks the chain about every key it holds, so an account
+    that could link keys in a loop is an account that costs more the longer it
+    runs."""
+    links = T.StakeLinks()
+    acct = "02" + "11" * 32
+    for i in range(T.MAX_LINKED_KEYS):
+        links.link(acct, "02%062x" % i)
+    t.eq(len(links.keys_for(acct)), T.MAX_LINKED_KEYS, "it holds the keys it linked")
+    try:
+        links.link(acct, "02%062x" % 9999)
+        t.ok(False, "one more is refused")
+    except ValueError as e:
+        t.ok("Unlink one" in str(e), "one more is refused, with what to do", str(e))
+    # Re-linking one it already holds is not a new key and stays allowed.
+    links.link(acct, "02%062x" % 0)
+    t.eq(len(links.keys_for(acct)), T.MAX_LINKED_KEYS, "re-linking a key it has is fine")
+    # A state file written before the cap is read rather than refused: the
+    # keys are real, and refusing to start would be a self-inflicted outage.
+    over = {acct: ["02%062x" % i for i in range(T.MAX_LINKED_KEYS + 5)]}
+    fresh = T.StakeLinks()
+    fresh.load(over)
+    t.eq(len(fresh.keys_for(acct)), T.MAX_LINKED_KEYS + 5,
+         "a file written before the cap loads as it is")

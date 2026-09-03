@@ -1109,3 +1109,40 @@ def test_a_sale_resting_at_someone_elses_output_is_reported_not_used(t):
     w.poll()
     t.ok((s.funding or {}).get("unverifiable"), "the sale is marked unverified")
     t.eq(w.unverified, ["t"], "and health can name it")
+
+
+def test_the_mempool_is_read_once_a_poll_however_many_sales_there_are(t):
+    """Asking per sale made a poll cost the mempool over again for every sale
+    on the platform: a hundred sales and a busy mempool is thousands of RPC
+    calls a minute, all of them the same answer."""
+    class Counting(FakeRPC):
+        def __init__(self):
+            FakeRPC.__init__(self)
+            self.pool_reads = 0
+            self.tx_reads = 0
+
+        def call(self, method, *params):
+            if method == "getrawmempool":
+                self.pool_reads += 1
+            if method == "getrawtransaction":
+                self.tx_reads += 1
+            return FakeRPC.call(self, method, *params)
+
+    rpc = Counting()
+    rpc.mempool = ["%064x" % i for i in range(5)]
+    for i, txid in enumerate(rpc.mempool):
+        rpc.txs[txid] = {"txid": txid, "vin": [{"txid": "%064x" % (i + 100), "vout": 0}],
+                         "vout": []}
+    sales = {}
+    for i in range(6):
+        s = _sale(seen_at=100)
+        s.terms.min_lot = 1                     # so each sale derives its own address
+        sales["s%d" % i] = P(s)
+    w = W.Watcher(FakeMarket(sales), rpc, interval=1)
+    for slug in sales:
+        w.market.projects[slug].slug = slug
+    w.poll()
+    t.ok(rpc.pool_reads <= 1, "the mempool is read at most once in a poll",
+         rpc.pool_reads)
+    t.ok(rpc.tx_reads <= len(rpc.mempool),
+         "and each of its transactions at most once", rpc.tx_reads)

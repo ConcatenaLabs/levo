@@ -163,7 +163,10 @@ on chain when it can still read it.
 **`GET /api/health`** → `{ok, node, watcher, state_file, app}`. `ok` is false
 when the node is unreachable, the watcher has stalled or is failing every poll,
 the state file cannot be written, or the built app has gone missing. This is the
-endpoint to point an uptime check at.
+endpoint to point an uptime check at, so its answer is a fixed size whatever
+the platform holds: `watcher.unverified_sales` names at most twenty sales with
+`watcher.unverified_total` beside it, and the errors it quotes are cut. The
+whole list is on `GET /api/watcher`.
 
 **`GET /api/watcher`** → what the watcher is doing, and any sale whose funding
 it cannot place in the chain.
