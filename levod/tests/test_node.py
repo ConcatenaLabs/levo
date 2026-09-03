@@ -467,6 +467,45 @@ def run(ok, rig):
     ok.eq(G.sale.status, S.LIVE, "locking again reopens the sale")
     ok.ok(G.sale.funding.get("block"), "now with the block it was mined in")
 
+    # --- a fee paid in a third asset ---------------------------------------
+    #
+    # Sequentia has an open fee market: a fee may be paid in any asset the
+    # network accepts, and nothing -- the policy asset included -- is the
+    # default. Levo says so on its own pages, and every purchase in this file
+    # until now has paid its fee in the sale's own payment asset. This is the
+    # axiom exercised where it matters, in the money path: the covenant paid in
+    # one asset, the fee in another, and the chain taking it.
+    third = w("issueasset", assetamount=500_000, tokenamount=0, blind=False,
+              fee_asset="bitcoin")["asset"]
+    rig.mine()
+    n("setfeeexchangerates", {"bitcoin": COIN, pay: COIN, third: COIN})
+    third_ins = []
+    for u in w("listunspent", 1):
+        if (u.get("asset") or "") == third and not u.get("amountcommitment"):
+            third_ins = plat.verify_buyer_inputs([{"txid": u["txid"], "vout": int(u["vout"])}])
+            break
+    ok.ok(third_ins, "the wallet holds an explicit output of a third asset")
+    fee_plan = A.sale.plan_buy("buyer", tier, token_atoms=100 * COIN,
+                               height=node.chain_height())
+    ins = pay_input(fee_plan.payment_atoms) + third_ins
+    built = plat.build_buy("buyer", "alpha", {"token_atoms": 100 * COIN},
+                           {"token_script_pubkey": dest_spk(),
+                            "change_script_pubkey": dest_spk(),
+                            "inputs": plat.verify_buyer_inputs(
+                                [{"txid": i["txid"], "vout": i["vout"]} for i in ins]),
+                            "fee_atoms": 2_000, "fee_asset": third})
+    fee_out = [o for o in built["outputs"] if o["role"] == "network fee"]
+    ok.eq(len(fee_out), 1, "the transaction has one fee output")
+    ok.eq(fee_out[0]["asset"], third, "in the third asset, not the sale's")
+    ok.eq(built["outputs"][0]["asset"], pay,
+          "while the treasury is still paid in the sale's own asset")
+    signed = w("signrawtransactionwithwallet", built["unsigned_tx_hex"])
+    allowed, why = accept(signed["hex"])
+    ok.ok(allowed, "and the chain accepts a fee paid in an asset of its own", why)
+    n("sendrawtransaction", signed["hex"])
+    rig.mine()
+    watch.poll()
+
     # --- a reorg under a funded sale ---------------------------------------
     #
     # Sequentia follows Bitcoin's reorgs in real time, so a block being replaced
