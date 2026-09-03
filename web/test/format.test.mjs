@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { amount, compact, toAtoms, atomsArg, closeLabel, closeIn, isHeightClose, pricePerToken, treasurySpk, plain,
          capitalise, big, prose, priceLabel } from '../src/lib/format.js'
 import { xFor, yFor } from '../src/lib/beam.js'
-import { addressOf, encodeSegwit } from '../src/lib/bech32.js'
+import { addressOf, encodeSegwit, scriptForAddress } from '../src/lib/bech32.js'
 
 test('amount formats atoms exactly, above 2**53 too', () => {
   assert.equal(amount(123450000000n), '1,234.5')
@@ -133,4 +133,16 @@ test('a price is scaled by the payment asset, not by eight places', () => {
   assert.equal(priceLabel(terms, 8, 2), '1,000,000')
   // and the default stays what it was for an eight-place payment asset.
   assert.equal(priceLabel({ price_num: 25, price_den: 100 }, 8), '0.25')
+})
+
+test('an address decodes to the script it pays, and a wrong one to nothing', () => {
+  const spk = '5120' + 'ab'.repeat(32)
+  const addr = addressOf(spk, 'tb')
+  assert.equal(scriptForAddress(addr, 'tb'), spk)
+  assert.equal(scriptForAddress(addr, 'bc'), null, 'the wrong chain is not an address')
+  assert.equal(scriptForAddress(addr.slice(0, -1) + 'q', 'tb'), null, 'a bad checksum is not')
+  const v0 = '0014' + 'cd'.repeat(20)
+  assert.equal(scriptForAddress(addressOf(v0, 'tb'), 'tb'), v0)
+  assert.equal(scriptForAddress('not an address', 'tb'), null)
+  assert.equal(scriptForAddress('', 'tb'), null)
 })

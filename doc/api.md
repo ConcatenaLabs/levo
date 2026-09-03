@@ -149,6 +149,14 @@ the unsigned transaction as hex and as a PSET, with every output described.
 nothing: the covenant input needs no signature and the buyer's inputs can only
 be signed by the buyer.
 
+The `outputs` array is levod's description of what it built, and a client
+should not settle for it: decode `unsigned_tx_hex` and check the transaction
+itself. Output 0 must pay the treasury the terms name, in the payment asset,
+the amount the plan quoted; output 1 must re-rest any remainder at the sale
+address those same terms derive; and the tokens must reach the address the
+buyer gave. The web app does exactly that before it offers anything for
+signing, and refuses to offer a signature for a transaction it cannot read.
+
 **`POST /api/projects/<slug>/confirm`** `{txid, token_atoms, payment_atoms}`
 (session) records the purchase against the caller's cap. This writes Levo's
 ledger and nothing else: the sale itself moves because the chain moved, whether

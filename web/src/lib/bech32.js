@@ -49,6 +49,53 @@ export function encodeSegwit(hrp, witver, programHex) {
   return hrp + '1' + [...data, ...checksum].map((d) => CHARSET[d]).join('')
 }
 
+function convertBitsStrict(data, from, to) {
+  let acc = 0, bits = 0
+  const out = []
+  const maxv = (1 << to) - 1
+  for (const v of data) {
+    if (v < 0 || v >> from) return null
+    acc = (acc << from) | v
+    bits += from
+    while (bits >= to) { bits -= to; out.push((acc >> bits) & maxv) }
+  }
+  // Converting DOWN pads; converting up must leave no more than a partial
+  // group, and that group must be zero.
+  if (bits >= from || ((acc << (to - bits)) & maxv)) return null
+  return out
+}
+
+// The scriptPubKey an address pays, or null if it is not an address of this
+// chain. Checked, not assumed: the checksum, the prefix, the version and the
+// program length are all part of what makes an address the address it claims.
+//
+// This exists so a page can compare where a transaction sends the tokens with
+// where the buyer said to send them, without asking a server which is which.
+export function scriptForAddress(address, hrp = 'tb') {
+  const s = String(address || '').trim()
+  if (s !== s.toLowerCase() && s !== s.toUpperCase()) return null
+  const low = s.toLowerCase()
+  const split = low.lastIndexOf('1')
+  if (split < 1 || split + 7 > low.length || low.length > 90) return null
+  if (low.slice(0, split) !== hrp) return null
+  const data = []
+  for (const c of low.slice(split + 1)) {
+    const v = CHARSET.indexOf(c)
+    if (v < 0) return null
+    data.push(v)
+  }
+  const witver = data[0]
+  if (witver > 16) return null
+  const constant = witver === 0 ? 1 : BECH32M
+  if (polymod([...hrpExpand(hrp), ...data]) !== constant) return null
+  const prog = convertBitsStrict(data.slice(1, -6), 5, 8)
+  if (!prog || prog.length < 2 || prog.length > 40) return null
+  if (witver === 0 && prog.length !== 20 && prog.length !== 32) return null
+  const op = witver === 0 ? 0 : witver + 0x50
+  return [op, prog.length].concat(prog)
+    .map((b) => b.toString(16).padStart(2, '0')).join('')
+}
+
 // The address for a scriptPubKey such as 5120<32 bytes> or 0014<20 bytes>.
 export function addressOf(spkHex, hrp = 'tb') {
   const s = String(spkHex || '').toLowerCase()
