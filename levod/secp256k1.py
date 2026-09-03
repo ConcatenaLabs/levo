@@ -128,11 +128,6 @@ def lift_x(x):
     return (x, y if y % 2 == 0 else P - y)
 
 
-def has_even_y(p):
-    p = affine(p)
-    return p is not None and p[1] % 2 == 0
-
-
 def negate(p):
     p = affine(p)
     return None if p is None else (p[0], (P - p[1]) % P)

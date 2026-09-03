@@ -9,6 +9,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { outputsOf } from '../src/lib/eltx.js'
+import { treasurySpk } from '../src/lib/format.js'
 
 const fixture = JSON.parse(readFileSync('test/fixtures/buy.json', 'utf8'))
 
@@ -43,4 +44,17 @@ test('it refuses what it cannot read rather than guessing', () => {
   const at = fixture.hex.indexOf('01deb9044d8fa54b')
   const blinded = fixture.hex.slice(0, at) + '0a' + fixture.hex.slice(at + 2)
   assert.throws(() => outputsOf(blinded), /hides its asset/)
+})
+
+test('the browser derives the treasury script the backend builds', () => {
+  // The one rule written twice, in two languages, on the path where it decides
+  // whether a buyer signs: the page compares output 0 against the script it
+  // derives from the terms, and levod builds that output from the same terms.
+  // If they drift, the check either passes a wrong transaction or refuses a
+  // right one. The cases come from the Python builder itself.
+  const cases = JSON.parse(readFileSync('test/fixtures/treasury.json', 'utf8'))
+  for (const c of cases) {
+    assert.equal(treasurySpk({ treasury_prog: c.treasury_prog, treasury_ver: c.treasury_ver }),
+      c.script_pubkey, 'treasury v' + c.treasury_ver + ' of ' + c.treasury_prog.length / 2 + ' bytes')
+  }
 })

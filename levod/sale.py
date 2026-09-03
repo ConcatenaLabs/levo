@@ -197,9 +197,6 @@ class Sale:
 
     # --- sell ---------------------------------------------------------------
 
-    def remaining_atoms(self):
-        return self.locked_atoms
-
     def is_open(self, height=None, now=None):
         if self.status not in (LIVE, PARTIAL):
             return False
