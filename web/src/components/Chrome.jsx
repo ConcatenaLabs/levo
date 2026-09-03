@@ -16,7 +16,7 @@ function Mark() {
 }
 
 export function Nav() {
-  const { signedIn, tier, account, loading, nodeDown, meError } = useStore()
+  const { signedIn, tier, account, loading, nodeDown, meError, configError } = useStore()
   return (
     <>
       <a className="skip" href="#main">Skip to content</a>
@@ -45,6 +45,16 @@ export function Nav() {
           <div className="wrap">
             Levo cannot reach its Sequentia node right now. Sale states may be stale, and
             purchases cannot be priced or built until it is back.
+          </div>
+        </div>
+      )}
+      {configError && (
+        <div className="banner" role="status">
+          <div className="wrap">
+            This page could not read what this deployment runs with, so the
+            labels, the address prefix and the precision on it are Levo's
+            defaults rather than this site's: {configError}. Reload before
+            acting on anything here.
           </div>
         </div>
       )}

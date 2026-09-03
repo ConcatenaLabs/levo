@@ -200,11 +200,14 @@ function EditPanel({ project, onSaved }) {
     } catch (err) { setError(capitalise(err.message)) } finally { setBusy(false) }
   }
 
-  if (!open) {
-    return <button className="btn btn-sm btn-ghost" onClick={() => setOpen(true)}>Edit the listing's copy</button>
-  }
   return (
-    <form onSubmit={save} className="card" style={{ marginTop: '1rem' }}>
+    <>
+      <button className="btn btn-sm btn-ghost" onClick={() => setOpen(!open)}
+              aria-expanded={open} aria-controls="edit-panel">
+        {open ? 'Close the editor' : "Edit the listing's copy"}
+      </button>
+      {open && (
+    <form id="edit-panel" onSubmit={save} className="card" style={{ marginTop: '1rem' }}>
       <h3>Edit the listing</h3>
       <p className="small dim">The name, summary, description and links. Not the terms: those are compiled into the sale address, and changing one would be a different sale. Not the page name either, which every link to this sale is made of.</p>
       <div className="field"><label htmlFor="en">Name</label><input id="en" value={form.name} required onChange={(e) => setForm({ ...form, name: e.target.value })} /></div>
@@ -222,6 +225,8 @@ function EditPanel({ project, onSaved }) {
         <button type="button" className="btn btn-ghost btn-sm" onClick={() => setOpen(false)}>Cancel</button>
       </div>
     </form>
+      )}
+    </>
   )
 }
 
@@ -239,16 +244,15 @@ function KeepThis({ project, sale }) {
       + "that address after the close, with no Levo involved at all.",
   }, null, 2)
 
-  if (!open) {
-    return (
-      <button className="btn btn-sm btn-ghost" style={{ marginTop: '.75rem' }}
-              onClick={() => setOpen(true)}>
-        Keep a copy of the terms
-      </button>
-    )
-  }
   return (
-    <div className="card" style={{ marginTop: '1rem' }}>
+    <>
+      <button className="btn btn-sm btn-ghost" style={{ marginTop: '.75rem' }}
+              onClick={() => setOpen(!open)}
+              aria-expanded={open} aria-controls="keep-panel">
+        {open ? 'Close the copy of the terms' : 'Keep a copy of the terms'}
+      </button>
+      {open && (
+    <div id="keep-panel" className="card" style={{ marginTop: '1rem' }}>
       <h3>Keep this</h3>
       <p className="small dim">
         The sale address is made of these values, and so is the leaf your
@@ -265,6 +269,8 @@ function KeepThis({ project, sale }) {
                   onFocus={(e) => e.target.select()} />
       </div>
     </div>
+      )}
+    </>
   )
 }
 
@@ -282,17 +288,15 @@ function LedgerPanel({ project }) {
       .catch((e) => setError(capitalise(e.message)))
   }, [open, page, project.slug])
 
-  if (!open) {
-    return (
-      <button className="btn btn-sm btn-ghost" style={{ marginTop: '.75rem' }}
-              onClick={() => setOpen(true)}>
-        See what Levo recorded
-      </button>
-    )
-  }
-
   return (
-    <div className="card" style={{ marginTop: '1rem' }}>
+    <>
+      <button className="btn btn-sm btn-ghost" style={{ marginTop: '.75rem' }}
+              onClick={() => setOpen(!open)}
+              aria-expanded={open} aria-controls="ledger-panel">
+        {open ? 'Close the ledger' : 'See what Levo recorded'}
+      </button>
+      {open && (
+    <div id="ledger-panel" className="card" style={{ marginTop: '1rem' }}>
       <h3>What Levo recorded</h3>
       <p className="small dim">
         Levo's own ledger for this sale, which is what the per-buyer caps are
@@ -340,6 +344,8 @@ function LedgerPanel({ project }) {
         </>
       )}
     </div>
+      )}
+    </>
   )
 }
 

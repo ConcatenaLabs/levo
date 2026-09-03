@@ -96,6 +96,11 @@ class Watcher:
         self._blocks = {}             # block hashes and heights, for one poll
         self._pool = None             # the mempool's spends, for one poll
         self._pool_at = -1
+        # Whether a UTXO-set scan on this node was started by THIS watcher. A
+        # node runs one at a time, and aborting somebody else's is taking their
+        # answer away.
+        self._scan_started = False
+        self._scanning = False
         self._round = 0
         self.confirm_misses = 2
         # Sales whose funding this levod cannot place in the chain: state
@@ -333,17 +338,26 @@ class Watcher:
     def _scan(self, descriptors):
         """{scriptPubKey hex: [{txid, vout, atoms, asset, height}]} for the
         given addresses. Confirmed outputs only: that is all the scan sees."""
+        self._scanning = True
         try:
             res = self.rpc.call("scantxoutset", "start", descriptors)
         except Exception as e:
             if "already in progress" in str(e).lower():
-                # A scan from a poll that timed out is still running. Abort it
-                # so the next poll can start its own; this one reports unknown.
-                try:
-                    self.rpc.call("scantxoutset", "abort")
-                except Exception:
-                    pass
+                # A scan is running. If it is one of THIS watcher's -- a poll
+                # that timed out and left it going -- aborting it lets the next
+                # poll start its own. If it belongs to somebody else (an issuer
+                # confirming a lock, an operator at the node's own command
+                # line), aborting it takes their answer away to save a minute
+                # of this one's, which is not a trade this gets to make.
+                if self._scan_started:
+                    try:
+                        self.rpc.call("scantxoutset", "abort")
+                    except Exception:
+                        pass
             raise
+        finally:
+            self._scanning = False
+        self._scan_started = True
         if not res or not res.get("success"):
             raise RuntimeError("scantxoutset did not complete")
         out = {}

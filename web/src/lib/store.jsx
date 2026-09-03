@@ -18,6 +18,7 @@ export function StoreProvider({ children }) {
   const [standing, setStanding] = useState(null)   // /api/me
   const [tiers, setTiers] = useState(null)
   const [config, setConfig] = useState(DEFAULT_CONFIG)
+  const [configError, setConfigError] = useState(null)
   const [loading, setLoading] = useState(true)
   const [health, setHealth] = useState(null)
   const [meError, setMeError] = useState(null)
@@ -42,7 +43,14 @@ export function StoreProvider({ children }) {
       const [t, c, h] = await Promise.allSettled([api.tiers(), api.config(), api.health()])
       if (!alive) return
       if (t.status === 'fulfilled') setTiers(t.value)
-      if (c.status === 'fulfilled') setConfig({ ...DEFAULT_CONFIG, ...c.value })
+      // The deployment's own facts: the chain's address prefix, the ticker
+      // its figures are in, how finely the payment asset divides. Without
+      // them the page falls back to defaults and states things it was never
+      // told -- a treasury address with the wrong prefix, a price with the
+      // wrong label. One dropped request is enough, so it is said out loud
+      // rather than left to look like an answer.
+      if (c.status === 'fulfilled') { setConfig({ ...DEFAULT_CONFIG, ...c.value }); setConfigError(null) }
+      else setConfigError((c.reason && c.reason.message) || 'it could not be read')
       if (h.status === 'fulfilled') setHealth(h.value)
       else if (h.reason && h.reason.body && h.reason.body.node) setHealth(h.reason.body)
       await refresh()
@@ -74,6 +82,7 @@ export function StoreProvider({ children }) {
     account: standing ? standing.account : null,
     tier: standing ? standing.tier : null,
     mayList: !!(standing && standing.tier && standing.tier.may_list),
+    configError,
     payment: config.payment,
     stake: config.stake,
     links: config.links || {},
