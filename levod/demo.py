@@ -54,6 +54,10 @@ class StubNode:
     def chain_height(self):
         return self.height
 
+    def chain_info(self):
+        return {"blocks": self.height, "chain": "demo",
+                "mediantime": 1_760_000_000, "initialblockdownload": False}
+
     def chain_name(self):
         return "demo"
 
@@ -79,6 +83,16 @@ class StubNode:
             return {"blocks": self.height, "chain": "demo"}
         if method == "getrawmempool":
             return []
+        if method == "getblockheader":
+            # The watcher asks for one when it has to place a funding in time.
+            # The demo's chain is one height with one hash, so this is the
+            # honest answer for it: yes, that block, at this height.
+            return {"height": self.height, "confirmations": 1}
+        if method == "getrawtransaction":
+            return None                 # this chain remembers no transactions
+        # Anything else is a call levod makes and the demo has never seen. The
+        # raise is deliberate: a stub that quietly answers everything hides the
+        # day levod started asking the node something new.
         raise RuntimeError("unexpected call %s" % method)
 
 
