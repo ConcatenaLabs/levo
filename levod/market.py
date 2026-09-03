@@ -837,6 +837,16 @@ class Platform:
         try:
             res = self.rpc.call("scantxoutset", "start", ["raw(%s)" % sale.script_pubkey]) or {}
         except Exception as e:
+            if "already in progress" in str(e).lower():
+                # A node runs one UTXO-set scan at a time, and Levo's own
+                # watcher runs them on its poll. Waiting a minute is the whole
+                # of the fix, and saying so beats handing over the node's
+                # sentence.
+                raise PlatformError(
+                    "the node is already scanning its UTXO set for something "
+                    "else -- Levo's own watcher does this on its poll. Try "
+                    "again in a minute, or give the txid and output index of "
+                    "the transaction that funded the sale, which needs no scan")
             raise PlatformError("the node could not scan for the lock: %s" % e)
         if not res.get("success"):
             raise PlatformError("the node could not scan for the lock just now; "

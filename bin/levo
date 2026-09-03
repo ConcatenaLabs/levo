@@ -158,10 +158,30 @@ def _save_session(d):
 
 def login_address():
     """The wallet address that signs Levo's challenges: one legacy address,
-    created once and reused, so the account is the same key every time."""
+    created once and reused, so the account is the same key every time.
+
+    A session outlives the wallet that made it -- another datadir, another
+    SEQUENTIA_WALLET, a wallet restored from a seed -- and the remembered
+    address is then one this node cannot sign for. Asking the node first turns
+    that into a sentence instead of a refusal from the middle of signing. A
+    fresh address is NOT substituted: that would sign the user in as a
+    different account, and their own listings would become somebody else's.
+    """
     sess = _session()
     addr = sess.get("address")
     if addr:
+        try:
+            if not node("getaddressinfo", addr).get("ismine"):
+                raise Fail(
+                    "the saved session signs in as %s, and this node's wallet "
+                    "does not hold that address. It was made with another "
+                    "wallet: delete %s to start a new session (a new account), "
+                    "or point this at the wallet that holds it with "
+                    "SEQUENTIA_WALLET" % (addr, SESSION_FILE))
+        except Fail:
+            raise
+        except Exception:
+            pass                  # a node that cannot answer is not a verdict
         return addr
     labelled = {}
     try:
