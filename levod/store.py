@@ -23,6 +23,7 @@ import json
 import os
 import sys
 import tempfile
+import threading
 import time
 from pathlib import Path
 
@@ -46,6 +47,13 @@ class Store:
         # state on disk, which is a fact the operator has to be told.
         self.write_error = None
         self.dirty = False
+        # Writes happen outside the caller's lock, so they are ordered here:
+        # `_version` numbers the snapshots as they are built, `_written` is the
+        # newest that reached the disk, and `_writing` keeps two writers from
+        # interleaving their bytes.
+        self._version = 0
+        self._written = 0
+        self._writing = threading.Lock()
         if self.path.is_file():
             self.load()
         self._sweep_temp()
@@ -110,9 +118,29 @@ class Store:
         return json.dumps(self.data if data is None else data,
                           separators=(",", ":"), sort_keys=True).encode()
 
-    def write(self, payload):
-        """Put an already-serialised state on disk, atomically."""
-        return self._write(payload)
+    def write(self, payload, version=None):
+        """Put an already-serialised state on disk, atomically and in order.
+
+        Two savers can build their snapshots in one order and reach the disk in
+        the other, and the older one would then overwrite the newer with no
+        sign at all. Each snapshot carries the version it was built at, and a
+        write older than the one already on disk is dropped: the newer write
+        contains everything the older one did, because both were built from the
+        same state under the same lock.
+        """
+        with self._writing:
+            if version is not None and version <= self._written:
+                return False
+            self._write(payload)
+            if version is not None:
+                self._written = version
+            return True
+
+    def next_version(self):
+        """The version a snapshot taken now belongs to. Called under the
+        caller's own lock, so two snapshots never share one."""
+        self._version += 1
+        return self._version
 
     def save(self):
         """Write via a temp file and rename, so an interrupted save cannot

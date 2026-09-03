@@ -88,7 +88,7 @@ export default function BuyFlow({ project, tier, onSettled }) {
   const [plan, setPlan] = useState(null)
   const [built, setBuilt] = useState(null)
   const [signed, setSigned] = useState('')
-  const [sentTxid, setSentTxid] = useState(null)
+  const [sentTxid, setSentTxid] = useState(() => (readDraft(project.slug) || {}).sent || null)
   const [error, setError] = useState(null)
   const [busy, setBusy] = useState(false)
   const [needSignIn, setNeedSignIn] = useState(false)
@@ -98,12 +98,15 @@ export default function BuyFlow({ project, tier, onSettled }) {
   const [now, setNow] = useState(Date.now() / 1000)
   const [mismatch, setMismatch] = useState(null)
   const [note, setNote] = useState(null)
+  const [recorded, setRecorded] = useState('')
 
   useEffect(() => { api.rails().then((r) => setRails(r.rails)).catch(() => {}) }, [])
   useEffect(() => { if (hasProvider()) supportsPset().then(setWalletCanSign) }, [])
   // What the buyer typed outlives a session that ends mid-purchase, and a
   // reload: signing in again costs a signature, not the whole form.
-  useEffect(() => { writeDraft(project.slug, { tokens, funding }) }, [project.slug, tokens, funding])
+  useEffect(() => {
+    writeDraft(project.slug, { tokens, funding, sent: sentTxid })
+  }, [project.slug, tokens, funding, sentTxid])
   useEffect(() => {
     if (!plan || !plan.quote || !plan.quote.expires_at) return undefined
     const t = setInterval(() => setNow(Date.now() / 1000), 1000)
@@ -232,21 +235,42 @@ export default function BuyFlow({ project, tier, onSettled }) {
     } catch (e) { fail(e) } finally { setBusy(false) }
   }
 
-  async function record(txid) {
+  // Recording is bookkeeping: the purchase is on chain either way, and the
+  // watcher moves the sale without it. But Levo reads its own node, which is
+  // not the node this was broadcast to, so for a few seconds it has not heard
+  // of the transaction -- worth waiting through rather than handing the buyer
+  // a dead end.
+  async function record(txid, { tries = 4 } = {}) {
     setSentTxid(txid)
-    try {
-      await api.confirm(project.slug, {
-        txid,
-        token_atoms: atomsArg(built.token_atoms),
-        payment_atoms: atomsArg(built.payment_atoms),
-      })
-    } catch (e) {
-      // The purchase is on chain either way; the record is bookkeeping.
-      setError('The purchase was broadcast, but recording it against your cap did not work: ' + e.message)
+    setRecorded('trying')
+    let last = null
+    for (let attempt = 0; attempt < tries; attempt += 1) {
+      try {
+        await api.confirm(project.slug, {
+          txid,
+          token_atoms: atomsArg(built.token_atoms),
+          payment_atoms: atomsArg(built.payment_atoms),
+        })
+        setRecorded('done')
+        setError(null)
+        clearDraft(project.slug)
+        await refresh()
+        onSettled && onSettled()
+        return true
+      } catch (e) {
+        last = e
+        if (e && e.status === 401) break
+        if (!/has not seen/.test(String(e && e.message))) break
+        if (attempt < tries - 1) await new Promise((r) => setTimeout(r, 2500))
+      }
     }
-    clearDraft(project.slug)
+    setRecorded('failed')
+    setError('Your purchase is on chain. Recording it against your cap did not go '
+      + 'through: ' + friendly(last) + ' You can try that again below; nothing is lost '
+      + 'if you do not.')
     await refresh()
     onSettled && onSettled()
+    return false
   }
 
   async function signAndSendWithWallet() {
@@ -280,10 +304,21 @@ export default function BuyFlow({ project, tier, onSettled }) {
   if (needSignIn) {
     return (
       <div>
-        <Notice kind="bad" style={{ marginBottom: '1rem' }}>
-          Your session ended. Sign in again to continue; what you typed is kept.
-        </Notice>
-        <SignIn onDone={() => setNeedSignIn(false)} />
+        {sentTxid ? (
+          <Notice kind="good" style={{ marginBottom: '1rem' }}>
+            <strong>Your purchase is on chain.</strong> Your session ended before
+            Levo could record it against your cap, which is bookkeeping and
+            nothing more: the sale has moved either way. Sign in and record it.
+            <div style={{ marginTop: '.4rem' }}>
+              <Hex value={sentTxid} href={explorer('tx', sentTxid)} />
+            </div>
+          </Notice>
+        ) : (
+          <Notice kind="bad" style={{ marginBottom: '1rem' }}>
+            Your session ended. Sign in again to continue; what you typed is kept.
+          </Notice>
+        )}
+        <SignIn onDone={() => { setNeedSignIn(false); if (sentTxid) record(sentTxid) }} />
       </div>
     )
   }
@@ -573,12 +608,28 @@ export default function BuyFlow({ project, tier, onSettled }) {
       )}
 
       {sentTxid && (
-        <Notice kind="good" style={{ marginTop: '1rem' }}>
+        <Notice kind={recorded === 'failed' ? 'bad' : 'good'} style={{ marginTop: '1rem' }}>
           <strong>Broadcast.</strong> Your tokens and the project's payment are in
           one transaction; the purchase settles when it confirms.
           <div style={{ marginTop: '.4rem' }}>
             <Hex value={sentTxid} href={explorer('tx', sentTxid)} />
           </div>
+          {recorded === 'failed' && (
+            <div style={{ marginTop: '.6rem' }}>
+              <button className="btn btn-sm" aria-disabled={busy}
+                      onClick={() => record(sentTxid)}>
+                Record it against my cap
+              </button>
+              <span className="small dim" style={{ marginLeft: '.6rem' }}>
+                Or from a node: <span className="mono">levo record {project.slug} --txid {sentTxid} --tokens {plain(built ? built.token_atoms : 0, decimals)}</span>
+              </span>
+            </div>
+          )}
+          {recorded === 'trying' && (
+            <div className="small dim" style={{ marginTop: '.4rem' }}>
+              Recording it against your cap…
+            </div>
+          )}
         </Notice>
       )}
 

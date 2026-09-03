@@ -282,3 +282,20 @@ def test_a_listing_made_before_the_registry_is_asked_about_later(t):
         t.eq(p.check_registry(), [], "and not asked again")
     finally:
         REG.urllib.request.urlopen = real
+
+
+def test_an_older_snapshot_cannot_overwrite_a_newer_one(t):
+    """Snapshots are built under the platform's lock and written outside it, so
+    two savers can build in one order and reach the disk in the other. The
+    older one would then overwrite the newer, with nothing to show for it."""
+    d = Path(tempfile.mkdtemp())
+    st = ST.Store(d / "state.json")
+    st.data = {"projects": {"a": 1}, "stake_links": {}}
+    first, first_v = st.snapshot(), st.next_version()
+    st.data = {"projects": {"a": 1, "b": 2}, "stake_links": {}}
+    second, second_v = st.snapshot(), st.next_version()
+    t.eq(st.write(second, version=second_v), True, "the newer write lands")
+    t.eq(st.write(first, version=first_v), False, "the older one is dropped")
+    back = json.loads((d / "state.json").read_text())
+    t.eq(sorted(back["projects"]), ["a", "b"], "and the disk holds the newer state")
+    t.eq(st.write(st.snapshot(), version=st.next_version()), True, "later writes still land")

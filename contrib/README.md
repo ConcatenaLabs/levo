@@ -9,11 +9,26 @@
   copies. The state file holds every sale's terms, which is what a funded
   sale's leaves are rebuilt from, and every buyer's allocation.
 
+  Every one of those copies is on the machine they protect. That is enough for
+  a bad write and nothing else: a lost disk takes the sales' terms with it, and
+  a funded sale whose terms are gone can be seen on chain and reclaimed by
+  nobody. Copy `/var/backups/levo` off the box on whatever schedule the rest of
+  the deployment uses -- the file holds an allocation ledger, so treat it as
+  private -- and check `contrib/README.md`'s restore drill against it once.
+
 ```sh
+# Build the app FIRST. levod serves the app and the API from one origin, so
+# starting it against an empty web/dist gives a site that answers 404 for every
+# page while every other check passes -- and it decides at startup whether it is
+# serving an app at all, so health cannot tell you either.
+PATH=/opt/node24/bin:$PATH LEVO_BASE=/levo/ npm --prefix web ci
+PATH=/opt/node24/bin:$PATH LEVO_BASE=/levo/ npm --prefix web run build
+
 install -m 644 contrib/levod.service contrib/levo-backup.service contrib/levo-backup.timer /etc/systemd/system/
 systemctl daemon-reload
 systemctl enable --now levod.service levo-backup.timer
 contrib/levo-backup.sh                      # take the first copy now, not in six hours
+curl -fsS http://127.0.0.1:8099/api/health | head -20
 ```
 
 levod exits 78 and stays down when its state file cannot be read, rather than
