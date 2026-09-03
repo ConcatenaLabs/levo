@@ -192,6 +192,81 @@ function EditPanel({ project, onSaved }) {
   )
 }
 
+function LedgerPanel({ project }) {
+  const { payment, explorer } = useStore()
+  const [page, setPage] = useState(null)
+  const [error, setError] = useState(null)
+  const [open, setOpen] = useState(false)
+  const d = project.decimals ?? 8
+
+  useEffect(() => {
+    if (!open || page) return
+    api.purchases(project.slug, { limit: 25 })
+      .then(setPage)
+      .catch((e) => setError(capitalise(e.message)))
+  }, [open, page, project.slug])
+
+  if (!open) {
+    return (
+      <button className="btn btn-sm btn-ghost" style={{ marginTop: '.75rem' }}
+              onClick={() => setOpen(true)}>
+        See what Levo recorded
+      </button>
+    )
+  }
+
+  return (
+    <div className="card" style={{ marginTop: '1rem' }}>
+      <h3>What Levo recorded</h3>
+      <p className="small dim">
+        Levo's own ledger for this sale, which is what the per-buyer caps are
+        measured against. The chain is the authority on what the sale holds: the
+        sell leaf takes no signature, so a purchase can happen without Levo and
+        appear nowhere here.
+      </p>
+      {error && <Notice kind="bad">{error}</Notice>}
+      {!page && !error && <p className="dim small">Reading…</p>}
+      {page && page.purchases.length === 0 && (
+        <p className="small dim" style={{ marginBottom: 0 }}>
+          Nothing recorded yet.{' '}
+          {project.sale && project.sale.sold_atoms > 0
+            ? 'The chain says some of this sale has sold, so those purchases were made without Levo.'
+            : ''}
+        </p>
+      )}
+      {page && page.purchases.length > 0 && (
+        <>
+          <table className="terms">
+            <tbody>
+              {page.purchases.map((e) => (
+                <tr key={e.txid + e.account}>
+                  <th style={{ fontWeight: 400 }}>
+                    <span className="mono">{shortHex(e.account, 6, 4)}</span>
+                    <div className="dim small">{timeLabel(e.at)}</div>
+                  </th>
+                  <td>
+                    {amount(e.token_atoms, d)} {project.ticker} for{' '}
+                    {amount(e.payment_atoms, payment.decimals)} {payment.label}
+                    <div className="dim small prose">
+                      <Hex value={e.txid} href={explorer('tx', e.txid)} />
+                      {e.verified === true ? ' · treasury payment checked on chain'
+                        : e.verified === false ? ' · the treasury payment did not check out'
+                          : ' · not checked on chain'}
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <p className="small dim" style={{ marginTop: '.75rem', marginBottom: 0 }}>
+            {page.purchases.length} of {page.total} shown.
+          </p>
+        </>
+      )}
+    </div>
+  )
+}
+
 function FlagPanel({ project, onFlagged }) {
   const [notice, setNotice] = useState(project.notice || '')
   const [busy, setBusy] = useState(false)
@@ -469,6 +544,7 @@ export default function ProjectDetail() {
           {issuer && (
             <div style={{ marginTop: '1rem' }}>
               <EditPanel project={project} onSaved={setProject} />
+              <LedgerPanel project={project} />
               {needsLock && (
                 <div style={{ marginTop: '.75rem' }}>
                   {!confirmWithdraw ? (
