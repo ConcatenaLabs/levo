@@ -233,8 +233,9 @@ throwaway regtest chain (it looks at `SEQUENTIAD`, `SEQUENTIA_SRC/src`, then
 `~/Sequentia/src`) and runs a lock, a PSET purchase, a raw purchase, the
 watcher, a sell-out, a reclaim under both kinds of close, a sale whose treasury
 is a version-0 address, a funding that never lands, a reorg that unconfirms a
-funding and mines it again, a reorg that takes one away for good, and every
-spend the covenant must refuse.
+funding and mines it again, a reorg that takes one away for good, a purchase
+whose fee is paid in a third asset -- neither the sale's nor bitcoin, which is
+what an open fee market means -- and every spend the covenant must refuse.
 
 The render test starts the demo server and paints every route in a headless
 Chromium, failing on a console error or a page that painted nothing. It is
