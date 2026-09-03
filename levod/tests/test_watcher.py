@@ -1093,3 +1093,19 @@ def test_a_sale_emptied_at_its_close_is_sold_out_not_closed(t):
     del rpc.txouts[("ab" * 32, 0)]
     _twice(w, rpc)                             # first miss at 100, decides at 101
     t.eq(s.status, S.SOLD_OUT, "emptied at the close is sold out, not closed")
+
+
+def test_a_sale_resting_at_someone_elses_output_is_reported_not_used(t):
+    """A restored file can name an outpoint that is not this sale's address:
+    terms edited by hand, or written by a build that derived them differently.
+    Everything built from it would be rejected by the chain, so the sale is
+    left as it is and reported rather than quoted from."""
+    s = _sale()
+    rpc = FakeRPC()
+    rpc.txouts[("ab" * 32, 0)] = {"value": TOTAL / 1e8, "confirmations": 6,
+                                  "scriptPubKey": {"hex": "0014" + "cc" * 20}}
+    rpc.blocks[95] = "block-95"
+    w = _watch(s, rpc)
+    w.poll()
+    t.ok((s.funding or {}).get("unverifiable"), "the sale is marked unverified")
+    t.eq(w.unverified, ["t"], "and health can name it")

@@ -378,6 +378,24 @@ class Watcher:
             return (None, False) if sale.status == S.GHOST else (None, False)
         out = self.rpc.txout(sale.funding["txid"], sale.funding["vout"])
         if out is not None:
+            # The output has to BE this sale's address. A state file whose
+            # terms were edited, or one written by a build that derived them
+            # differently, produces a sale that rests on somebody else's
+            # output: everything Levo then quotes is priced off leaves that do
+            # not compile to what is there, and every spend it builds is
+            # rejected. The chain settles it, which also covers the files that
+            # predate the address being recorded at all.
+            found = ((out.get("scriptPubKey") or {}).get("hex") or "").lower()
+            if found and found != sale.script_pubkey.lower():
+                if not (sale.funding or {}).get("unverifiable"):
+                    self.log("watcher: %s rests at an output that is not its "
+                             "sale address (%s, not %s); it is left as it is "
+                             "and reported unverified"
+                             % (slug, found[:24], sale.script_pubkey[:24]))
+                    with self._held():
+                        sale.funding["unverifiable"] = True
+                    return False, True
+                return False, False
             noted = self._remember_block(sale, out, chain)
             self._misses.pop(slug, None)
             self._miss_height.pop(slug, None)

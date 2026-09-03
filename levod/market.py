@@ -74,6 +74,28 @@ DEFAULT_PAYMENT_ASSET = "2a515539da5e6a60caa7766ecd65bac0c10d15717ddd2088844ba58
 DUST_RELAY_UNITS_PER_KVB = int(os.environ.get("LEVOD_DUST_RELAY") or 100)
 
 
+def _funding_or_none(value, slug):
+    """A sale's funding as it comes off the disk: an object naming an outpoint,
+    or nothing at all.
+
+    Anything else is refused rather than loaded. A damaged value here loads
+    cleanly and then breaks every save -- `dict("f0f0:1")` raises -- so the
+    ledger stops reaching the disk while the store still reports itself
+    writable, which is the one failure an operator has no way to see.
+    """
+    if value is None:
+        return None
+    if not isinstance(value, dict):
+        raise ValueError("the sale %r has a funding that is not an object" % slug)
+    txid = str(value.get("txid") or "")
+    if not TXID_RE.match(txid):
+        raise ValueError("the sale %r has a funding with no valid txid" % slug)
+    vout = value.get("vout")
+    if isinstance(vout, bool) or not isinstance(vout, int) or vout < 0:
+        raise ValueError("the sale %r has a funding with no output index" % slug)
+    return dict(value)
+
+
 def _txid_or_none(value):
     """A transaction id, or nothing. Anything else is a refusal: a field that
     silently keeps a typo is a link that goes nowhere."""
@@ -308,7 +330,7 @@ class Platform:
                 terms = C.SaleTerms.from_json(sd["terms"])
                 sl = self._make_sale(p, terms, sd.get("created_at"))
                 sl.status = sd.get("status", S.DRAFT)
-                sl.funding = sd.get("funding")
+                sl.funding = _funding_or_none(sd.get("funding"), slug)
                 sl.locked_atoms = int(sd.get("locked_atoms", 0))
                 sl.sold_atoms = int(sd.get("sold_atoms", 0))
                 sl.allocations = {k: int(v) for k, v in (sd.get("allocations") or {}).items()}
@@ -348,6 +370,19 @@ class Platform:
         every mutable value is copied on the way out. A shared list mid-append
         would otherwise be serialised halfway.
         """
+        try:
+            payload, version = self._snapshot()
+        except Exception as e:
+            # Health reads exactly these two, and a snapshot that cannot be
+            # built is a ledger that is not reaching the disk just as surely as
+            # a full disk is. Whatever shape nobody thought to validate, this
+            # is where it becomes visible.
+            self.store.write_error = "the state could not be serialised: %s" % e
+            self.store.dirty = True
+            raise
+        self.store.write(payload, version=version)
+
+    def _snapshot(self):
         with self.lock:
             out = {}
             for slug, p in self.projects.items():
@@ -373,7 +408,10 @@ class Platform:
             data["stake_links"] = self.stake.links.to_json()
             self.store.data = data
             version = self.store.next_version()
-        self.store.write(self.store.snapshot(data), version=version)
+        # Serialising is done with the lock released: on a platform with a
+        # thousand sales it is the slowest part of a save, and every request
+        # would otherwise wait for it.
+        return self.store.snapshot(data), version
 
     # --- chain context ------------------------------------------------------
 

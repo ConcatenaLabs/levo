@@ -173,6 +173,10 @@ class Drill:
         os.environ["LEVOD_STATE"] = str(self.state)
         os.environ["LEVOD_SECRET"] = "test-secret-not-used-in-production"
         os.environ["LEVOD_WEBROOT"] = str(self.webroot)
+        # This drill exercises the API, and its webroot starts empty. A levod
+        # with no app is a deliberate configuration, and saying so is what
+        # keeps health honest for the deployments that do serve one.
+        os.environ["LEVOD_API_ONLY"] = "1"
         os.environ["LEVOD_EXPLORER_URL"] = "https://example.test/explorer/"
         os.environ["LEVOD_LINKS"] = json.dumps({"Faucet": "https://example.test/faucet"})
         os.environ["LEVOD_AUTH_PER_MINUTE"] = "100000"     # the drill signs in a lot

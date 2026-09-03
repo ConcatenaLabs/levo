@@ -404,3 +404,48 @@ def test_closing_soonest_survives_a_node_that_cannot_be_reached(t):
     board = p.public_projects(sort="closing")
     t.eq([x["slug"] for x in board["projects"]], ["height-close"],
          "the board still answers")
+
+
+def test_a_damaged_funding_value_is_refused_at_load(t):
+    """A file that parses as JSON can still hold a shape nothing can use.
+
+    A string where the funding object belongs loaded cleanly and then broke
+    every save, while the store went on reporting itself writable: the ledger
+    stopped reaching the disk and nothing said so.
+    """
+    d = Path(tempfile.mkdtemp())
+    path = d / "state.json"
+    p = _platform(path)
+    p.list_project("02" + "11" * 32, {"slug": "one", "name": "One", "ticker": "ONE"},
+                   {"token_asset": "aa" * 32, "payment_asset": USDX, "price_num": 1,
+                    "price_den": 4, "treasury_prog": TREASURY_PROG, "min_lot": 100,
+                    "close_locktime": 2_000_000_000, "reclaim_xonly": RECLAIM_XONLY,
+                    "total_atoms": 10_000})
+    raw = json.loads(path.read_text())
+    raw["projects"]["one"]["sale"]["funding"] = "f0f0:1"
+    path.write_text(json.dumps(raw))
+    err = io.StringIO()
+    try:
+        with contextlib.redirect_stderr(err):
+            _platform(path)
+        t.ok(False, "a damaged funding value stops the service")
+    except SystemExit as e:
+        t.eq(e.code, ST.BAD_STATE_EXIT, "a damaged funding value stops the service")
+        t.ok("funding" in err.getvalue(), "and the message names what is wrong",
+             err.getvalue()[:120])
+
+
+def test_a_snapshot_that_cannot_be_built_shows_up_as_a_write_error(t):
+    """Health reads `write_error` and `dirty` and nothing else, so a failure
+    anywhere in the save has to reach them -- including one in the part that
+    turns the platform into bytes."""
+    d = Path(tempfile.mkdtemp())
+    p = _platform(d / "state.json")
+    p.projects["broken"] = object()          # a shape no snapshot can serialise
+    try:
+        p.save()
+        t.ok(False, "a snapshot that cannot be built raises")
+    except Exception:
+        t.ok(True, "a snapshot that cannot be built raises")
+    t.ok(p.store.dirty, "and the store knows the state file is behind")
+    t.ok(p.store.write_error, "and health can say why")

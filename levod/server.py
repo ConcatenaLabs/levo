@@ -204,7 +204,14 @@ class App:
             str(Path(__file__).resolve().parent.parent / "web" / "dist")))
         # Whether a built app was there when levod started. If it was and it
         # is not now, something removed it and every page is a 404.
-        self.had_webroot = (self.webroot / "index.html").is_file()
+        # Whether this levod is meant to serve the app at all. An API-only run
+        # is a deliberate configuration, not something to be inferred from what
+        # happened to be on disk at startup: inferring it disarmed the check in
+        # exactly the case it was written for -- a restart, a rebuild or a
+        # restore that left the app missing -- and health then reported a
+        # healthy site that answered 404 for every page.
+        self.api_only = (os.environ.get("LEVOD_API_ONLY") or "").strip().lower() \
+            in ("1", "true", "yes", "on")
         self.verbose = bool(os.environ.get("LEVOD_VERBOSE"))
 
     @property
@@ -611,7 +618,7 @@ class Handler(BaseHTTPRequestHandler):
             # while every API check passes. An uptime check watching this
             # endpoint has to see that. Only when a bundle was there at
             # startup: an API-only run is not broken.
-            serving = (not app.had_webroot) or (app.webroot / "index.html").is_file()
+            serving = app.api_only or (app.webroot / "index.html").is_file()
             ok = (node["reachable"] and not stale and not failing
                   and not write_error and serving)
             return self._json(200 if ok else 503, {
