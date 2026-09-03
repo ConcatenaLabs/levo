@@ -90,11 +90,15 @@ lot is the one thing it will not, because it refuses to leave less than a lot
 resting.
 
 Move anything not meant to be sold before the close. After the close the
-project can sweep what is left under its reclaim key, but it builds that
-transaction itself: the reclaim Levo builds spends the sale's own funding and
-nothing else, one covenant input at a time. A leaf that pinned the input's
-asset and outpoint would move every sale address, which is a vectors migration
-rather than a patch.
+project's key takes back whatever is left, one output at a time: the reclaim
+leaf checks a locktime and a signature and nothing else, so it sweeps a
+misdirected payment of another asset exactly as it sweeps unsold tokens.
+`levo rescue --terms sale.json` takes the largest output of the sale's own
+token, and `--outpoint <txid>:<vout>` takes a named one, whatever it holds.
+The reclaim Levo itself builds spends the sale's own funding and nothing else,
+one covenant input at a time. A leaf that pinned the input's asset and outpoint
+would move every sale address, which is a vectors migration rather than a
+patch.
 
 The sell leaf also carries no locktime. The close opens the reclaim path; it
 does not shut the sell path, so until the project reclaims, a buyer who builds
