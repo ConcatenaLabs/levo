@@ -9,6 +9,7 @@ sys.path.insert(0, str(HERE.parent))
 import covenant as C  # noqa: E402
 import sale as S  # noqa: E402
 import tiers as T  # noqa: E402
+import units as U  # noqa: E402
 
 SEQ = T.SEQ_ATOMS
 FLOOR = T.POS_MIN_STAKE_ATOMS
@@ -357,3 +358,19 @@ def test_an_offer_never_buys_more_than_it_offered(t):
             t.ok(cost <= offer,
                  "a %d/%d sale never charges more than the %d offered" % (num, den, offer),
                  "%d tokens cost %d" % (plan.token_atoms, cost))
+
+
+def test_a_printed_amount_is_one_the_tools_accept_back(t):
+    """`levo` prints amounts a person is meant to paste back -- into a node's
+    RPC, or into `levo record`. An amount printed at a precision the parser
+    then refuses is a command this platform produced and rejects."""
+    import importlib.util
+    src = open(str(Path(__file__).resolve().parent.parent.parent / "bin" / "levo")).read()
+    ns = {"__file__": "bin/levo"}
+    exec(compile(src.split("def main(")[0], "bin/levo", "exec"), ns)
+    units = ns["_units"]
+    for decimals in (0, 2, 8):
+        for atoms in (1, 1000, 123456789):
+            printed = units(atoms, decimals)
+            t.eq(U.parse(printed, decimals), atoms,
+                 "%s at %d places parses back" % (printed, decimals))

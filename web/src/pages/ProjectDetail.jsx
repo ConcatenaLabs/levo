@@ -28,7 +28,7 @@ function Terms({ project, sale }) {
         <tr><th>Paid in</th><td>{payment.label} <span className="dim">·</span> <Hex value={t.payment_asset} href={explorer('asset', t.payment_asset)} /></td></tr>
         <tr>
           <th>Price</th>
-          <td>{priceLabel(t, d)} {payment.label} per {project.ticker}
+          <td>{priceLabel(t, d, payment.decimals)} {payment.label} per {project.ticker}
             <div className="dim small prose">
               exactly ceil(n × {t.price_num} / {t.price_den}) {payment.label} atoms for n token atoms
             </div>
@@ -146,7 +146,8 @@ function BuyPanel({ project, onBought }) {
 
       {tiers && (
         <Beam tiers={tiers.tiers} stakeAtoms={standing.stake_atoms} compactMode
-              paymentLabel={payment.label} stakeLabel={stake.label} />
+              paymentLabel={payment.label} stakeLabel={stake.label}
+                        paymentDecimals={payment.decimals} stakeDecimals={stake.decimals} />
       )}
 
       {!canInvest ? (

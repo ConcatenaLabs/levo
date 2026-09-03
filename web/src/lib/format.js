@@ -75,9 +75,12 @@ export function pricePerToken(terms, tokenDecimals = 8, paymentDecimals = 8) {
          Math.pow(10, tokenDecimals) / Math.pow(10, paymentDecimals)
 }
 
-export function priceLabel(terms, tokenDecimals = 8) {
-  const p = pricePerToken(terms, tokenDecimals)
-  return p.toLocaleString('en-US', { maximumFractionDigits: 8 })
+// A price is an amount OF THE PAYMENT ASSET, so it is scaled by that asset's
+// precision. Leaving it at eight put every price on the board out by a factor
+// of a million on a two-place asset.
+export function priceLabel(terms, tokenDecimals = 8, paymentDecimals = 8) {
+  const p = pricePerToken(terms, tokenDecimals, paymentDecimals)
+  return p.toLocaleString('en-US', { maximumFractionDigits: Math.max(2, paymentDecimals) })
 }
 
 // A close is a block height below 500,000,000 and a unix time above it, the

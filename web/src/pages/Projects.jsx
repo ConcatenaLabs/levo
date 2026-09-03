@@ -176,7 +176,7 @@ export default function Projects() {
         <div className="rows">
           {projects.map((p) => {
             const d = p.decimals ?? 8
-            const price = p.sale ? priceLabel(p.sale.terms, d) + ' ' + payment.label : null
+            const price = p.sale ? priceLabel(p.sale.terms, d, payment.decimals) + ' ' + payment.label : null
             return (
               <Link className="row" key={p.slug} to={'/p/' + p.slug}>
                 <div>

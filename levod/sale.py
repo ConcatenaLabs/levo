@@ -348,6 +348,29 @@ class Sale:
             self.by_txid[entry["txid"]] = account
         return entry
 
+    def rest_on(self, txid, vout, atoms):
+        """Take this outpoint as where the covenant is resting, now.
+
+        `confirm_lock` is the LISTING-time check: it refuses anything that is
+        not the whole published allocation, because a sale that opens holding
+        less than it advertises cannot deliver what it sold. This is the other
+        case -- a sale already under way, read back off the chain -- where the
+        remainder is smaller than the total by exactly what has sold, and
+        insisting on the total would refuse every sale that has had a buyer.
+        The recovery path (`levo rescue`) and the watcher both need this one.
+        """
+        atoms = _atoms(atoms, "atoms")
+        if atoms <= 0:
+            raise SaleError("a covenant resting on nothing is not resting")
+        self.funding = dict(self.funding or {})
+        self.funding.update({"txid": str(txid).lower(), "vout": int(vout),
+                             "atoms": atoms})
+        self.locked_atoms = atoms
+        total = self.terms.total_atoms or atoms
+        self.sold_atoms = max(0, total - atoms)
+        self.status = LIVE if atoms >= total else PARTIAL
+        return self.funding
+
     def recorded_by(self, txid):
         """Which account recorded this transaction against this sale, if any."""
         return self.by_txid.get(str(txid or "").lower())
