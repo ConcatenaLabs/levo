@@ -125,8 +125,19 @@ because a reclaim leaf that can never be satisfied would leave unsold tokens
 locked forever. A reclaim's own locktime must be of the same kind as the close,
 since `CHECKLOCKTIMEVERIFY` compares heights with heights and times with times.
 For a time close, the chain judges against median time past, which trails the
-wall clock by a few blocks; levod builds a reclaim only once the chain's clock
-has passed the close.
+wall clock by a few blocks, and it judges strictly: a transaction is final only
+once that clock is *past* the close, not merely level with it. levod builds a
+reclaim only then, so a reclaim it hands the project is one the node will
+accept. A height close is the same rule one block along -- a reclaim carrying
+height H can first be mined in block H+1 -- which is also how a sale that
+emptied in the block of its own close is known to have been emptied by a buyer
+rather than swept by the project.
+
+Everything a buyer is shown uses the wall clock instead. Median time past is
+the chain's own clock and stops moving when blocks do, so a board that read it
+and a sale page that read the wall clock disagreed about whether the same sale
+was open. The chain's clock is kept for the one answer the chain has to
+accept.
 
 ## If Levo goes away
 

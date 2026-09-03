@@ -1096,7 +1096,14 @@ class Platform:
         browser.
         """
         h = self.height()
-        now = self.median_time()
+        # The wall clock, which is what every other status site uses. The
+        # chain's median time past trails it by half a block window and stops
+        # entirely when blocks stall, so a board that asked the chain and a
+        # sale page that asked the clock answered "has it closed?" differently
+        # about the same sale, minutes apart. The chain's clock stays where it
+        # is needed -- the reclaim gate, where the answer has to be one the
+        # node will accept.
+        now = None
         wanted = (status or "all").lower()
         if wanted not in SALE_FILTERS:
             raise PlatformError("status must be one of: %s" % ", ".join(sorted(SALE_FILTERS)))
@@ -1160,7 +1167,8 @@ class Platform:
                 sale = p.sale
                 if not sale or sale.shown_status(height=height, now=now) not in (S.LIVE, S.PARTIAL):
                     return (1, far, -p.created_at)
-                return (0, sale.terms.close_locktime, -p.created_at)
+                # As a moment, not as a raw locktime: see Sale.closes_at.
+                return (0, sale.closes_at(height=height, now=now), -p.created_at)
             return key
         if sort == "progress":
             def key(p):

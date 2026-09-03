@@ -1049,3 +1049,24 @@ def test_a_hint_below_the_minimum_lot_is_not_adopted(t):
         took = s.funding is not None and s.funding.get("txid") == "ee" * 32
         t.eq(took, adopted,
              "a hint of %d atoms is %s" % (atoms, "adopted" if adopted else "left alone"))
+
+
+def test_a_sale_emptied_at_its_close_is_sold_out_not_closed(t):
+    """The poll that notices is always later than the block that emptied it.
+
+    A covenant emptied in the block of its close was emptied by a BUY: the
+    project's own reclaim carries that height as its locktime, and the chain
+    will not mine such a transaction until the block after. Reading the answer
+    off the deciding poll -- which the miss protocol guarantees is a block
+    later -- recorded a fully subscribed sale as one that expired unsold.
+    """
+    s = _sale()
+    s.terms.close_locktime = 101               # the chain is at 100
+    rpc = FakeRPC()
+    rpc.blocks[95] = "block-95"
+    rpc.txouts[("ab" * 32, 0)] = {"value": TOTAL / 1e8, "confirmations": 6}
+    w = _watch(s, rpc)
+    w.poll()                                   # seen resting at height 100
+    del rpc.txouts[("ab" * 32, 0)]
+    _twice(w, rpc)                             # first miss at 100, decides at 101
+    t.eq(s.status, S.SOLD_OUT, "emptied at the close is sold out, not closed")

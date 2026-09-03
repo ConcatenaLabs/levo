@@ -361,3 +361,46 @@ def test_a_purchase_and_a_watcher_save_race_without_losing_the_purchase(t):
     t.eq(sum(sale["allocations"].values()), 1000, "every purchase survived on disk")
     t.eq(sum(len(v) for v in sale["purchases"].values()), 40,
          "and so did every ledger entry")
+
+
+def test_closing_soonest_compares_the_two_kinds_of_close(t):
+    """A close is a height below 500,000,000 and a unix time above it.
+
+    Sorted raw, every height close outranks every time close -- a sale closing
+    at block 700,000 sits above one closing tomorrow. The order is over
+    moments, so the two kinds can be compared with each other.
+    """
+    d = Path(tempfile.mkdtemp())
+    p = _platform(d / "state.json")
+    p.height = lambda strict=False: 200_000     # no node in this rig
+    terms = {"token_asset": "aa" * 32, "payment_asset": USDX, "price_num": 1,
+             "price_den": 4, "treasury_prog": TREASURY_PROG, "min_lot": 100,
+             "reclaim_xonly": RECLAIM_XONLY, "total_atoms": 10_000}
+    soon = int(time.time()) + 86_400            # tomorrow, as a time close
+    for slug, close in (("far", 700_000), ("soon", soon)):  # listed far first
+        pr = p.list_project("02" + "11" * 32,
+                            {"slug": slug, "name": slug, "ticker": slug.upper()},
+                            dict(terms, close_locktime=close, min_lot=100 + len(slug)))
+        pr.sale.confirm_lock("%064x" % (hash(slug) & (2**256 - 1)), 0,
+                             pr.sale.script_pubkey, 10_000, "aa" * 32)
+    board = p.public_projects(sort="closing")
+    t.eq([x["slug"] for x in board["projects"]], ["soon", "far"],
+         "tomorrow's close sorts above one 347 days out")
+
+
+def test_closing_soonest_survives_a_node_that_cannot_be_reached(t):
+    """A height close needs the tip to become a moment. Without one it sorts
+    last rather than taking the board down."""
+    d = Path(tempfile.mkdtemp())
+    p = _platform(d / "state.json")
+    p.height = lambda strict=False: None
+    pr = p.list_project("02" + "11" * 32,
+                        {"slug": "height-close", "name": "H", "ticker": "HH"},
+                        {"token_asset": "aa" * 32, "payment_asset": USDX,
+                         "price_num": 1, "price_den": 4, "min_lot": 100,
+                         "treasury_prog": TREASURY_PROG, "close_locktime": 700_000,
+                         "reclaim_xonly": RECLAIM_XONLY, "total_atoms": 10_000})
+    pr.sale.confirm_lock("ab" * 32, 0, pr.sale.script_pubkey, 10_000, "aa" * 32)
+    board = p.public_projects(sort="closing")
+    t.eq([x["slug"] for x in board["projects"]], ["height-close"],
+         "the board still answers")

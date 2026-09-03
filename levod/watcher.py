@@ -506,16 +506,22 @@ class Watcher:
         misses = self._misses.get(slug, 0) + 1
         self._misses[slug] = misses
         height = chain.get("height")
-        first = self._miss_height.setdefault(slug, height)
+        # Both clocks as they were at the FIRST miss, not at the poll that
+        # decides. The protocol guarantees the deciding poll is at least one
+        # block later, and a sale that emptied at its close would be read from
+        # that later tip as one that had already closed -- a sold-out sale
+        # recorded as closed with nothing sold.
+        first_h, first_t = self._miss_height.setdefault(
+            slug, (height, chain.get("mediantime")))
         if misses < self.confirm_misses:
             return False
-        if height is not None and first is not None and height <= first:
+        if height is not None and first_h is not None and height <= first_h:
             return False
-        return self._finish(sale, chain)
+        return self._finish(sale, chain, first_h, first_t)
 
     # --- how a sale ends ---------------------------------------------------
 
-    def _finish(self, sale, chain):
+    def _finish(self, sale, chain, first_h=None, first_t=None):
         """Nothing rests, twice in a row, across a block. Decide what that
         means -- but only on evidence.
 
@@ -538,8 +544,19 @@ class Watcher:
             with self._held():
                 sale.mark_ghost()
             return was != (sale.status, sale.locked_atoms)
-        closed = sale.has_closed(height=chain.get("height"), now=chain.get("mediantime"))
-        reclaimed = self._reclaim_landed(sale) if closed else False
+        # Was the covenant emptied before a reclaim was possible? If so a
+        # buyer emptied it, whatever the tip says now.
+        if first_h is None:
+            first_h = chain.get("height")
+        if first_t is None:
+            first_t = chain.get("mediantime")
+        closed = sale.reclaim_possible_at(height=first_h, now=first_t)
+        # A reclaim that is actually on chain settles it either way: the chain
+        # would not have accepted one before the close.
+        reclaimed = bool(self._reclaim_landed(sale)) \
+            if (closed or sale.reclaim_txids) else False
+        if reclaimed:
+            closed = True
         with self._held():
             if closed:
                 sale.mark_emptied(reclaimed=reclaimed)
