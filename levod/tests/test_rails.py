@@ -105,3 +105,30 @@ def test_a_registry_answer_is_held_to_the_same_rule_as_a_lister(t):
     t.eq(REG.Answer(checked=True, found=True,
                     contract={"name": "Ordinary Token"}).name, "Ordinary Token",
          "and ordinary text is untouched")
+
+
+def test_a_registry_answer_is_read_with_an_end_to_it(t):
+    """The registry is another operator's HTTP service, reached while a listing
+    is being made. A body with no end to it would be levod's memory rather than
+    theirs, and a listing that hangs on somebody else's server is a listing
+    nobody can make."""
+    import io
+    import registry as REG
+
+    class Endless:
+        """A server that keeps answering."""
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def read(self, n=None):
+            # However much is asked for, there is more.
+            return b'{"ticker": "' + b'A' * ((n or 10 ** 7)) + b'"}'
+
+    a = REG.look_up("https://registry.test", "aa" * 32,
+                    opener=lambda url, timeout=None: Endless())
+    t.ok(a.error and "larger than" in a.error,
+         "a registry answering without end is refused, not read", a.error)
+    t.eq(a.found, False, "and the listing is not held up by it")
