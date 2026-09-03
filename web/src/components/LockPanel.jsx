@@ -66,9 +66,10 @@ export default function LockPanel({ project, onLocked }) {
       <div className="kv"><span>Amount</span><b>{amount(sale.terms.total_atoms, decimals)} {project.ticker}</b></div>
       <div className="kv"><span>Asset</span><b>{sale.terms.token_asset.slice(0, 12)}… <Copy value={sale.terms.token_asset} label="Copy the asset id" /></b></div>
       <p className="small dim" style={{ marginTop: '.75rem' }}>
-        Send nothing but this token to this address. The sell leaf does not check what
-        asset it spends, so anything else resting here can be taken by anyone at the
-        sale's price. The address is unblinded, so the output will be explicit; do not
+        Send this once, and nothing else, ever. The sell leaf reads the amount it
+        spends and never which output that is, so every output at this address is
+        buyable at the sale's price &mdash; a second lot of your own token included,
+        out of a supply the board does not count. The address is unblinded, so the output will be explicit; do not
         wrap it in a confidential address, because tokens locked into a confidential
         output can never be sold.
       </p>

@@ -318,6 +318,25 @@ def _payment_label(p):
 
 # --- commands -----------------------------------------------------------------
 
+def plain(text):
+    """Text from a server, as something safe to print to a terminal.
+
+    A listing's words are chosen by whoever made the listing. levod refuses
+    control characters and bidi overrides on the way in, but a state file
+    written before it did, or another Levo entirely, can still hand this one a
+    name that moves the cursor, rings the bell or reverses the line it sits in.
+    They are replaced here rather than trusted: a terminal is not a page.
+    """
+    out = []
+    for c in str(text if text is not None else ""):
+        n = ord(c)
+        out.append("?" if (n < 32 or n == 127 or 128 <= n <= 159
+                           or c in "\u200b\u200e\u200f\u202a\u202b\u202c"
+                                   "\u202d\u202e\u2066\u2067\u2068\u2069\ufeff")
+                   else c)
+    return "".join(out)
+
+
 def cmd_sales(args):
     r = api("GET", "/api/projects?status=%s&limit=%d&offset=%d"
             % (args.status, args.limit, args.offset))
@@ -336,7 +355,7 @@ def cmd_sales(args):
         status = (s.get("status") or "-").replace("_", " ")
         asset = ((s.get("terms") or {}).get("token_asset") or "")
         print("%-20s %-6s %-16s %-10s %s"
-              % (p["slug"], p["ticker"],
+              % (plain(p["slug"]), plain(p["ticker"]),
                  (asset[:8] + "…" + asset[-6:]) if asset else "-",
                  status, p.get("address") or ""))
     if total > args.offset + shown:
@@ -595,7 +614,7 @@ def cmd_buy(args):
 
     plan = api("POST", "/api/projects/%s/buy" % args.slug, {"token_atoms": token_atoms}, tok)
     print("buying %s %s for %s"
-          % (args.tokens, p["ticker"],
+          % (args.tokens, plain(p["ticker"]),
              U.fmt(plan["payment_atoms"], _payment_decimals(p), _payment_label(p))))
 
     pay_asset = sale["terms"]["payment_asset"]

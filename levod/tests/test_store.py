@@ -449,3 +449,49 @@ def test_a_snapshot_that_cannot_be_built_shows_up_as_a_write_error(t):
         t.ok(True, "a snapshot that cannot be built raises")
     t.ok(p.store.dirty, "and the store knows the state file is behind")
     t.ok(p.store.write_error, "and health can say why")
+
+
+def test_a_listing_cannot_carry_characters_that_are_not_text(t):
+    """A project's words are printed on a page, in a terminal and in a log,
+    and a control character means something different in each. A right-to-left
+    override reverses a name against the amount beside it; a string of
+    zero-width characters is a listing with no visible name at all."""
+    d = Path(tempfile.mkdtemp())
+    p = _platform(d / "state.json")
+    terms = {"token_asset": "aa" * 32, "payment_asset": USDX, "price_num": 1,
+             "price_den": 4, "treasury_prog": TREASURY_PROG, "min_lot": 100,
+             "close_locktime": 2_000_000_000, "reclaim_xonly": RECLAIM_XONLY,
+             "total_atoms": 10_000}
+    bad = [("name", "Solar\u202egrid"),
+           ("name", "\u200b\u200b\u200b"),
+           ("name", "bell\x07here"),
+           ("name", "two\nlines"),
+           ("summary", "one\ttwo")]
+    for i, (field, value) in enumerate(bad):
+        meta = {"slug": "p%d" % i, "name": "Fine", "ticker": "FINE"}
+        meta[field] = value
+        try:
+            p.list_project("02" + "11" * 32, meta, terms)
+            t.ok(False, "%s %r is refused" % (field, value))
+        except M.PlatformError:
+            t.ok(True, "%s %r is refused" % (field, value))
+    # An ordinary accented name is not caught up in it.
+    pr = p.list_project("02" + "11" * 32,
+                        {"slug": "eclair", "name": "\u00c9clair \u00c9nergie",
+                         "ticker": "ECL"}, terms)
+    t.eq(pr.name, "\u00c9clair \u00c9nergie", "an accented name is text like any other")
+
+
+def test_a_link_is_one_address_and_says_where_it_goes(t):
+    """Links are rendered as anchors on a public page: one that reads as one
+    site and goes to another, or that carries a space or an invisible
+    character, is refused rather than published."""
+    for url in ("https://ok.test/\u202egnp.exe", "https://ok.test /",
+                "https://name@evil.test/", "https://ok.test/\x00"):
+        try:
+            M.validate_links({"Site": url})
+            t.ok(False, "%r is refused as a link" % url)
+        except M.PlatformError:
+            t.ok(True, "%r is refused as a link" % url)
+    t.eq(M.validate_links({"Site": "https://ok.test/a?b=c#d"}),
+         {"Site": "https://ok.test/a?b=c#d"}, "an ordinary URL is kept as it is")

@@ -15,6 +15,7 @@ which promises survive Levo going away.
 """
 
 import os
+import unicodedata
 import re
 import threading
 import time
@@ -120,7 +121,7 @@ def validate_links(links):
         raise PlatformError("links must be an object of label: URL")
     out = {}
     for k, v in links.items():
-        label = str(k).strip()
+        label = _printable(str(k), "link label").strip()
         if not label or len(label) > 24:
             raise PlatformError("each link label is 1 to 24 characters")
         if not isinstance(v, str):
@@ -130,20 +131,73 @@ def validate_links(links):
             continue
         if len(url) > 200:
             raise PlatformError("link %r is longer than 200 characters" % label)
+        # A URL is one token: no spaces, no line breaks, nothing invisible.
+        # A link carrying a right-to-left override reads as a different address
+        # than it goes to, and one carrying a space is simply broken.
+        if any(c.isspace() for c in url) or url != _printable(url, "link %r" % label):
+            raise PlatformError(
+                "link %r must be a single URL with no spaces, line breaks or "
+                "invisible characters in it" % label)
         parsed = urlparse(url)
         if parsed.scheme not in ("http", "https") or not parsed.netloc:
             raise PlatformError("link %r must be an http or https URL" % label)
+        if "@" in parsed.netloc:
+            # `https://sequentia.example@evil.test/` reads as one site and goes
+            # to another. Nothing legitimate on a public page needs it.
+            raise PlatformError(
+                "link %r puts a name before the @ in its address, which reads "
+                "as one site and goes to another" % label)
         out[label] = url
     if len(out) > MAX_LINKS:
         raise PlatformError("a project carries at most %d links" % MAX_LINKS)
     return out
 
 
-def _text(v, name, limit, required=False):
+# Characters that are not text, whatever a font does with them.
+#
+# A listing's words are printed in three places that read them differently: a
+# web page, a terminal (`levo sales`), and the journal. A control character is
+# a command in the second, a right-to-left override reverses a name against the
+# amount beside it in the first, and a string of zero-width characters is a
+# listing with no visible name at all. None of them can be part of a project's
+# name, so they are refused at the door rather than escaped in three places.
+BIDI_AND_INVISIBLE = (
+    "\u200b\u200c\u200d\u200e\u200f"     # zero width, LRM/RLM
+    "\u202a\u202b\u202c\u202d\u202e"     # the bidi embedding overrides
+    "\u2066\u2067\u2068\u2069"            # the isolates
+    "\ufeff"                                # a zero-width no-break space
+)
+
+
+def _printable(v, name):
+    """The same text with nothing in it that is not text, or a refusal."""
+    v = unicodedata.normalize("NFC", v)
+    bad = [c for c in v if (ord(c) < 32 and c not in "\n\t")
+           or ord(c) == 127 or 128 <= ord(c) <= 159 or c in BIDI_AND_INVISIBLE]
+    if bad:
+        raise PlatformError(
+            "the %s carries characters that are not text (%s). A name is read "
+            "on a web page, in a terminal and in a log, and these mean "
+            "different things in each"
+            % (name, ", ".join(sorted({"U+%04X" % ord(c) for c in bad}))))
+    return v
+
+
+def _text(v, name, limit, required=False, oneline=False):
+    """A field a person typed, as text this platform will print anywhere.
+
+    `oneline` is for the fields that appear in a row: a name with a line break
+    in it is a board row that pushes everything below it down, and a terminal
+    row that reads as two listings.
+    """
     if v is None:
         v = ""
     if not isinstance(v, str):
         raise PlatformError("%s must be text" % name)
+    v = _printable(v, name)
+    if oneline and ("\n" in v or "\t" in v):
+        raise PlatformError("the %s is one line: it cannot contain a line "
+                            "break or a tab" % name)
     v = v.strip()
     if required and not v:
         raise PlatformError("a project needs a %s" % name)
@@ -173,9 +227,9 @@ class Project:
         if not isinstance(ticker, str) or not re.match(r"^[A-Z0-9]{2,12}$", ticker or ""):
             raise PlatformError("the ticker must be 2 to 12 uppercase letters or digits")
         self.slug = slug
-        self.name = _text(name, "name", 80, required=True)
+        self.name = _text(name, "name", 80, required=True, oneline=True)
         self.ticker = ticker
-        self.summary = _text(summary, "summary", 200)
+        self.summary = _text(summary, "summary", 200, oneline=True)
         self.description = _text(description, "description", 8000)
         self.issuer_account = issuer_account
         self.links = validate_links(links)
@@ -206,9 +260,9 @@ class Project:
         if not isinstance(meta, dict):
             raise PlatformError("send the fields to change as an object")
         if "name" in meta:
-            self.name = _text(meta.get("name"), "name", 80, required=True)
+            self.name = _text(meta.get("name"), "name", 80, required=True, oneline=True)
         if "summary" in meta:
-            self.summary = _text(meta.get("summary"), "summary", 200)
+            self.summary = _text(meta.get("summary"), "summary", 200, oneline=True)
         if "description" in meta:
             self.description = _text(meta.get("description"), "description", 8000)
         if "links" in meta:
@@ -1277,7 +1331,7 @@ class Platform:
             if hidden is not None:
                 p.hidden = bool(hidden)
             if notice is not None:
-                p.notice = _text(notice, "notice", 400) or None
+                p.notice = _text(notice, "notice", 400, oneline=True) or None
         self.save()
         return p
 

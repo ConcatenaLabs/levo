@@ -76,16 +76,25 @@ That has three consequences worth stating plainly, because each costs money:
 
 ## What the leaf does not check
 
-The sell leaf reads the value of the input it spends, not its asset. Anything
-that lands at a sale address can therefore be spent through the sell leaf by
-anyone who pays the sale's price for it: a payment sent to the sale address by
-mistake is buyable at the token's price. The lock instructions say to send
-nothing but the token, and the watcher reports any other asset resting at the
-address as a stray. After the close the project can spend one under its reclaim
-key, but it builds that transaction itself: the reclaim Levo builds sweeps the
-sale token and nothing else, and a stray is a different output at the same
-address. A leaf that pinned the input's asset would move every sale address,
-which is a vectors migration rather than a patch.
+The sell leaf reads the value of the input it spends -- not its asset, and not
+which outpoint it is. Both omissions matter.
+
+Anything that lands at a sale address can be spent through the sell leaf by
+anyone who pays the sale's price for it, so a payment sent there by mistake is
+buyable at the token's price. And a SECOND lot of the sale's own token sent to
+the address is not parked beside the sale: it is a second thing to buy, at the
+same price, out of a supply the board does not count. Whichever it is, the
+watcher reports every output at the address that is not the sale's own funding,
+and says of each whether the leaf would sell it -- an amount below the minimum
+lot is the one thing it will not, because it refuses to leave less than a lot
+resting.
+
+Move anything not meant to be sold before the close. After the close the
+project can sweep what is left under its reclaim key, but it builds that
+transaction itself: the reclaim Levo builds spends the sale's own funding and
+nothing else, one covenant input at a time. A leaf that pinned the input's
+asset and outpoint would move every sale address, which is a vectors migration
+rather than a patch.
 
 The sell leaf also carries no locktime. The close opens the reclaim path; it
 does not shut the sell path, so until the project reclaims, a buyer who builds
