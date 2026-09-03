@@ -186,6 +186,15 @@ class Watcher:
             elif settled:
                 changed.append(slug)
 
+        # Listings nobody has asked the registry about yet: a few a poll, so a
+        # deployment that gains a registry answers for the sales it already
+        # had, without a burst.
+        try:
+            if getattr(self.market, "check_registry", None) and self.market.check_registry():
+                dirty = True
+        except Exception as e:
+            errors.append("registry: %s" % e)
+
         # A scan is needed for sales whose outpoint is gone, and occasionally
         # for the rest, to notice assets resting at their address that the
         # covenant does not sell.

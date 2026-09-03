@@ -250,3 +250,35 @@ def test_a_listing_that_contradicts_the_registry_is_refused(t):
     t.eq(quiet.checked, False, "a registry that cannot be reached checked nothing")
     t.eq(REG.disagreement(quiet, "ANYTHING", 8), None,
          "and blocks no listing, because a registry outage is not a project's fault")
+
+
+def test_a_listing_made_before_the_registry_is_asked_about_later(t):
+    """A sale listed before this Levo had a registry carries no answer, and its
+    page says so. That is true but thin, and the answer costs one request."""
+    d = Path(tempfile.mkdtemp())
+    p = _platform(d / "state.json")
+    p.registry_url = "https://registry.test"
+    pr = p.list_project("02" + "11" * 32,
+                        {"slug": "one", "name": "One", "ticker": "ONE", "decimals": 2},
+                        {"token_asset": "aa" * 32, "payment_asset": USDX, "price_num": 1,
+                         "price_den": 4, "treasury_prog": TREASURY_PROG, "min_lot": 100,
+                         "close_locktime": 2_000_000_000, "reclaim_xonly": RECLAIM_XONLY,
+                         "total_atoms": 10_000})
+    pr.registry = {}                      # as a listing made before this existed
+    import registry as REG
+
+    class Entry:
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+        def read(self):
+            return json.dumps({"contract": {"ticker": "ONE", "name": "One Token",
+                                            "precision": 2}}).encode()
+
+    real = REG.urllib.request.urlopen
+    REG.urllib.request.urlopen = lambda url, timeout=None: Entry()
+    try:
+        t.eq(p.check_registry(), ["one"], "the listing is asked about")
+        t.eq(p.projects["one"].registry["ticker"], "ONE", "and the answer is kept")
+        t.eq(p.check_registry(), [], "and not asked again")
+    finally:
+        REG.urllib.request.urlopen = real
