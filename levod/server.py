@@ -204,7 +204,14 @@ class App:
             str(Path(__file__).resolve().parent.parent / "web" / "dist")))
         # Whether a built app was there when levod started. If it was and it
         # is not now, something removed it and every page is a 404.
-        self.had_webroot = (self.webroot / "index.html").is_file()
+        # Whether this levod is meant to serve the app at all. An API-only run
+        # is a deliberate configuration, not something to be inferred from what
+        # happened to be on disk at startup: inferring it disarmed the check in
+        # exactly the case it was written for -- a restart, a rebuild or a
+        # restore that left the app missing -- and health then reported a
+        # healthy site that answered 404 for every page.
+        self.api_only = (os.environ.get("LEVOD_API_ONLY") or "").strip().lower() \
+            in ("1", "true", "yes", "on")
         self.verbose = bool(os.environ.get("LEVOD_VERBOSE"))
 
     @property
@@ -561,6 +568,12 @@ class Handler(BaseHTTPRequestHandler):
             # in levod looks like, and answering one as "malformed request"
             # blamed the caller for the server's mistake and logged nothing at
             # all. TypeError stays, because body parsing still leans on it.
+            # Logged like the TypeError arm below: a KeyError raised anywhere
+            # but the body parser is a bug in levod, and answering it as a
+            # malformed request with nothing in the journal leaves no trace of
+            # a server fault the caller was blamed for.
+            _log_error("KeyError on %s %s: %s" % (method, path, e))
+            _log_error(traceback.format_exc())
             self._json(400, {"error": "malformed request: %s" % _describe(e)})
         except TypeError as e:
             _log_error("malformed request on %s %s: %s" % (method, path, e))
@@ -605,7 +618,7 @@ class Handler(BaseHTTPRequestHandler):
             # while every API check passes. An uptime check watching this
             # endpoint has to see that. Only when a bundle was there at
             # startup: an API-only run is not broken.
-            serving = (not app.had_webroot) or (app.webroot / "index.html").is_file()
+            serving = app.api_only or (app.webroot / "index.html").is_file()
             ok = (node["reachable"] and not stale and not failing
                   and not write_error and serving)
             return self._json(200 if ok else 503, {
@@ -1098,9 +1111,19 @@ def _fields_of(message):
     return out
 
 
+# A field name a caller can act on: short, and shaped like the keys the API
+# documents. Anything else -- a nonce, a session id, an asset id that reached a
+# dictionary lookup -- is echoed back to nobody, because a key that is not a
+# field name is a value from inside levod, and the caller did not send it.
+FIELD_NAME = re.compile(r"^[a-z][a-z0-9_]{0,31}$")
+
+
 def _describe(e):
     if isinstance(e, KeyError):
-        return "missing field %s" % e
+        key = e.args[0] if e.args else ""
+        if isinstance(key, str) and FIELD_NAME.match(key):
+            return "missing field %r" % key
+        return "a field is missing or has the wrong shape"
     return str(e) or e.__class__.__name__
 
 

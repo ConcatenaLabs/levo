@@ -28,6 +28,7 @@ the covenant address. `build_buy` enforces that.
 import hashlib
 import struct
 
+import address as ADDR
 import covenant as C
 import pset as PSET
 import script as K
@@ -175,7 +176,21 @@ class BuildError(ValueError):
 
 # --- the buy transaction -----------------------------------------------------
 
-def build_buy(sale, plan, buyer):
+def _unblinded_hint(hrp):
+    """Name THIS chain's prefixes rather than testnet's.
+
+    Levo runs on more than one chain, and an error that tells a mainnet user to
+    send funds to a `tb1` address is an instruction that loses money if it is
+    followed.
+    """
+    plain = str(hrp or "tb")
+    blinded = next((b for b, u in ADDR.UNBLINDED_FOR.items() if u == plain), None)
+    if blinded:
+        return "a %s1... address, not a %s1... one" % (plain, blinded)
+    return "one whose amounts are stated rather than committed"
+
+
+def build_buy(sale, plan, buyer, hrp="tb"):
     """Assemble the unsigned buy transaction.
 
     `buyer` supplies the funding side, because levod has no wallet and cannot
@@ -227,8 +242,8 @@ def build_buy(sale, plan, buyer):
             "be filled with explicit ones: the covenant reads the treasury "
             "payment off the transaction, so every amount in it has to be "
             "stated rather than committed. Send the funds to an unblinded "
-            "address first (a tb1... address, not a tsqb1... one) and spend "
-            "that output instead." % len(blinded))
+            "address first (%s) and spend that output instead."
+            % (len(blinded), _unblinded_hint(hrp)))
 
     # What the buyer is bringing, per asset.
     supplied = {}
@@ -489,7 +504,7 @@ def _as_bytes(v):
 
 
 def build_reclaim(sale, destination_spk, fee_inputs, fee_atoms, fee_asset,
-                  genesis_hash, locktime=None):
+                  genesis_hash, locktime=None, change_spk=None):
     """Sweep whatever did not sell, after the sale's close.
 
     The reclaim leaf is the one place where a covenant spend carries a
@@ -500,6 +515,10 @@ def build_reclaim(sale, destination_spk, fee_inputs, fee_atoms, fee_asset,
 
     The covenant holds the sale token and nothing else, so the fee has to come
     from somewhere: `fee_inputs` are the project's own outputs covering it.
+    Whatever those inputs bring above the fee is change, and it goes to
+    `change_spk` -- never to the token destination. A project sweeping to a
+    cold wallet, a custodian or a deposit address that credits only the token
+    would otherwise send the whole of a fee input there with it.
     """
     if not sale.funding or sale.locked_atoms <= 0:
         raise BuildError("this sale holds nothing to reclaim")
@@ -544,11 +563,19 @@ def build_reclaim(sale, destination_spk, fee_inputs, fee_atoms, fee_asset,
         raise BuildError("fee inputs bring %d atoms of %s but the fee is %d"
                          % (supplied.get(fee_asset.lower(), 0), fee_asset, fee_atoms))
 
+    change_spk = _need_spk(change_spk, "change_script_pubkey") if change_spk else None
     tx.vout.append(TxOut(sale.terms.token_asset, sale.locked_atoms, destination_spk))
     for asset, brought in sorted(supplied.items()):
         left = brought - (int(fee_atoms) if asset == fee_asset.lower() else 0)
         if left:
-            tx.vout.append(TxOut(asset, left, destination_spk))
+            if change_spk is None:
+                raise BuildError(
+                    "these fee inputs bring %d atoms of %s more than the fee, "
+                    "and there is nowhere to send it: give change_address (or "
+                    "change_script_pubkey) for an address of yours. It does not "
+                    "go to the reclaim destination, which may be a wallet that "
+                    "credits only the token" % (left, asset))
+            tx.vout.append(TxOut(asset, left, change_spk))
     if fee_atoms:
         tx.vout.append(TxOut(fee_asset, int(fee_atoms), b""))
 

@@ -58,6 +58,12 @@ RECLAIMED = "reclaimed"  # closed, and the project's reclaim has swept the rest
 FINAL = (SOLD_OUT, RECLAIMED)
 
 
+# The chain aims at a block a minute, which is what turns a height close into
+# an approximate moment. Only ever used for ordering and for wording a
+# countdown, never to decide whether something has closed.
+BLOCK_SECONDS = 60
+
+
 class SaleError(ValueError):
     pass
 
@@ -129,10 +135,14 @@ class Sale:
         """
         if self.status not in (DRAFT, GHOST):
             raise SaleError(
-                "this sale is already funded at %s:%s; a sale is locked once. "
-                "The tokens you sent are resting at the sale address alongside "
-                "it and are not for sale" % ((self.funding or {}).get("txid"),
-                                            (self.funding or {}).get("vout")))
+                "this sale is already funded at %s:%s, and a sale is locked "
+                "once. Anything else you have sent to the sale address is "
+                "resting there beside it AND IS BUYABLE: the sell leaf reads "
+                "the amount it spends, never which output it is, so a buyer "
+                "can take any output at that address at the sale's price. "
+                "Move it before the close if it was not meant to be sold"
+                % ((self.funding or {}).get("txid"),
+                   (self.funding or {}).get("vout")))
         self.verify_funding_spk(spk_hex)
         if blinded or asset_hex is None or value_atoms is None:
             # A confidential output states nothing; it commits. The sell leaf
@@ -187,8 +197,56 @@ class Sale:
         """
         lt = self.terms.close_locktime
         if lt < 500_000_000:
+            # A transaction with locktime L is final in a block at height L+1,
+            # which is the block a node is building when its tip is L. So a
+            # tip at the close is closed.
             return height is not None and height >= lt
-        return (now or time.time()) >= lt
+        # A time locktime is compared against MEDIAN TIME PAST, and strictly:
+        # the chain calls a transaction final when its locktime is LESS than
+        # that time. At exactly the close the node still refuses it as
+        # non-final, so a reclaim built then is rejected after the project has
+        # signed it.
+        return (now or time.time()) > lt
+
+    def reclaim_possible_at(self, height=None, now=None):
+        """Could the project's own reclaim have been mined by then?
+
+        One block later than `has_closed`, and deliberately. A reclaim carries
+        nLockTime equal to the close, and the chain calls such a transaction
+        final only in a block ABOVE that height, or once median time past is
+        strictly beyond it. So at exactly the close a reclaim cannot yet exist,
+        and a covenant found empty then was emptied by a BUY.
+
+        That is the whole use of this: telling a sale that sold out from one
+        the project swept. Answering False when the clock it needs is missing
+        is the safe way round -- it says "a buy", which the ledger can be
+        checked against, rather than "swept", which nothing checks.
+        """
+        lt = self.terms.close_locktime
+        if lt < 500_000_000:
+            return height is not None and height > lt
+        return now is not None and now > lt
+
+    def closes_at(self, height=None, now=None):
+        """The close as ONE moment, so that a height close and a time close can
+        be compared with each other.
+
+        Two sales closing an hour apart should sit next to each other on the
+        board whichever way each of them names its close. Comparing the raw
+        locktimes cannot do that: a height is a small number and a time is a
+        large one, so every height close would sort ahead of every time close,
+        including one that closed last year. A height is converted at the
+        chain's target spacing, which makes it an estimate -- fine for an
+        order, never for the answer to "has it closed?", which stays with
+        `has_closed` and the chain's own rule.
+        """
+        lt = self.terms.close_locktime
+        now = time.time() if now is None else now
+        if lt >= 500_000_000:
+            return float(lt)
+        if height is None:
+            return float("inf")
+        return now + (lt - height) * BLOCK_SECONDS
 
     def close_is_height(self):
         return self.terms.close_locktime < 500_000_000

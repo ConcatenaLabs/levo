@@ -14,6 +14,7 @@ policy. Keeping that boundary sharp is what lets the documentation say exactly
 which promises survive Levo going away.
 """
 
+import os
 import re
 import threading
 import time
@@ -66,6 +67,33 @@ PURCHASES_SHOWN = 20             # purchases carried inline with a position
 MAX_PURCHASES_PER_ACCOUNT = 64   # ledger entries one account keeps per sale
 MAX_DRAFTS = 3                   # unfunded listings one account may hold at once
 DEFAULT_PAYMENT_ASSET = "2a515539da5e6a60caa7766ecd65bac0c10d15717ddd2088844ba58f4d04b9de"
+# The node's dust rate, in reference units per kvB. It is compiled into the
+# node (DUST_RELAY_TX_FEE) rather than reported over RPC, and only a debug
+# option changes it, so a deployment that runs against a node built otherwise
+# sets this to match.
+DUST_RELAY_UNITS_PER_KVB = int(os.environ.get("LEVOD_DUST_RELAY") or 100)
+
+
+def _funding_or_none(value, slug):
+    """A sale's funding as it comes off the disk: an object naming an outpoint,
+    or nothing at all.
+
+    Anything else is refused rather than loaded. A damaged value here loads
+    cleanly and then breaks every save -- `dict("f0f0:1")` raises -- so the
+    ledger stops reaching the disk while the store still reports itself
+    writable, which is the one failure an operator has no way to see.
+    """
+    if value is None:
+        return None
+    if not isinstance(value, dict):
+        raise ValueError("the sale %r has a funding that is not an object" % slug)
+    txid = str(value.get("txid") or "")
+    if not TXID_RE.match(txid):
+        raise ValueError("the sale %r has a funding with no valid txid" % slug)
+    vout = value.get("vout")
+    if isinstance(vout, bool) or not isinstance(vout, int) or vout < 0:
+        raise ValueError("the sale %r has a funding with no output index" % slug)
+    return dict(value)
 
 
 def _txid_or_none(value):
@@ -302,7 +330,7 @@ class Platform:
                 terms = C.SaleTerms.from_json(sd["terms"])
                 sl = self._make_sale(p, terms, sd.get("created_at"))
                 sl.status = sd.get("status", S.DRAFT)
-                sl.funding = sd.get("funding")
+                sl.funding = _funding_or_none(sd.get("funding"), slug)
                 sl.locked_atoms = int(sd.get("locked_atoms", 0))
                 sl.sold_atoms = int(sd.get("sold_atoms", 0))
                 sl.allocations = {k: int(v) for k, v in (sd.get("allocations") or {}).items()}
@@ -342,6 +370,19 @@ class Platform:
         every mutable value is copied on the way out. A shared list mid-append
         would otherwise be serialised halfway.
         """
+        try:
+            payload, version = self._snapshot()
+        except Exception as e:
+            # Health reads exactly these two, and a snapshot that cannot be
+            # built is a ledger that is not reaching the disk just as surely as
+            # a full disk is. Whatever shape nobody thought to validate, this
+            # is where it becomes visible.
+            self.store.write_error = "the state could not be serialised: %s" % e
+            self.store.dirty = True
+            raise
+        self.store.write(payload, version=version)
+
+    def _snapshot(self):
         with self.lock:
             out = {}
             for slug, p in self.projects.items():
@@ -367,7 +408,10 @@ class Platform:
             data["stake_links"] = self.stake.links.to_json()
             self.store.data = data
             version = self.store.next_version()
-        self.store.write(self.store.snapshot(data), version=version)
+        # Serialising is done with the lock released: on a platform with a
+        # thousand sales it is the slowest part of a save, and every request
+        # would otherwise wait for it.
+        return self.store.snapshot(data), version
 
     # --- chain context ------------------------------------------------------
 
@@ -396,10 +440,21 @@ class Platform:
 
     def list_project(self, account, meta, terms_json):
         """Create a listing. Only a tier that may list can do this."""
+        # The registry is another process over HTTP, so it is asked BEFORE the
+        # lock is taken: a registry that hangs would otherwise stall every
+        # board read, purchase and poll for as long as it hung.
+        answer = REG.look_up(self.registry_url,
+                             str((terms_json or {}).get("token_asset") or "").lower()
+                             if isinstance(terms_json, dict) else "")
         with self.lock:
-            return self._list_project(account, meta, terms_json)
+            p = self._list_project(account, meta, terms_json, answer)
+        # Outside the lock: turning the platform into bytes and putting them on
+        # a disk is the slowest thing levod does, and every board read, plan and
+        # purchase queues behind whoever holds the lock. See Platform.save.
+        self.save()
+        return p
 
-    def _list_project(self, account, meta, terms_json):
+    def _list_project(self, account, meta, terms_json, answer):
         if not isinstance(meta, dict):
             raise PlatformError("project must be an object")
         if not isinstance(terms_json, dict):
@@ -414,11 +469,16 @@ class Platform:
                     standing["tier"]["name"],
                     U.fmt(standing["stake_atoms"], 8, self.stake_label)))
         ticker = str(meta.get("ticker") or "").upper()
-        if ticker and ticker == (self.payment_label or "").upper():
-            raise PlatformError(
-                "%s is what this Levo prices sales in, so a token cannot use it "
-                "as its ticker: every amount on the board would read as that "
-                "asset" % self.payment_label)
+        # A ticker is free text a lister chooses. It may not be one of the two
+        # labels this site prints its own figures in: every cap, price and tier
+        # on the board is quoted in one of them, and a listing that took either
+        # would make its own token read as the asset those figures are in.
+        for taken in (self.payment_label, self.stake_label):
+            if ticker and taken and ticker == str(taken).upper():
+                raise PlatformError(
+                    "%s is a label this Levo prints its own figures in, so a "
+                    "token cannot use it as its ticker: amounts on the board "
+                    "would read as that asset" % taken)
         slug = meta.get("slug")
         if slug in self.projects:
             raise PlatformError("a project with that page name already exists")
@@ -438,8 +498,6 @@ class Platform:
         # registered contract is refused: wallets read the registry, so the
         # sale would show one name and every wallet another, and the price the
         # buyer typed would mean something else again.
-        token_asset = str(terms_json.get("token_asset") or "").lower()
-        answer = REG.look_up(self.registry_url, token_asset)
         clash = REG.disagreement(answer, p.ticker, p.decimals)
         if clash:
             raise PlatformError(clash)
@@ -512,6 +570,22 @@ class Platform:
                     "the sale closes at block %d and the chain is already at "
                     "%d, so it would be closed the moment it was listed"
                     % (terms.close_locktime, h))
+        # The covenant's treasury credit is an ordinary output, so it has to
+        # clear the node's dust rule. A sale whose SMALLEST purchase pays less
+        # than that is a sale no one can ever buy from: every purchase it
+        # allows is refused by every node it is offered to.
+        floor = self.dust_atoms(terms.payment_asset,
+                                spk_len=len(terms.treasury_prog) // 2 + 2)
+        if floor:
+            least = terms.cost_for(terms.min_lot)
+            if least < floor:
+                need = -(-floor * terms.price_den // terms.price_num)
+                raise PlatformError(
+                    "the smallest purchase this sale allows pays %d atoms to "
+                    "the treasury, and a node will not relay an output below "
+                    "%d atoms. Raise the price, or raise the minimum lot to at "
+                    "least %d atoms of the token"
+                    % (least, floor, need))
         sale = self._make_sale(p, terms)
         # Identical terms derive an identical covenant address, and the address
         # is the whole of what a lock is proven against. Two listings sharing
@@ -528,7 +602,6 @@ class Platform:
         p.sale = sale
         p.price_was_reduced = (submitted[0], submitted[1]) != (terms.price_num, terms.price_den)
         self.projects[slug] = p
-        self.save()
         return p
 
     def withdraw(self, account, slug):
@@ -542,7 +615,7 @@ class Platform:
                 raise PlatformError("a funded sale cannot be withdrawn; after the close, "
                                     "reclaim what did not sell")
             del self.projects[slug]
-            self.save()
+        self.save()
 
     def update_project(self, account, slug, meta):
         with self.lock:
@@ -550,8 +623,8 @@ class Platform:
             if p.issuer_account != account:
                 raise NotAuthorised("only the project's issuer can edit it")
             p.update(meta)
-            self.save()
-            return p
+        self.save()
+        return p
 
     def confirm_lock(self, account, slug, txid=None, vout=None):
         """Verify on chain that the project really locked the tokens.
@@ -560,25 +633,15 @@ class Platform:
         and the scriptPubKey it finds must equal the one the published terms
         derive. That equality is the entire trust argument for the sale.
 
-        Without an outpoint, the confirmed UTXO set is scanned for the sale's
-        address, so an issuer who sent the tokens from a wallet that does not
-        show output indexes can still confirm. That scan walks the node's whole
-        UTXO set and can take minutes, so it happens BEFORE the platform's lock
-        is taken -- holding it across a scan would stop every purchase, board
-        and poll on the platform for as long as the node took.
+        EVERY chain read happens before the platform's lock is taken. Without
+        an outpoint the confirmed UTXO set is scanned, which walks the node's
+        whole set and can take minutes; even with one, reading the output and
+        dating it are three calls that a stalled node answers no sooner than
+        the RPC timeout. The lock is what every purchase, board request, poll
+        and the shutdown path all queue behind, so nothing that waits on
+        another process is done while holding it.
         """
-        if not txid:
-            p = self.project(slug)
-            if p.sale is None:
-                raise PlatformError("this project has no sale")
-            if self.rpc is None:
-                raise PlatformError("no node connection; cannot verify the lock")
-            txid, vout = self._find_lock(p.sale)
-        with self.lock:
-            return self._confirm_lock(account, slug, txid, vout)
-
-    def _confirm_lock(self, account, slug, txid, vout):
-        p = self._project(slug)
+        p = self.project(slug)
         if p.issuer_account != account:
             raise NotAuthorised("only the project's issuer can confirm its lock")
         if p.sale is None:
@@ -597,6 +660,24 @@ class Platform:
             raise PlatformError(
                 "no unspent output at %s:%s -- it does not exist, it has "
                 "already been spent, or the node has not seen it yet" % (txid, vout))
+        dating = self._read_funding_date(out)
+        with self.lock:
+            p = self._confirm_lock(account, slug, txid, vout, out, dating)
+        self.save()
+        self.on_stale()
+        return p
+
+    def _confirm_lock(self, account, slug, txid, vout, out, dating):
+        p = self._project(slug)
+        if p.issuer_account != account:
+            raise NotAuthorised("only the project's issuer can confirm its lock")
+        if p.sale is None:
+            raise PlatformError("this project has no sale")
+        txid = str(txid).lower()
+        if not TXID_RE.match(txid):
+            raise PlatformError("txid must be 64 hex characters")
+        if isinstance(vout, bool) or not isinstance(vout, int) or vout < 0:
+            raise PlatformError("vout is the output's index in the transaction, 0 or more")
         spk = (out.get("scriptPubKey") or {}).get("hex")
         asset = out.get("asset") or out.get("assetlabel")
         value = _value_atoms(out)
@@ -611,14 +692,13 @@ class Platform:
                 "that outpoint is already the lock of the sale %r; one output "
                 "funds one sale" % taken.slug)
         p.sale.confirm_lock(txid, vout, spk, value, asset, blinded=blinded)
-        self._date_funding(p.sale, out)
-        self.save()
-        self.on_stale()
+        if p.sale.funding is not None:
+            p.sale.funding.update(dating)
         return p
 
-    def _date_funding(self, sale, out):
-        """Note which block the lock was mined in, or the height at which it
-        was first seen unmined.
+    def _read_funding_date(self, out):
+        """Which block the lock was mined in, or the height at which it was
+        first seen unmined -- as fields to apply, read with no lock held.
 
         The watcher calls a sale a ghost only when the chain says its funding
         is gone, and it can only say that about a funding it can place in time.
@@ -626,25 +706,21 @@ class Platform:
         sells out between the lock and the first poll from being read as one
         that was never funded at all.
         """
-        if sale.funding is None:
-            return
         try:
             conf = int(out.get("confirmations") or 0)
             tip = int(self.rpc.chain_height())
         except Exception:
-            return
+            return {}
         if conf < 1:
-            sale.funding["seen_height"] = tip
-            return
+            return {"seen_height": tip}
         try:
             height = tip - conf + 1
             block = self.rpc.call("getblockhash", height)
             if not block:
                 raise PlatformError("no block at %s" % height)
-            sale.funding["height"] = height
-            sale.funding["block"] = block
+            return {"height": height, "block": block}
         except Exception:
-            sale.funding["mined"] = True     # mined, but the node did not say where
+            return {"mined": True}          # mined, but the node did not say where
 
     def _find_lock(self, sale):
         """The outpoint resting at the sale address with the published amount,
@@ -822,7 +898,18 @@ class Platform:
         self.check_fee_asset(fee_asset, buyer.get("fee_atoms"))
         self.check_fee_atoms(p.sale, buyer.get("fee_atoms"),
                              n_inputs=len(buyer["inputs"]), fee_asset=fee_asset)
-        built = TX.build_buy(p.sale, plan, buyer)
+        # A purchase whose treasury credit is below the node's dust rule is
+        # refused here rather than at the node, which would be after the buyer
+        # had signed it.
+        floor = self.dust_atoms(p.sale.terms.payment_asset,
+                                spk_len=self._treasury_spk_len(p.sale.terms))
+        if floor and plan.payment_atoms < floor:
+            raise PlatformError(
+                "this purchase pays %s to the treasury, and a node will not "
+                "relay an output that small. Buy a larger lot: %s is the least "
+                "that will move"
+                % (p.sale.payment(plan.payment_atoms), p.sale.payment(floor)))
+        built = TX.build_buy(p.sale, plan, buyer, hrp=self.hrp)
         built["token_atoms"] = plan.token_atoms
         built["payment_atoms"] = plan.payment_atoms
         built["remainder_atoms"] = plan.remainder_atoms
@@ -853,7 +940,9 @@ class Platform:
     def build_reclaim(self, account, slug, body):
         """Sweep unsold tokens after the close. Only the project may ask."""
         with self.lock:
-            return self._build_reclaim(account, slug, body)
+            built = self._build_reclaim(account, slug, body)
+        self.save()
+        return built
 
     def _build_reclaim(self, account, slug, body):
         p = self._project(slug)
@@ -888,6 +977,12 @@ class Platform:
         genesis = self.rpc.call("getblockhash", 0)
         dest = self._spk(body, "destination_script_pubkey", "destination_address",
                          "where the reclaimed tokens go")
+        # Change from the fee inputs, if any, and a separate address on
+        # purpose: the destination may be a wallet that credits only the token.
+        change = None
+        if body.get("change_address") or body.get("change_script_pubkey"):
+            change = self._spk(body, "change_script_pubkey", "change_address",
+                               "where the change from your fee inputs goes")
         fee_inputs = self.verify_buyer_inputs(body.get("fee_inputs"))
         fee_asset = self.resolve_asset(body.get("fee_asset") or sale.terms.payment_asset)
         fee_atoms = body.get("fee_atoms")
@@ -901,7 +996,8 @@ class Platform:
             fee_atoms=fee_atoms,
             fee_asset=fee_asset,
             genesis_hash=genesis,
-            locktime=body.get("locktime"))
+            locktime=body.get("locktime"),
+            change_spk=change)
         # The transaction id is fixed before any signature is added, so the
         # watcher can recognise this reclaim on chain by its output 0 and call
         # the sale reclaimed rather than merely empty.
@@ -911,7 +1007,6 @@ class Platform:
                                        kind="reclaim")
         built["fee"]["paying_atoms"] = int(fee_atoms)
         sale.note_reclaim(built["txid"])
-        self.save()
         return built
 
     def record_purchase(self, account, slug, txid, token_atoms, payment_atoms):
@@ -931,7 +1026,16 @@ class Platform:
         else is refused, so a mistyped txid does not consume an allocation.
         """
         with self.lock:
-            return self._record_purchase(account, slug, txid, token_atoms, payment_atoms)
+            recorded = self._record_purchase(account, slug, txid, token_atoms,
+                                             payment_atoms)
+        # The purchase is already in the ledger in memory, so a save that fails
+        # here does not un-record it: `store.write_error` and `store.dirty`
+        # carry that to the health endpoint and to the watcher's retry, and the
+        # buyer is told what is true, which is that their purchase was taken.
+        # The nudge comes after the save so the watcher cannot write first.
+        self.save()
+        self.on_stale()
+        return recorded
 
     def _record_purchase(self, account, slug, txid, token_atoms, payment_atoms):
         p = self._project(slug)
@@ -1038,8 +1142,6 @@ class Platform:
         # Telling the watcher where to look lets it see the remainder in the
         # mempool, so the sale moves as soon as the buy is broadcast.
         sale.expect_remainder_at(txid, 1)
-        self.save()
-        self.on_stale()
         return {
             "recorded": True,
             "purchase": entry,
@@ -1077,7 +1179,14 @@ class Platform:
         browser.
         """
         h = self.height()
-        now = self.median_time()
+        # The wall clock, which is what every other status site uses. The
+        # chain's median time past trails it by half a block window and stops
+        # entirely when blocks stall, so a board that asked the chain and a
+        # sale page that asked the clock answered "has it closed?" differently
+        # about the same sale, minutes apart. The chain's clock stays where it
+        # is needed -- the reclaim gate, where the answer has to be one the
+        # node will accept.
+        now = None
         wanted = (status or "all").lower()
         if wanted not in SALE_FILTERS:
             raise PlatformError("status must be one of: %s" % ", ".join(sorted(SALE_FILTERS)))
@@ -1141,7 +1250,8 @@ class Platform:
                 sale = p.sale
                 if not sale or sale.shown_status(height=height, now=now) not in (S.LIVE, S.PARTIAL):
                     return (1, far, -p.created_at)
-                return (0, sale.terms.close_locktime, -p.created_at)
+                # As a moment, not as a raw locktime: see Sale.closes_at.
+                return (0, sale.closes_at(height=height, now=now), -p.created_at)
             return key
         if sort == "progress":
             def key(p):
@@ -1168,8 +1278,8 @@ class Platform:
                 p.hidden = bool(hidden)
             if notice is not None:
                 p.notice = _text(notice, "notice", 400) or None
-            self.save()
-            return p
+        self.save()
+        return p
 
     def projects_of(self, account, limit=None, offset=0):
         h = self.height()
@@ -1250,6 +1360,36 @@ class Platform:
             "%s: %r is neither a 64-character asset id nor a label this node "
             "knows. The node lists the labels it has (dumpassetlabels)."
             % (what, text))
+
+    def dust_atoms(self, asset, spk_len=34):
+        """The smallest output of `asset` a node will relay, in atoms.
+
+        A node drops a transaction carrying an output worth less than what it
+        would cost to spend it -- three times over, since the rule is written
+        as the fee for the output plus a minimum spending input, at a fixed
+        rate. The rate is not something a node reports, so it is a deployment
+        setting here, defaulting to the node's own compiled-in figure of 100
+        reference units per kvB.
+
+        Returns None when the node cannot price the asset, which is the same
+        answer the fee floor gives: unknown, so do not refuse anything.
+        """
+        try:
+            rates = self.rpc.call("getfeeexchangerates") or {} if self.rpc else {}
+        except Exception:
+            return None
+        rate = _rate_for(rates, str(asset).lower(), self._labels())
+        if not rate:
+            return None
+        # An explicit Elements output: asset (33), value (9), nonce (1), the
+        # length byte, the program -- and the 67 bytes the rule adds for the
+        # input that would one day spend it.
+        size = 33 + 9 + 1 + 1 + int(spk_len) + 67
+        units = -(-DUST_RELAY_UNITS_PER_KVB * size // 1000)
+        return -(-units * 100_000_000 // int(rate))
+
+    def _treasury_spk_len(self, terms):
+        return len(terms.treasury_prog) // 2 + 2
 
     def check_fee_atoms(self, sale, fee_atoms, n_inputs, fee_asset, vsize=None,
                         kind="buy"):
@@ -1487,9 +1627,14 @@ class Platform:
         sale = p.sale
         if sale is None:
             raise NotFound("this project has no sale")
+        # The maps are written by the purchase path and by the watcher, so a
+        # read that walks them unlocked raises the moment somebody buys.
+        with self.lock:
+            rows = [(acct, list(v)) for acct, v in sale.purchases.items()]
+            committed = dict(sale.allocations)
         entries = []
-        for acct, rows in sale.purchases.items():
-            for e in rows:
+        for acct, purchases in rows:
+            for e in purchases:
                 entries.append(dict(e, account=acct))
         entries.sort(key=lambda e: e.get("at") or 0, reverse=True)
         total = len(entries)
@@ -1501,8 +1646,8 @@ class Platform:
             "total": total,
             "offset": offset,
             "limit": limit,
-            "committed_atoms": dict(sale.allocations),
-            "buyers": len([a for a, rows in sale.purchases.items() if rows]),
+            "committed_atoms": committed,
+            "buyers": len([a for a, purchases in rows if purchases]),
             "what_this_is": "Levo's own record, which is what the per-buyer "
                             "caps are measured against. The chain is the "
                             "authority on what the sale holds: a purchase made "

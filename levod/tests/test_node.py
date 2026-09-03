@@ -358,6 +358,33 @@ def run(ok, rig):
     except M.PlatformError as e:
         ok.ok("relay" in str(e), "and a fee below that floor is refused before signing", str(e))
 
+    # --- the dust floor Levo enforces is the one the node enforces ---------
+    #
+    # A node drops a transaction carrying an output too small to be worth
+    # spending. The rate behind that rule is compiled into the node and is not
+    # reported over RPC, so Levo carries its own copy -- and a copy that has
+    # drifted from the node is worse than none: it refuses purchases the chain
+    # would take, or builds ones it will not. This walks the boundary against
+    # the node itself.
+    floor = plat.dust_atoms(pay, spk_len=len(dest_spk()) // 2)
+    ok.ok(floor and floor > 0, "levod prices the dust floor for the payment asset")
+    for atoms, want in ((floor - 1, False), (floor, True)):
+        # Either end of the node can refuse it -- its wallet will not fund a
+        # dust output, and its mempool will not relay one -- and both apply
+        # the same rule. What is being pinned is the boundary, not which half
+        # of the node says no.
+        try:
+            funded = w("fundrawtransaction", w("createrawtransaction", [], [
+                {w("getnewaddress"): "%d.%08d" % divmod(atoms, 100_000_000),
+                 "asset": pay}]), {"fee_rate": 1, "fee_asset": pay})
+            signed = w("signrawtransactionwithwallet", funded["hex"])
+            allowed, why = accept(signed["hex"])
+        except Exception as e:
+            allowed, why = False, str(e)
+        ok.ok(bool(allowed) == want,
+              "an output of %d atoms is %s by the node"
+              % (atoms, "relayed" if want else "refused"), why)
+
     # --- a sale whose treasury is an ordinary version-0 address ------------
     #
     # Most wallets, the browser extension included, hand out version-0
@@ -541,6 +568,7 @@ def run(ok, rig):
     # A reclaim with the wrong key is refused by the chain; the right one lands.
     fee_ins = pay_input(5_000)
     r = plat.build_reclaim(issuer, "beta", {"destination_script_pubkey": dest_spk(),
+                                            "change_script_pubkey": dest_spk(),
                                             "fee_inputs": [{"txid": i["txid"], "vout": i["vout"]} for i in fee_ins],
                                             "fee_atoms": 1_000})
     ok.ok("signature" not in r, "levod hands back a sighash, never a signature")
@@ -594,6 +622,7 @@ def run(ok, rig):
     t_fee_ins = pay_input(5_000)
     tr = plat.build_reclaim(issuer, "timed", {
         "destination_script_pubkey": dest_spk(),
+        "change_script_pubkey": dest_spk(),
         "fee_inputs": [{"txid": i["txid"], "vout": i["vout"]} for i in t_fee_ins],
         "fee_atoms": 1_000})
     ok.eq(tr["locktime"], close_at, "the reclaim carries the sale's own close as its locktime")

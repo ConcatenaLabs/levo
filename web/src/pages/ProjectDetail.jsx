@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { useParams, Link } from 'react-router-dom'
 import { api } from '../lib/api'
 import { useStore } from '../lib/store'
-import { amount, capitalise, closeIn, closeLabel, compact, priceLabel, shortHex, treasurySpk } from '../lib/format'
+import { amount, capitalise, closeIn, closeLabel, compact, priceLabel, prose, shortHex, treasurySpk } from '../lib/format'
 import { addressOf } from '../lib/bech32'
 import { Copy, Hex, Notice, usePageTitle } from '../components/ui'
 import SignIn from '../components/SignIn'
@@ -20,7 +20,11 @@ function Terms({ project, sale }) {
   return (
     <table className="terms">
       <tbody>
-        <tr><th>Token</th><td>{project.ticker} <span className="dim">·</span> <Hex value={t.token_asset} href={explorer('asset', t.token_asset)} /></td></tr>
+        <tr><th>Token</th><td>{project.ticker} <span className="dim">·</span> <Hex value={t.token_asset} href={explorer('asset', t.token_asset)} />
+          <div className="dim small prose">
+            the name and ticker are the project's own words; the asset id beside
+            them is the only part of this row the chain knows about
+          </div></td></tr>
         <tr><th>Paid in</th><td>{payment.label} <span className="dim">·</span> <Hex value={t.payment_asset} href={explorer('asset', t.payment_asset)} /></td></tr>
         <tr>
           <th>Price</th>
@@ -98,7 +102,7 @@ function NotOpen({ sale }) {
     ghost: 'The chain does not have the output that funded this sale: either it never reached a block, or a Bitcoin-driven reorg took the block that held it. The sale is not funded and cannot be bought until the project locks its tokens again.',
     sold_out: 'Every token in this sale has been sold.',
     reclaimed: 'This sale closed and the project has taken back what did not sell.',
-    closed: 'This sale is closed. Levo no longer plans purchases from it.',
+    closed: 'This sale has passed its close, so the project may now reclaim whatever did not sell, and Levo no longer plans purchases from it. The covenant itself carries no closing date on the buying side: until the project reclaims, anyone holding the terms can still buy from it directly.',
   }[sale.status] || 'This sale is not open.'
   return (
     <div className="card">
@@ -219,10 +223,11 @@ function KeepThis({ project, sale }) {
     sale_address: project.address,
     script_pubkey: sale.script_pubkey,
     terms: sale.terms,
+    token_decimals: project.decimals,
     keep: "these terms make the sale address, and the reclaim leaf your key "
       + "spends through. With this file, your reclaim key and any Sequentia "
       + "node, `levo rescue --terms <this file>` sweeps whatever is left at "
-      + "that address after the close -- with no Levo involved at all.",
+      + "that address after the close, with no Levo involved at all.",
   }, null, 2)
 
   if (!open) {
@@ -536,7 +541,7 @@ export default function ProjectDetail() {
                           <td><Hex value={project.address} href={explorer('address', project.address)} /></td></tr>
                       <tr><th>scriptPubKey</th><td><Hex value={project.verify.script_pubkey} /></td></tr>
                       <tr><th>Internal key</th>
-                          <td className="prose">{project.verify.internal_key}</td></tr>
+                          <td className="prose">{prose(project.verify.internal_key)}</td></tr>
                       {sale.funding && (
                         <tr><th>{sale.sold_atoms > 0 ? 'Resting at' : 'Locked at'}</th>
                             <td><Hex value={sale.funding.txid + ':' + sale.funding.vout} href={explorer('tx', sale.funding.txid)} />
@@ -564,11 +569,13 @@ export default function ProjectDetail() {
               )}
               {sale.strays && sale.strays.length > 0 && (
                 <Notice kind="bad" style={{ marginTop: '1rem' }}>
-                  <strong>Other assets are resting at the sale address.</strong> They are not
-                  for sale, but the sell leaf does not check what asset it spends, so anyone
-                  can take them at the sale's price. After the close the project can spend
-                  them under its reclaim key, in a transaction it builds itself: Levo's own
-                  reclaim sweeps the sale token and nothing else.
+                  <strong>More than the sale is resting at the sale address.</strong> The sell
+                  leaf reads the amount it spends and never which output it is, so a buyer can
+                  take any output at that address at the sale's price, whatever asset it holds.
+                  Anything below is outside what this sale locked. Move what was not meant to be
+                  sold before the close. After the close the project can spend what is left under
+                  its reclaim key, in a transaction it builds itself: Levo's own reclaim sweeps
+                  the sale's own funding and nothing else.
                   <ul className="small" style={{ margin: '.5rem 0 0', paddingLeft: '1.1rem' }}>
                     {sale.strays.map((s) => (
                       <li key={s.txid + s.vout}>
@@ -576,6 +583,9 @@ export default function ProjectDetail() {
                         {s.asset === sale.terms.payment_asset ? payment.label : <span className="mono">{shortHex(s.asset, 8, 6)}</span>}
                         {' '}at <Hex value={s.txid + ':' + s.vout}
                                     href={explorer('tx', s.txid)} short={14} />
+                        {' '}&mdash; {s.sellable === false
+                          ? 'below the minimum lot, so the leaf will not sell it; sweep it after the close'
+                          : 'a buyer can take this at the sale price'}
                       </li>
                     ))}
                   </ul>

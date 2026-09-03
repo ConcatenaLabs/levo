@@ -299,3 +299,153 @@ def test_an_older_snapshot_cannot_overwrite_a_newer_one(t):
     back = json.loads((d / "state.json").read_text())
     t.eq(sorted(back["projects"]), ["a", "b"], "and the disk holds the newer state")
     t.eq(st.write(st.snapshot(), version=st.next_version()), True, "later writes still land")
+
+
+def test_a_slower_save_never_overwrites_a_newer_one(t):
+    """Two savers can build in one order and reach the disk in the other.
+
+    The watcher saves with no platform lock held, so its snapshot can be built
+    before a purchase and land after it. Without an order on the writes the
+    purchase is on disk, then gone, with nothing dirty and nothing logged --
+    and the next restart hands the buyer their whole tier cap back.
+    """
+    d = Path(tempfile.mkdtemp())
+    st = ST.Store(d / "state.json")
+    st.data = {"projects": {}, "note": "old"}
+    old = st.snapshot()
+    v_old = st.next_version()
+    st.data = {"projects": {}, "note": "new"}
+    new = st.snapshot()
+    v_new = st.next_version()
+    t.ok(st.write(new, version=v_new), "the newer write lands")
+    t.ok(not st.write(old, version=v_old), "the older write is dropped")
+    t.eq(json.loads((d / "state.json").read_text())["note"], "new",
+         "what is on disk is the newer state")
+    t.ok(not st.dirty, "a dropped write does not mark the file dirty")
+    t.eq(st.write_error, None, "a dropped write is not an error")
+
+
+def test_a_purchase_and_a_watcher_save_race_without_losing_the_purchase(t):
+    """The real interleaving, with threads: a save loop beside a buyer."""
+    import threading
+    d = Path(tempfile.mkdtemp())
+    p = _platform(d / "state.json")
+    buyers = ["02%062x" % (0x22 + i) for i in range(40)]
+    pr = p.list_project("02" + "11" * 32,
+                        {"slug": "race", "name": "Race", "ticker": "RACE"},
+                        {"token_asset": "aa" * 32, "payment_asset": USDX,
+                         "price_num": 1, "price_den": 4,
+                         "treasury_prog": TREASURY_PROG, "min_lot": 100,
+                         "close_locktime": 2_000_000_000,
+                         "reclaim_xonly": RECLAIM_XONLY, "total_atoms": 10_000})
+    pr.sale.confirm_lock("ab" * 32, 1, pr.sale.script_pubkey, 10_000, "aa" * 32)
+    stop = threading.Event()
+
+    def saver():                      # what the watcher does, on its own poll
+        while not stop.is_set():
+            p.save()
+
+    th = threading.Thread(target=saver, daemon=True)
+    th.start()
+    try:
+        for i, buyer in enumerate(buyers):
+            p.record_purchase(buyer, "race", "%064x" % (i + 1), 100, 25)
+    finally:
+        stop.set()
+        th.join(timeout=5)
+    p.save()
+    on_disk = json.loads((d / "state.json").read_text())
+    sale = on_disk["projects"]["race"]["sale"]
+    # The ledger commits PAYMENT atoms, which is the unit a tier cap is in:
+    # forty buys of 100 tokens at a quarter each.
+    t.eq(sum(sale["allocations"].values()), 1000, "every purchase survived on disk")
+    t.eq(sum(len(v) for v in sale["purchases"].values()), 40,
+         "and so did every ledger entry")
+
+
+def test_closing_soonest_compares_the_two_kinds_of_close(t):
+    """A close is a height below 500,000,000 and a unix time above it.
+
+    Sorted raw, every height close outranks every time close -- a sale closing
+    at block 700,000 sits above one closing tomorrow. The order is over
+    moments, so the two kinds can be compared with each other.
+    """
+    d = Path(tempfile.mkdtemp())
+    p = _platform(d / "state.json")
+    p.height = lambda strict=False: 200_000     # no node in this rig
+    terms = {"token_asset": "aa" * 32, "payment_asset": USDX, "price_num": 1,
+             "price_den": 4, "treasury_prog": TREASURY_PROG, "min_lot": 100,
+             "reclaim_xonly": RECLAIM_XONLY, "total_atoms": 10_000}
+    soon = int(time.time()) + 86_400            # tomorrow, as a time close
+    for slug, close in (("far", 700_000), ("soon", soon)):  # listed far first
+        pr = p.list_project("02" + "11" * 32,
+                            {"slug": slug, "name": slug, "ticker": slug.upper()},
+                            dict(terms, close_locktime=close, min_lot=100 + len(slug)))
+        pr.sale.confirm_lock("%064x" % (hash(slug) & (2**256 - 1)), 0,
+                             pr.sale.script_pubkey, 10_000, "aa" * 32)
+    board = p.public_projects(sort="closing")
+    t.eq([x["slug"] for x in board["projects"]], ["soon", "far"],
+         "tomorrow's close sorts above one 347 days out")
+
+
+def test_closing_soonest_survives_a_node_that_cannot_be_reached(t):
+    """A height close needs the tip to become a moment. Without one it sorts
+    last rather than taking the board down."""
+    d = Path(tempfile.mkdtemp())
+    p = _platform(d / "state.json")
+    p.height = lambda strict=False: None
+    pr = p.list_project("02" + "11" * 32,
+                        {"slug": "height-close", "name": "H", "ticker": "HH"},
+                        {"token_asset": "aa" * 32, "payment_asset": USDX,
+                         "price_num": 1, "price_den": 4, "min_lot": 100,
+                         "treasury_prog": TREASURY_PROG, "close_locktime": 700_000,
+                         "reclaim_xonly": RECLAIM_XONLY, "total_atoms": 10_000})
+    pr.sale.confirm_lock("ab" * 32, 0, pr.sale.script_pubkey, 10_000, "aa" * 32)
+    board = p.public_projects(sort="closing")
+    t.eq([x["slug"] for x in board["projects"]], ["height-close"],
+         "the board still answers")
+
+
+def test_a_damaged_funding_value_is_refused_at_load(t):
+    """A file that parses as JSON can still hold a shape nothing can use.
+
+    A string where the funding object belongs loaded cleanly and then broke
+    every save, while the store went on reporting itself writable: the ledger
+    stopped reaching the disk and nothing said so.
+    """
+    d = Path(tempfile.mkdtemp())
+    path = d / "state.json"
+    p = _platform(path)
+    p.list_project("02" + "11" * 32, {"slug": "one", "name": "One", "ticker": "ONE"},
+                   {"token_asset": "aa" * 32, "payment_asset": USDX, "price_num": 1,
+                    "price_den": 4, "treasury_prog": TREASURY_PROG, "min_lot": 100,
+                    "close_locktime": 2_000_000_000, "reclaim_xonly": RECLAIM_XONLY,
+                    "total_atoms": 10_000})
+    raw = json.loads(path.read_text())
+    raw["projects"]["one"]["sale"]["funding"] = "f0f0:1"
+    path.write_text(json.dumps(raw))
+    err = io.StringIO()
+    try:
+        with contextlib.redirect_stderr(err):
+            _platform(path)
+        t.ok(False, "a damaged funding value stops the service")
+    except SystemExit as e:
+        t.eq(e.code, ST.BAD_STATE_EXIT, "a damaged funding value stops the service")
+        t.ok("funding" in err.getvalue(), "and the message names what is wrong",
+             err.getvalue()[:120])
+
+
+def test_a_snapshot_that_cannot_be_built_shows_up_as_a_write_error(t):
+    """Health reads `write_error` and `dirty` and nothing else, so a failure
+    anywhere in the save has to reach them -- including one in the part that
+    turns the platform into bytes."""
+    d = Path(tempfile.mkdtemp())
+    p = _platform(d / "state.json")
+    p.projects["broken"] = object()          # a shape no snapshot can serialise
+    try:
+        p.save()
+        t.ok(False, "a snapshot that cannot be built raises")
+    except Exception:
+        t.ok(True, "a snapshot that cannot be built raises")
+    t.ok(p.store.dirty, "and the store knows the state file is behind")
+    t.ok(p.store.write_error, "and health can say why")

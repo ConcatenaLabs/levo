@@ -28,6 +28,19 @@ export function friendly(err) {
   if (/rejected/i.test(m)) return 'The request was declined in the wallet.'
   if (/timed out/i.test(m)) return 'The wallet did not answer in time. Try again.'
   if (/no Sequentia wallet/i.test(m)) return 'No Sequentia wallet was found in this browser.'
+  // A consensus reject, said in words. A sale is one resting output and every
+  // buyer races for it, so the buyer who signs second is told this by the
+  // node -- right after authorising a payment, which is the worst moment to
+  // meet a code they have never seen. It is not always the race: an output of
+  // theirs spent in another tab reads the same, so the sentence names both
+  // and settles the only question that matters, which is whether they paid.
+  if (/missingorspent|missing inputs|conflict/i.test(m)) {
+    return 'This transaction spends an output that is no longer there. '
+      + 'Most often another buyer filled the sale first; sometimes one of the '
+      + 'outputs you were spending has been spent elsewhere. Nothing left your '
+      + 'wallet and nothing was paid. Price the purchase again and it will be '
+      + 'built against where the sale rests now.'
+  }
   return m
 }
 

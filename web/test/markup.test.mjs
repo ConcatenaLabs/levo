@@ -67,3 +67,17 @@ test('no Copy button is nested inside a label', () => {
   }
   assert.deepEqual([...new Set(offenders)], [], 'copy buttons inside labels')
 })
+
+test('no rendered passage sets a dash as two hyphens', () => {
+  // levod writes ASCII and the site sets an em dash; a page that mixes the two
+  // shows both in one paragraph. Source comments and command lines (`levo
+  // rescue --terms`) are not rendered prose and are left alone.
+  const wrong = []
+  for (const { path, text } of files) {
+    text.split('\n').forEach((line, i) => {
+      const code = line.replace(/^\s*(\/\/|\*|\/\*).*$/, '')
+      if (/ -- /.test(code)) wrong.push(path + ':' + (i + 1) + ' ' + line.trim())
+    })
+  }
+  assert.deepEqual(wrong, [], 'rendered text with a double hyphen')
+})

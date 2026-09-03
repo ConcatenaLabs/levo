@@ -3,11 +3,15 @@ import { Link, useSearchParams } from 'react-router-dom'
 import { api } from '../lib/api'
 import { useStore } from '../lib/store'
 import { Notice, usePageTitle } from '../components/ui'
-import { closeIn, closeLabel, compact, priceLabel } from '../lib/format'
+import { closeIn, closeLabel, compact, priceLabel, shortHex } from '../lib/format'
 
+// What a state is CALLED, which is not always what levod calls it. "Closed"
+// is the one that would mislead: the sell leaf carries no locktime, so a sale
+// past its close can still be filled by anyone -- what the date opened is the
+// project's reclaim, and the pill says that beside a line that says the same.
 export const STATUS_LABEL = {
   live: 'open', partial: 'open', sold_out: 'sold out', draft: 'not funded',
-  closed: 'closed', ghost: 'not funded', reclaimed: 'reclaimed',
+  closed: 'reclaimable', ghost: 'not funded', reclaimed: 'reclaimed',
 }
 
 export function Status({ sale }) {
@@ -180,6 +184,9 @@ export default function Projects() {
                     {p.name}<span className="row-ticker">{p.ticker}</span>
                   </div>
                   <div className="row-sum">{p.summary}</div>
+                  {p.sale && (
+                    <div className="row-asset mono dim">{shortHex(p.sale.terms.token_asset, 8, 6)}</div>
+                  )}
                   {price && <div className="row-price-inline num small">{price} per {p.ticker}</div>}
                 </div>
                 <div className="row-hide num small">
@@ -190,7 +197,7 @@ export default function Projects() {
                     </>
                   ) : <span className="dim">—</span>}
                 </div>
-                <div className="row-hide">
+                <div className="row-progress">
                   <Progress sale={p.sale} decimals={d} />
                 </div>
                 <div className="row-status">

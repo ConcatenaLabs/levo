@@ -127,8 +127,15 @@ export function duration(seconds) {
 }
 
 export function capitalise(s) {
-  const t = String(s || '')
+  const t = prose(s)
   return t.charAt(0).toUpperCase() + t.slice(1)
+}
+
+// levod writes its sentences in ASCII, so its dashes arrive as two hyphens.
+// The site sets an em dash, and a sentence from the server sits next to one
+// the page wrote. This is the one place the two meet.
+export function prose(s) {
+  return String(s || '').replace(/ -- /g, ' \u2014 ')
 }
 
 export function timeLabel(unix) {

@@ -67,16 +67,38 @@ passes.
 Stop levod first. A restore under a running levod is overwritten by its next
 save within the minute.
 
+Choose the copy by its name, not by its date. `levo-backup.sh` copies with
+`cp -p`, so every copy carries the state file's own write time and the newest
+file is not always the newest state; the names are UTC stamps and sort in
+order.
+
 ```sh
 systemctl stop levod
+ls -1 /var/backups/levo/levo-state-*.json | tail -3     # the stamp IS the age
 cp /var/backups/levo/levo-state-<stamp>.json /var/lib/levo/levo-state.json
 chown root:root /var/lib/levo/levo-state.json && chmod 600 /var/lib/levo/levo-state.json
 systemctl start levod
 journalctl -u levod -n 30 --no-pager
+
+# What was restored, rather than that something was:
+curl -fsS http://127.0.0.1:8099/api/health |
+  python3 -c 'import json,sys; h=json.load(sys.stdin); print(h["ok"], h["state_file"], h["watcher"]["unverified_sales"])'
+curl -fsS http://127.0.0.1:8099/api/projects | head -c 400
 ```
 
-A restored file may carry sales whose funding levod cannot place in the chain
-any more. Those are reported as unverified in `/api/health` and on their own
-pages, and are left exactly as they were rather than guessed at; the next
+`ok` must be true, `state_file.writable` must be true, and the board must list
+the sales you expect. A sale missing from it is a sale this copy predates.
+
+**What a restore cannot bring back.** Purchases recorded between the copy and
+the failure are gone from the allocation ledger, and the chain cannot return
+them: the transactions are on chain, but which account made them is Levo's own
+record. Those buyers get their whole tier cap back on a sale they have already
+partly filled, until the purchase is recorded again with
+`levo record <sale> --txid <txid> --tokens <n>`. Everything else the watcher
+re-derives from the chain within a poll.
+
+A restored file may also carry sales whose funding levod cannot place in the
+chain any more. Those are reported as unverified in `/api/health` and on their
+own pages, and are left exactly as they were rather than guessed at; the next
 purchase or block that moves one puts it back on its feet.
 

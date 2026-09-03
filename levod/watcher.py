@@ -215,12 +215,6 @@ class Watcher:
                 found = None
 
         if found is not None:
-            for slug, p in scan_for:
-                try:
-                    note = self._note_strays(p, found)
-                    dirty = dirty or note
-                except Exception as e:
-                    errors.append("%s strays: %s" % (slug, e))
             for slug, p in pending:
                 was = _shape(p.sale)
                 try:
@@ -229,6 +223,15 @@ class Watcher:
                     self._announce(slug, p.sale, was)
                 except Exception as e:
                     errors.append("%s: %s" % (slug, e))
+            # After reconciling, never before: a remainder this poll has just
+            # adopted is the sale's own funding, and reading the scan first
+            # would report it as something a stranger had sent.
+            for slug, p in scan_for:
+                try:
+                    note = self._note_strays(p, found)
+                    dirty = dirty or note
+                except Exception as e:
+                    errors.append("%s strays: %s" % (slug, e))
 
         # A save that failed leaves the platform's state ahead of the disk;
         # trying again every poll is the only thing that recovers a full disk
@@ -375,6 +378,24 @@ class Watcher:
             return (None, False) if sale.status == S.GHOST else (None, False)
         out = self.rpc.txout(sale.funding["txid"], sale.funding["vout"])
         if out is not None:
+            # The output has to BE this sale's address. A state file whose
+            # terms were edited, or one written by a build that derived them
+            # differently, produces a sale that rests on somebody else's
+            # output: everything Levo then quotes is priced off leaves that do
+            # not compile to what is there, and every spend it builds is
+            # rejected. The chain settles it, which also covers the files that
+            # predate the address being recorded at all.
+            found = ((out.get("scriptPubKey") or {}).get("hex") or "").lower()
+            if found and found != sale.script_pubkey.lower():
+                if not (sale.funding or {}).get("unverifiable"):
+                    self.log("watcher: %s rests at an output that is not its "
+                             "sale address (%s, not %s); it is left as it is "
+                             "and reported unverified"
+                             % (slug, found[:24], sale.script_pubkey[:24]))
+                    with self._held():
+                        sale.funding["unverifiable"] = True
+                    return False, True
+                return False, False
             noted = self._remember_block(sale, out, chain)
             self._misses.pop(slug, None)
             self._miss_height.pop(slug, None)
@@ -506,16 +527,22 @@ class Watcher:
         misses = self._misses.get(slug, 0) + 1
         self._misses[slug] = misses
         height = chain.get("height")
-        first = self._miss_height.setdefault(slug, height)
+        # Both clocks as they were at the FIRST miss, not at the poll that
+        # decides. The protocol guarantees the deciding poll is at least one
+        # block later, and a sale that emptied at its close would be read from
+        # that later tip as one that had already closed -- a sold-out sale
+        # recorded as closed with nothing sold.
+        first_h, first_t = self._miss_height.setdefault(
+            slug, (height, chain.get("mediantime")))
         if misses < self.confirm_misses:
             return False
-        if height is not None and first is not None and height <= first:
+        if height is not None and first_h is not None and height <= first_h:
             return False
-        return self._finish(sale, chain)
+        return self._finish(sale, chain, first_h, first_t)
 
     # --- how a sale ends ---------------------------------------------------
 
-    def _finish(self, sale, chain):
+    def _finish(self, sale, chain, first_h=None, first_t=None):
         """Nothing rests, twice in a row, across a block. Decide what that
         means -- but only on evidence.
 
@@ -538,8 +565,19 @@ class Watcher:
             with self._held():
                 sale.mark_ghost()
             return was != (sale.status, sale.locked_atoms)
-        closed = sale.has_closed(height=chain.get("height"), now=chain.get("mediantime"))
-        reclaimed = self._reclaim_landed(sale) if closed else False
+        # Was the covenant emptied before a reclaim was possible? If so a
+        # buyer emptied it, whatever the tip says now.
+        if first_h is None:
+            first_h = chain.get("height")
+        if first_t is None:
+            first_t = chain.get("mediantime")
+        closed = sale.reclaim_possible_at(height=first_h, now=first_t)
+        # A reclaim that is actually on chain settles it either way: the chain
+        # would not have accepted one before the close.
+        reclaimed = bool(self._reclaim_landed(sale)) \
+            if (closed or sale.reclaim_txids) else False
+        if reclaimed:
+            closed = True
         with self._held():
             if closed:
                 sale.mark_emptied(reclaimed=reclaimed)
@@ -819,9 +857,18 @@ class Watcher:
     def _note_strays(self, project, found):
         """Record assets resting at a sale's address that are not its token.
 
-        The sell leaf reads the value of the input it spends, not its asset, so
-        anything else that lands at the address can be taken by anyone at the
-        sale's price. The project is told so it can sweep it after the close.
+        The sell leaf reads the value of the input it spends and never which
+        outpoint it is, so EVERY output at the address is spendable through it,
+        not only the one Levo watches. A second lot of the sale token sent
+        there is therefore buyable by anyone at the sale's price -- the payment
+        reaches the project's treasury, but tokens the project believed were
+        parked are sold, and the board's remaining figure is short by that
+        much. Anything of another asset is worse: the leaf reads the value and
+        not the asset, so a stranger can buy it for the sale token's price.
+
+        Each is reported with which of those it is, because the advice
+        differs: one has to be moved before the close, the other only swept
+        after it.
         """
         sale = project.sale
         at_address = found.get(sale.script_pubkey.lower(), [])
@@ -829,17 +876,20 @@ class Watcher:
         # exists to tell a project that something is there, and a hundred lines
         # of dust say that no better than twenty do. The largest are kept,
         # because those are the ones worth sweeping.
-        # Anything at the address the covenant cannot sell: another asset, or
-        # an amount of the sale token below the minimum lot, which the sell
-        # leaf would refuse to leave behind and so can only have been sent.
+        # Everything at the address except the one output this sale rests on.
+        # Not "everything the covenant cannot sell": it can sell all of them,
+        # which is the reason to report them.
+        funding = sale.funding or {}
         others = [u for u in at_address
-                  if u["asset"] != sale.terms.token_asset
-                  or (u["atoms"] < sale.terms.min_lot
-                      and not (sale.funding and u["txid"] == sale.funding.get("txid")
-                               and u["vout"] == sale.funding.get("vout")))]
+                  if not (u["txid"] == funding.get("txid")
+                          and u["vout"] == funding.get("vout"))]
         others.sort(key=lambda u: -u["atoms"])
         strays = [{"txid": u["txid"], "vout": u["vout"], "asset": u["asset"],
-                   "atoms": u["atoms"]}
+                   "atoms": u["atoms"],
+                   # Whether a buyer could take this one through the sell leaf.
+                   # An amount below the minimum lot is the one case it cannot:
+                   # the leaf refuses to leave less than a lot resting.
+                   "sellable": u["atoms"] >= sale.terms.min_lot}
                   for u in others[:MAX_STRAYS]]
         if len(others) > MAX_STRAYS:
             self.log("watcher: %s has %d foreign outputs at its address; the "

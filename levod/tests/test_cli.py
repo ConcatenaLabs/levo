@@ -66,6 +66,7 @@ class Levod:
             LEVOD_RPC_URL=rig.url, LEVOD_RPC_USER="levo", LEVOD_RPC_PASSWORD="levo",
             LEVOD_PAYMENT_ASSET=payment_asset, LEVOD_PAYMENT_LABEL="PAY",
             LEVOD_HRP="ert", LEVOD_WATCH_SECONDS="3600",
+            LEVOD_API_ONLY="1",          # the CLI drill serves no app
             # A regtest mines on demand, so the tip must never be reused: a
             # block can arrive and be acted on in the same second.
             LEVOD_CHAIN_TTL="0",

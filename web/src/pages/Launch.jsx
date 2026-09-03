@@ -136,7 +136,7 @@ export default function Launch() {
           <h1 className="h2">Listing needs the {listing ? listing.name : 'top'} tier</h1>
           <p>
             Running a sale asks other people to commit money to you, so Levo
-            asks you to commit stake first. You are {standing.tier.name}
+            asks you to commit stake first. You are in the {standing.tier.name} tier
             {listing ? '; listing opens at ' + amount(listing.min_stake_atoms, stake.decimals) + ' ' + stake.label + ' staked.' : '.'}
           </p>
         </div>

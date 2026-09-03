@@ -1,7 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { amount, compact, toAtoms, atomsArg, closeLabel, closeIn, isHeightClose, pricePerToken, treasurySpk, plain,
-         capitalise, big } from '../src/lib/format.js'
+         capitalise, big, prose } from '../src/lib/format.js'
 import { xFor, yFor } from '../src/lib/beam.js'
 import { addressOf, encodeSegwit } from '../src/lib/bech32.js'
 
@@ -115,4 +115,11 @@ test('one of something is never "1 minutes"', () => {
   assert.equal(closeIn(1792307521, null, 1792307521 - 60), 'in 1 minute')
   assert.equal(closeIn(1792307521, null, 1792307521 - 3600), 'in 1 hour')
   assert.equal(closeIn(1792307521, null, 1792307521 - 86400), 'in 1 day')
+})
+
+test('server prose gets the site dash', () => {
+  assert.equal(prose('gone -- and not coming back'), 'gone — and not coming back')
+  assert.equal(capitalise('no output at ab:1 -- it is spent'),
+    'No output at ab:1 — it is spent')
+  assert.equal(prose('levo rescue --terms sale.json'), 'levo rescue --terms sale.json')
 })
