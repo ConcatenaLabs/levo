@@ -20,6 +20,23 @@ An error is `{"error": "<a sentence>"}` with a status:
 | 502 | the Sequentia node could not be reached or refused the query |
 | 503 | levod is busy, or unhealthy; `Retry-After` where it makes sense |
 
+Every refusal carries `{"code", "error"}`: `error` is a sentence for a person,
+and `code` is a short slug for a program, so a client branches on a value
+rather than on prose that may be reworded. The codes are `sign_in_required`,
+`not_allowed`, `not_found`, `method_not_allowed`, `refused` (the request was
+understood and is not allowed to happen), `cap_exceeded` (with
+`allowance_atoms`), `malformed`, `rate_limited`, `node_unavailable`, `busy`
+and `internal`. New codes may appear; the ones above will not change meaning.
+
+Levo sends no CORS headers, so the API is same-origin: the app it serves is
+the browser client it is for. A client on another origin runs outside a
+browser, or behind a proxy of its own.
+
+There is no version in the path. What is documented here is what a client may
+rely on; fields are added rather than repurposed, and anything removed would
+be announced in the repository's own history rather than by a silent change of
+shape. Read what you need and ignore the rest.
+
 Atom counts cross the wire as decimal strings rather than JSON numbers: an
 asset with a hundred million units at eight places has more atoms than a
 JavaScript number can hold, and an amount rounded on the way into a browser
@@ -133,6 +150,11 @@ bring above the fee is change and needs `change_address`: it does not follow
 the tokens to the destination, which is often a cold wallet or a custodian
 that credits only the token. A request with change and no change address is
 refused rather than guessing.
+
+Recording the same transaction twice is safe: the second call answers as the
+first did, with `already_recorded: true`, and the ledger is not doubled. A
+client whose request timed out can simply send it again. A transaction another
+account has already recorded is refused, because a purchase counts once.
 
 **`GET /api/projects/<slug>/purchases`** (session, the issuer or an operator) →
 Levo's own ledger for that sale, newest first, with `limit`, `offset` and
