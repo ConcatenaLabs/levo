@@ -51,20 +51,38 @@ MAX_BODY = 256 * 1024
 # wall clock. A socket timeout re-arms on every read, so on its own it bounds
 # nothing: a client that sends a byte every few seconds holds a handler slot
 # for as long as it likes.
-REQUEST_DEADLINE = float(os.environ.get("LEVOD_REQUEST_DEADLINE") or 20)
+# The default, which `_read_settings()` replaces with the operator's figure
+# when the service starts. It is a number rather than None because the drills
+# and the demo build a Handler without going through main().
+REQUEST_DEADLINE = 20.0
 
 
-def _int_env(name, default):
-    """A whole number from the environment, or the default. A setting that is
-    not a number is a typo, and reading it as zero would silently disarm
-    whatever it protects."""
+def _setting(name, default, kind=int, least=None):
+    """A number from the environment, or a refusal naming the setting.
+
+    A mistyped setting is not a thing to guess at. Reading it as the default
+    runs a deployment on figures its operator did not choose and cannot see;
+    letting it raise gives systemd a traceback and a restart loop over a typo
+    it will meet again every five seconds. So it says which setting, what was
+    in it, and stops with the status that means restarting will not help.
+    """
     raw = (os.environ.get(name) or "").strip()
     if not raw:
         return default
     try:
-        return int(raw)
-    except ValueError:
-        return default
+        value = kind(raw)
+    except (TypeError, ValueError):
+        _refuse_setting(name, raw, "a number")
+    if least is not None and value < least:
+        _refuse_setting(name, raw, "at least %s" % least)
+    return value
+
+
+def _refuse_setting(name, raw, wanted):
+    sys.stderr.write("<3>levod: %s is %r; it has to be %s. levod is not "
+                     "starting: a setting it cannot read is a deployment "
+                     "running on figures nobody chose.\n" % (name, raw, wanted))
+    raise SystemExit(ST.BAD_STATE_EXIT)
 # What /api/health will name, and how much of an error it will quote. A health
 # answer is a fixed-size fact about the service, not a report that grows with
 # the platform: whatever is watching it reads it every few seconds.
@@ -145,9 +163,16 @@ class App:
                              "%s seconds" % getattr(self.node, "chain_info_ttl", 0))
         self.links = T.StakeLinks()
         self.payment_decimals = _payment_decimals()
-        self.policy = T.TierPolicy(T.tiers_from_env(
-            payment_decimals=self.payment_decimals),
-            payment_decimals=self.payment_decimals)
+        try:
+            table = T.tiers_from_env(payment_decimals=self.payment_decimals)
+        except ValueError as e:
+            # A tier table is the most hand-edited setting there is, and the
+            # tiers are what every cap on the site is measured with: running on
+            # the defaults instead would be a deployment quoting figures its
+            # operator never chose.
+            sys.stderr.write("<3>levod: %s. levod is not starting.\n" % str(e).rstrip("."))
+            raise SystemExit(ST.BAD_STATE_EXIT)
+        self.policy = T.TierPolicy(table, payment_decimals=self.payment_decimals)
         self.reader = T.StakeReader(self.node, self.links, self.policy,
                                     floor=lambda: self.staking_floor)
         # The service takes the state file for itself: two levods on one file
@@ -213,25 +238,25 @@ class App:
             if hasattr(self.node, "with_timeout") else self.node
         self.watcher = W.Watcher(
             self.market, watch_node,
-            interval=int(os.environ.get("LEVOD_WATCH_SECONDS", "60")),
+            interval=_setting("LEVOD_WATCH_SECONDS", 60, int, least=1),
             hrp=lambda: self.hrp, log=_log_error, note=_log_notice)
         self.challenges = A.Challenges(site="Levo")
         self.stake_challenges = A.Challenges(site="Levo")
         self.sessions = A.Sessions()
-        self.auth_limit = RateLimit(per_minute=int(os.environ.get("LEVOD_AUTH_PER_MINUTE", "30")))
-        self.write_limit = RateLimit(per_minute=int(os.environ.get("LEVOD_WRITES_PER_MINUTE", "120")))
+        self.auth_limit = RateLimit(per_minute=_setting("LEVOD_AUTH_PER_MINUTE", 30, int, least=1))
+        self.write_limit = RateLimit(per_minute=_setting("LEVOD_WRITES_PER_MINUTE", 120, int, least=1))
         # Reads are cheap per request and not free: the board asks the node for
         # its tip, and the fee route asks for the mempool and the rate table.
         # One caller in a loop could fill every handler with requests blocked
         # on the node while real visitors wait behind them.
-        self.read_limit = RateLimit(per_minute=int(os.environ.get("LEVOD_READS_PER_MINUTE", "600")))
+        self.read_limit = RateLimit(per_minute=_setting("LEVOD_READS_PER_MINUTE", 600, int, least=1))
         self.handlers = threading.BoundedSemaphore(MAX_HANDLERS)
         # How many of those slots ONE address may hold at once, when that
         # address is not a proxy this Levo believes. Sixty-four sockets from a
         # single client is what makes a slow-request attack cost a few bytes;
         # a reverse proxy is exempt because every request behind it arrives
         # from the same address, and capping it would cap the whole site.
-        self.per_peer = _int_env("LEVOD_PER_PEER", 8)
+        self.per_peer = _setting("LEVOD_PER_PEER", 8, int, least=0)
         self._peers = {}
         self._peers_lock = threading.Lock()
         # The reverse proxy in front of levod, whose X-Forwarded-For is worth
@@ -417,7 +442,7 @@ class Handler(BaseHTTPRequestHandler):
     # exactly this long, and sixty-four of them hold every slot levod has.
     # Ten seconds is longer than any real client needs on a loopback or a LAN,
     # and a slow public link is the reverse proxy's problem, not levod's.
-    timeout = float(os.environ.get("LEVOD_CLIENT_TIMEOUT") or 10)
+    timeout = 10                 # replaced at startup, see _read_settings()
     app = None
 
     def version_string(self):
@@ -1411,9 +1436,17 @@ def _site_links(raw):
         return {}
 
 
+def _read_settings():
+    """The numbers that are read once, before anything is served."""
+    global REQUEST_DEADLINE
+    REQUEST_DEADLINE = _setting("LEVOD_REQUEST_DEADLINE", 20.0, float, least=1)
+    Handler.timeout = _setting("LEVOD_CLIENT_TIMEOUT", 10.0, float, least=1)
+
+
 def main():
+    _read_settings()
     host = os.environ.get("LEVOD_HOST", "127.0.0.1")
-    port = int(os.environ.get("LEVOD_PORT", "8099"))
+    port = _setting("LEVOD_PORT", 8099, int, least=1)
     Handler.app = App()
     srv = ThreadingHTTPServer((host, port), Handler)
     srv.daemon_threads = True

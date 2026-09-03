@@ -161,7 +161,16 @@ def tiers_from_env(env=None, payment_decimals=8):
     if not raw:
         return None
     unit = atoms_per_unit(payment_decimals)
-    spec = json.loads(raw)
+    try:
+        spec = json.loads(raw)
+    except ValueError as e:
+        # The most hand-edited setting there is, and a traceback at startup
+        # over a missing bracket is a restart loop rather than a message.
+        raise ValueError("LEVOD_TIERS is not valid JSON (%s). It is a list of "
+                         "objects with name, min_stake, cap and may_list." % e)
+    if not isinstance(spec, list) or not spec:
+        raise ValueError("LEVOD_TIERS is a JSON LIST of tiers, and this is %s"
+                         % type(spec).__name__)
     tiers = []
     for level, t in enumerate(sorted(spec, key=lambda x: float(x.get("min_stake", 0)))):
         tiers.append(Tier(

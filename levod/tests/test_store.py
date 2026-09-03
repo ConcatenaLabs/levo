@@ -626,3 +626,36 @@ def test_two_levods_cannot_share_one_state_file(t):
             again.wait(timeout=15)
         except Exception:
             again.kill()
+
+
+def test_a_setting_levod_cannot_read_stops_it_with_a_sentence(t):
+    """These are edited by hand in a file on a box. A traceback gives systemd a
+    restart loop over a typo it will meet again in five seconds, and reading
+    the value as a default runs a deployment on figures nobody chose."""
+    import subprocess
+    import time
+    root = Path(__file__).resolve().parent.parent.parent
+    base = dict(os.environ, LEVOD_SECRET="settings-test", LEVOD_API_ONLY="1",
+                LEVOD_HOST="127.0.0.1", LEVOD_RPC_URL="http://127.0.0.1:1",
+                LEVOD_WATCH_SECONDS="3600")
+    for name, value, says in (
+        ("LEVOD_PORT", "eight thousand", "has to be a number"),
+        ("LEVOD_REQUEST_DEADLINE", "20s", "has to be a number"),
+        ("LEVOD_READS_PER_MINUTE", "0", "at least 1"),
+        ("LEVOD_TIERS", '{"name": "One"}', "JSON LIST"),
+        ("LEVOD_TIERS", "[{", "not valid JSON"),
+    ):
+        env = dict(base, LEVOD_STATE=str(Path(tempfile.mkdtemp()) / "s.json"),
+                   LEVOD_PORT="8161")
+        env[name] = value
+        try:
+            r = subprocess.run([sys.executable, str(root / "levod" / "server.py")],
+                               env=env, capture_output=True, text=True, timeout=20)
+        except subprocess.TimeoutExpired:
+            t.ok(False, "%s=%r stops levod" % (name, value))
+            continue
+        t.eq(r.returncode, ST.BAD_STATE_EXIT, "%s=%r stops levod" % (name, value))
+        said = r.stdout + r.stderr
+        t.ok(says in said, "and says %r" % says, said[:120])
+        t.ok(said.startswith("<3>"), "at error level, where journalctl -p err shows it",
+             said[:40])
