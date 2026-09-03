@@ -104,18 +104,16 @@ function NotOpen({ sale }) {
     reclaimed: 'This sale closed and the project has taken back what did not sell.',
     closed: 'This sale has passed its close, so the project may now reclaim whatever did not sell, and Levo no longer plans purchases from it. The covenant itself carries no closing date on the buying side: until the project reclaims, anyone holding the terms can still buy from it directly.',
   }[sale.status] || 'This sale is not open.'
-  const over = ['sold_out', 'reclaimed', 'closed'].includes(sale.status)
   return (
     <div className="card">
       <h3>Not open</h3>
-      <p className="small dim" style={{ marginBottom: over ? '.75rem' : 0 }}>{text}</p>
-      {/* A page with nothing to do on it should say where the reader can go
-          next, the way the empty board and the 404 do. */}
-      {over && (
-        <div className="btn-row">
-          <Link className="btn btn-sm" to="/projects">See the open sales</Link>
-        </div>
-      )}
+      <p className="small dim" style={{ marginBottom: '.75rem' }}>{text}</p>
+      {/* Every state this panel shows is one a reader cannot act on (a draft
+          as much as a sale that is over), so every one of them says where to
+          go instead, the way the empty board and the 404 do. */}
+      <div className="btn-row">
+        <Link className="btn btn-sm" to="/projects">See the open sales</Link>
+      </div>
     </div>
   )
 }
