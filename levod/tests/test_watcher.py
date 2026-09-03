@@ -6,6 +6,7 @@ opposite things: one is finished, the other was never funded. Getting that wrong
 either hides a live sale or presents a phantom one as complete.
 """
 
+import threading
 import sys
 from pathlib import Path
 
@@ -61,6 +62,11 @@ class FakeMarket:
     def __init__(self, projects):
         self.projects = projects
         self.saved = 0
+        # The platform's own lock, which the watcher takes for every write it
+        # makes (`Watcher._held`). Without one here the suite would be testing
+        # a watcher that never contends with anything, which is not the
+        # watcher that runs.
+        self.lock = threading.RLock()
 
     def save(self):
         self.saved += 1
@@ -1146,3 +1152,51 @@ def test_the_mempool_is_read_once_a_poll_however_many_sales_there_are(t):
          rpc.pool_reads)
     t.ok(rpc.tx_reads <= len(rpc.mempool),
          "and each of its transactions at most once", rpc.tx_reads)
+
+
+def test_a_poll_and_a_purchase_can_run_at_the_same_time(t):
+    """The watcher writes what a sale HOLDS and a request writes what an
+    account has COMMITTED, at the same moment, in different threads.
+
+    The watcher takes the platform's lock for its writes; the ledger write here
+    is made the way `Platform.record_purchase` makes it, under the same lock.
+    A lost update would be a buyer's allocation or a sale's own position, and
+    neither would raise at the time.
+    """
+    s = _sale()
+    rpc = FakeRPC()
+    rpc.txouts[("ab" * 32, 0)] = {"value": TOTAL / 1e8, "confirmations": 6}
+    rpc.blocks[95] = "block-95"
+    w = _watch(s, rpc)
+    w.poll()
+    t.eq(s.status, S.LIVE, "the sale starts live")
+
+    stop = threading.Event()
+    errors = []
+
+    def polling():
+        while not stop.is_set():
+            try:
+                w.poll()
+            except Exception as e:                      # noqa: BLE001
+                errors.append("poll: %s" % e)
+
+    th = threading.Thread(target=polling, daemon=True)
+    th.start()
+    try:
+        for i in range(120):
+            try:
+                with w.market.lock:
+                    s.record_purchase("02%062x" % i, 25, 100, txid="%064x" % (i + 1),
+                                      verified=True)
+            except Exception as e:                      # noqa: BLE001
+                errors.append("record: %s" % e)
+    finally:
+        stop.set()
+        th.join(timeout=10)
+
+    t.eq(errors, [], "neither thread raised")
+    t.eq(len(s.purchases), 120, "every purchase is in the ledger")
+    t.eq(sum(s.allocations.values()), 120 * 25, "and every one is counted once")
+    t.eq(len(s.by_txid), 120, "with every transaction indexed")
+    t.eq(s.locked_atoms, TOTAL, "while the watcher kept the sale where it rests")
