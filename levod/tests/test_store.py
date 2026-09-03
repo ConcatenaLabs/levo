@@ -659,3 +659,21 @@ def test_a_setting_levod_cannot_read_stops_it_with_a_sentence(t):
         t.ok(says in said, "and says %r" % says, said[:120])
         t.ok(said.startswith("<3>"), "at error level, where journalctl -p err shows it",
              said[:40])
+
+
+def test_the_demo_answers_everything_levod_asks_a_node(t):
+    """The demo replaces the node and nothing else, so a call levod makes and
+    the demo has never seen is a page that breaks for a reader who was told to
+    click through the platform. The stub raises on an unknown call by design;
+    this is the list of calls that must not be unknown."""
+    import re
+    root = Path(__file__).resolve().parent.parent.parent
+    asked = set()
+    for name in ("market.py", "watcher.py", "server.py", "rails.py", "tiers.py"):
+        src = (root / "levod" / name).read_text()
+        asked |= set(re.findall(r'\.call\("([a-z]+)"', src))
+        asked |= set(re.findall(r'rpc\.([a-z_]+)\(', src))
+    demo = (root / "levod" / "demo.py").read_text()
+    missing = sorted(a for a in asked
+                     if a not in demo and a not in ("call", "with_timeout"))
+    t.eq(missing, [], "every node call levod makes is one the demo answers")
