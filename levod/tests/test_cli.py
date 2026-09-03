@@ -243,9 +243,17 @@ def run(ok, rig, levod, env):
     close = int(spec["terms"]["close_locktime"])
     while rig.n("getblockcount") <= close:
         rig.mine()
+    # Something else at the sale address, sent by anyone: a reclaim spends the
+    # sale's own funding and leaves it exactly where it is, still buyable by
+    # anyone at the sale's price. The command has to say so.
+    w("sendtoaddress", address=detail["address"], amount="1.0", assetlabel=token,
+      fee_asset_label="bitcoin")
+    rig.mine()
     out = levo("reclaim", "cli-sale", "--reclaim-key", keys["reclaim_secret_hex"])
     ok.ok("reclaimed" in out.lower() or "broadcast" in out.lower(),
           "reclaim sweeps what did not sell", out[-240:])
+    ok.ok("still resting" in out,
+          "and says what it left behind at the sale address", out[-400:])
     rig.mine()
     detail = json.loads(levo("show", "cli-sale"))
     ok.ok(int(detail["sale"]["locked_atoms"]) == 0 or detail["sale"]["status"] in

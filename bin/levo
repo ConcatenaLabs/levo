@@ -197,7 +197,21 @@ def sign_in():
         body["signature"] = node("signmessagewithprivkey", wif, ch["message"])
     else:
         addr = login_address()
-        body["signature"] = node("signmessage", addr, ch["message"])
+        try:
+            body["signature"] = node("signmessage", addr, ch["message"])
+        except Fail as e:
+            # The session file remembers an address, and a session outlives the
+            # wallet it was made with: a different node, a wallet restored from
+            # a seed, a datadir moved. The node's own message says a private
+            # key is not available, which reads as a broken tool.
+            if "private key" in str(e).lower() or "not available" in str(e).lower():
+                raise Fail(
+                    "this node's wallet does not hold %s, which is the address "
+                    "the saved session signs in with (%s). That session was "
+                    "made with another wallet: delete %s to start a new one, "
+                    "or set LEVO_SIGN_WIF to the key you want to be"
+                    % (addr, e, SESSION_FILE))
+            raise
         body["address"] = addr
     r = api("POST", "/api/auth/verify", body)
     _save_session({"url": LEVO_URL, "token": r["token"], "account": r["account"],
@@ -584,6 +598,17 @@ def _send_explicit(address, atoms_, asset, fee_asset):
         funded = node("fundrawtransaction", raw,
                       {"fee_asset": fee_asset, "changeAddress": change})
     except Fail as e:
+        if "unblinded" in str(e).lower() or "not enough" in str(e).lower():
+            # The wallet holds the tokens, but confidentially: an earlier send
+            # blinded the change, and a covenant cannot read a commitment.
+            raise Fail(
+                "your wallet cannot fund this from EXPLICIT outputs (%s). A "
+                "covenant reads the amounts it is given, so what funds a sale "
+                "has to state them: send the tokens to one of your own "
+                "addresses first -- `sequentia-cli sendtoaddress <your "
+                "address> <amount> \"\" \"\" false null false null "
+                "unset false <asset>` leaves an explicit output -- and run "
+                "this again" % e)
         # An older node, or one that will not take a change address per asset.
         # Send it the ordinary way and say what that costs.
         print("note: this node would not fund the transaction with explicit "
@@ -889,7 +914,9 @@ def cmd_rescue(args):
     if args.dry_run:
         print("would broadcast %s (accepted by testmempoolaccept)" % check[0]["txid"])
         return
-    print("reclaimed. %s" % node("sendrawtransaction", hexed))
+    txid = node("sendrawtransaction", hexed)
+    print("reclaimed. %s" % txid)
+    _report_what_is_left(cov.spk_hex, addr, txid, dp)
 
 
 def cmd_terms(args):
@@ -925,6 +952,34 @@ def cmd_terms(args):
         print("wrote %s" % args.out)
     else:
         print(text)
+
+
+def _report_what_is_left(spk_hex, addr, swept_txid, decimals=8):
+    """After a sweep, what is still sitting at the sale address.
+
+    A reclaim spends ONE output: the sale's own funding. Anything else that was
+    sent to that address is untouched by it, and still buyable by anyone at the
+    sale's price, so "reclaimed." on its own is a half-truth on exactly the
+    transaction where a project stops paying attention.
+    """
+    try:
+        scan = node("scantxoutset", "start", ["raw(%s)" % spk_hex]) or {}
+    except Exception:
+        return
+    if not scan.get("success"):
+        return
+    left = [u for u in scan.get("unspents") or [] if u.get("txid") != swept_txid]
+    if not left:
+        print("nothing else is resting at %s" % addr)
+        return
+    print("NOTE: %d other output%s still resting at %s, and the sale's own "
+          "spending condition will sell any of them to anyone at the sale's "
+          "price. Sweep them with your own transaction:"
+          % (len(left), "" if len(left) == 1 else "s", addr))
+    for u in left[:10]:
+        print("      %s:%s  %s of %s"
+              % (u["txid"], u.get("vout"), U.fmt(atoms(u.get("amount", 0)), decimals),
+                 (u.get("asset") or "")[:12]))
 
 
 def cmd_reclaim(args):
@@ -985,7 +1040,10 @@ def cmd_reclaim(args):
     if args.dry_run:
         print("would broadcast %s (accepted by testmempoolaccept)" % check[0]["txid"])
         return
-    print("reclaimed. %s" % node("sendrawtransaction", hexed))
+    txid = node("sendrawtransaction", hexed)
+    print("reclaimed. %s" % txid)
+    _report_what_is_left(sale["script_pubkey"], p.get("address") or "the sale address",
+                         txid, int(p.get("decimals", 8)))
 
 
 def cmd_flag(args):
