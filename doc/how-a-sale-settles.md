@@ -128,6 +128,23 @@ For a time close, the chain judges against median time past, which trails the
 wall clock by a few blocks; levod builds a reclaim only once the chain's clock
 has passed the close.
 
+## If Levo goes away
+
+A sale is a covenant on a public chain; Levo is a place that shows it. Nothing
+in either leaf mentions Levo, so a platform that is gone -- its state file lost,
+its server retired -- takes nothing with it except its own record.
+
+What the project needs is the terms the address was made of: the leaves are
+compiled from them, and the control block that proves the reclaim leaf belongs
+to that address is derived from them too. `levo terms <sale>` writes them out
+and the sale page offers the same file, so a project can keep it beside the
+reclaim key. With that file, that key and any Sequentia node, `levo rescue
+--terms sale.json` finds what is resting at the address and sweeps it after the
+close, with no Levo in the path at all.
+
+A buyer needs nothing kept: their tokens are in their own wallet the moment the
+purchase confirms.
+
 ## Who knows what a sale is
 
 The chain. A watcher reconciles every sale against the UTXO set and the

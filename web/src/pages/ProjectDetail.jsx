@@ -4,7 +4,7 @@ import { api } from '../lib/api'
 import { useStore } from '../lib/store'
 import { amount, capitalise, closeIn, closeLabel, compact, priceLabel, shortHex, treasurySpk } from '../lib/format'
 import { addressOf } from '../lib/bech32'
-import { Hex, Notice, usePageTitle } from '../components/ui'
+import { Copy, Hex, Notice, usePageTitle } from '../components/ui'
 import SignIn from '../components/SignIn'
 import Beam from '../components/Beam'
 import BuyFlow from '../components/BuyFlow'
@@ -209,6 +209,48 @@ function EditPanel({ project, onSaved }) {
         <button type="button" className="btn btn-ghost btn-sm" onClick={() => setOpen(false)}>Cancel</button>
       </div>
     </form>
+  )
+}
+
+function KeepThis({ project, sale }) {
+  const [open, setOpen] = useState(false)
+  const kept = JSON.stringify({
+    slug: project.slug,
+    sale_address: project.address,
+    script_pubkey: sale.script_pubkey,
+    terms: sale.terms,
+    keep: "these terms make the sale address, and the reclaim leaf your key "
+      + "spends through. With this file, your reclaim key and any Sequentia "
+      + "node, `levo rescue --terms <this file>` sweeps whatever is left at "
+      + "that address after the close -- with no Levo involved at all.",
+  }, null, 2)
+
+  if (!open) {
+    return (
+      <button className="btn btn-sm btn-ghost" style={{ marginTop: '.75rem' }}
+              onClick={() => setOpen(true)}>
+        Keep a copy of the terms
+      </button>
+    )
+  }
+  return (
+    <div className="card" style={{ marginTop: '1rem' }}>
+      <h3>Keep this</h3>
+      <p className="small dim">
+        The sale address is made of these values, and so is the leaf your
+        reclaim key spends through. Levo is a place that shows the sale; the
+        sale is on the chain. With this file, your key and any Sequentia node,
+        you can sweep whatever is left after the close whether or not Levo still
+        exists — <span className="mono">levo rescue --terms sale.json</span>.
+        Keep it wherever you keep the key.
+      </p>
+      <div className="field">
+        <label htmlFor="keepthis">The sale, in full</label>
+        <Copy value={kept} label="Copy the sale's terms" />
+        <textarea id="keepthis" className="mono" rows={10} readOnly value={kept}
+                  onFocus={(e) => e.target.select()} />
+      </div>
+    </div>
   )
 }
 
@@ -566,6 +608,7 @@ export default function ProjectDetail() {
             <div style={{ marginTop: '1rem' }}>
               <EditPanel project={project} onSaved={setProject} />
               <LedgerPanel project={project} />
+              {sale && <KeepThis project={project} sale={sale} />}
               {needsLock && (
                 <div style={{ marginTop: '.75rem' }}>
                   {!confirmWithdraw ? (

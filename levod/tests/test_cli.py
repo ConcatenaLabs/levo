@@ -201,6 +201,20 @@ def run(ok, rig, levod, env):
     ok.ok("dumpassetlabels" in out,
           "an unknown fee asset names where the labels come from", out[-160:])
 
+    # --- what survives Levo itself -----------------------------------------
+    #
+    # A sale is a covenant on a public chain and Levo is a place that shows it.
+    # If the platform is gone -- the state file lost, the server retired -- the
+    # tokens are still there and the project's key still opens the reclaim
+    # path. What is needed is the terms the address was made of.
+    terms_file = Path(tempfile.mkdtemp()) / "sale.json"
+    out = levo("terms", "cli-sale", "--out", str(terms_file))
+    ok.ok(terms_file.is_file(), "terms writes the file that rebuilds the sale")
+    kept = json.loads(terms_file.read_text())
+    ok.eq(kept["script_pubkey"], detail["sale"]["script_pubkey"],
+          "carrying the address it derives")
+    ok.ok("no Levo involved at all" in kept["keep"], "and saying what it is for")
+
     # --- the reclaim, after the close --------------------------------------
     close = int(spec["terms"]["close_locktime"])
     while rig.n("getblockcount") <= close:
@@ -213,6 +227,34 @@ def run(ok, rig, levod, env):
     ok.ok(int(detail["sale"]["locked_atoms"]) == 0 or detail["sale"]["status"] in
           ("closed", "reclaimed"), "and the covenant is empty",
           "%s / %s" % (detail["sale"]["status"], detail["sale"]["locked_atoms"]))
+
+    # --- and the same sweep with no Levo in it at all -----------------------
+    #
+    # A second sale, closed, reclaimed from its terms file alone: no session, no
+    # API call, nothing but a node, the file and the key.
+    keys2 = json.loads(levo("keygen"))
+    spec2 = json.loads(json.dumps(spec))
+    spec2["project"]["slug"] = "rescue-me"
+    spec2["project"]["ticker"] = "RSC"
+    spec2["terms"]["reclaim_xonly"] = keys2["reclaim_xonly"]
+    spec2["terms"]["close_locktime"] = rig.n("getblockcount") + 3
+    spec2["terms"]["total_atoms"] = 500 * COIN
+    listing2 = Path(tempfile.mkdtemp()) / "listing.json"
+    listing2.write_text(json.dumps(spec2))
+    levo("create", str(listing2))
+    levo("lock", "rescue-me")
+    rig.mine()
+    rescue_terms = Path(tempfile.mkdtemp()) / "rescue.json"
+    levo("terms", "rescue-me", "--out", str(rescue_terms))
+    while rig.n("getblockcount") <= int(spec2["terms"]["close_locktime"]):
+        rig.mine()
+    out = levo("rescue", "--terms", str(rescue_terms), "--hrp", "ert",
+               "--reclaim-key", keys2["reclaim_secret_hex"], "--dry-run")
+    ok.ok("would broadcast" in out,
+          "a sale can be reclaimed from its terms file alone, with no Levo", out[-200:])
+    out = levo("rescue", "--terms", str(rescue_terms), "--hrp", "ert",
+               "--reclaim-key", keys2["reclaim_secret_hex"])
+    ok.ok("reclaimed." in out, "and really swept", out[-160:])
 
 
 def main():
