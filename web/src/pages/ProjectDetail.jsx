@@ -338,8 +338,8 @@ export default function ProjectDetail() {
           {project.issuer.tier ? <>, {project.issuer.tier}</> : null}
           {project.issuer.stake_atoms
             ? <>, with {compact(project.issuer.stake_atoms)} {stake.label} staked</>
-            : null}. Staking is what the tiers are made of, and it is the only
-          thing Levo knows about a project that the project did not write itself.
+            : null}. That stake is the only thing on this page the project did
+          not write itself.
         </p>
       )}
       {project.notice && (
@@ -375,8 +375,7 @@ export default function ProjectDetail() {
               <p className="small dim" style={{ maxWidth: '60ch' }}>
                 Most of these are compiled into the covenant: change one and the
                 sale address changes with it, which is what makes the address
-                worth checking. Two are not. The amount for sale and the token's
-                decimals are Levo's record of the sale -- Levo checked the amount
+                worth checking. The amount for sale is not. Levo checked it
                 against the chain when it accepted the lock, and after that the
                 covenant simply sells whatever it holds.
               </p>

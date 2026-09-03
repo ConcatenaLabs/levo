@@ -100,6 +100,18 @@ class App:
 
     def __init__(self, node=None):
         self.node = node or RPC.NodeRPC()
+        # How long the node's tip may be reused. Two seconds is nothing against
+        # a chain with block times, and it turns three round trips per page
+        # into one. A chain that mines on demand -- a regtest, a test rig --
+        # wants none of it, because there a block can arrive and be acted on in
+        # the same second.
+        ttl = os.environ.get("LEVOD_CHAIN_TTL")
+        if ttl is not None and hasattr(self.node, "chain_info_ttl"):
+            try:
+                self.node.chain_info_ttl = float(ttl)
+            except ValueError:
+                _log_warning("LEVOD_CHAIN_TTL is not a number; leaving it at "
+                             "%s seconds" % getattr(self.node, "chain_info_ttl", 0))
         self.links = T.StakeLinks()
         self.payment_decimals = _payment_decimals()
         self.policy = T.TierPolicy(T.tiers_from_env(
