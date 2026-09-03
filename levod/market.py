@@ -705,9 +705,13 @@ class Platform:
         if clash is not None:
             raise PlatformError(
                 "these terms derive the same sale address as the listing %r, so "
-                "the two sales could not be told apart on chain. Change something "
-                "the address is made of -- the price, the amount, the minimum "
-                "lot, the close, the treasury or the reclaim key" % clash.slug)
+                "the two sales could not be told apart on chain -- a buy from "
+                "one would be a buy from the other. The amount for sale is NOT "
+                "part of the address, so a second round of the same size, price "
+                "and close needs something else to differ: a fresh reclaim key "
+                "is the usual answer (`levo keygen`), and a different close, "
+                "price, minimum purchase or treasury address would do it too."
+                % clash.slug)
         p.sale = sale
         p.price_was_reduced = (submitted[0], submitted[1]) != (terms.price_num, terms.price_den)
         self.projects[slug] = p

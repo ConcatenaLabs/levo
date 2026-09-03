@@ -106,6 +106,13 @@ listed as it is, and the sale page says which of the two it is. `terms`: `token_
 `treasury_address` or `treasury_prog` (+ `treasury_ver`). The price is stored
 in lowest terms, so the response is what the address was derived from.
 
+A listing whose terms derive an address another listing already has is refused:
+two sales sharing one covenant could not be told apart on chain, and a buy from
+either would be a buy from both. `total_atoms` is **not** part of the address,
+so a second round of the same token at the same price, minimum purchase, close
+and treasury needs something else to differ -- a fresh reclaim key is the
+ordinary answer, and it is the one a project should want anyway.
+
 **`PATCH /api/projects/<slug>`** (session, the issuer) edits the copy: the
 name, the summary, the description and the links, and nothing the address is
 made of. **`DELETE /api/projects/<slug>`**, or **`POST
