@@ -245,6 +245,20 @@ console error anywhere in the sequence. It needs the app built first.
 
 No CI and no framework. Those commands are the whole gate.
 
+## What the command line checks before it signs
+
+`levo buy` and `levo reclaim` are handed a transaction by a levod, and neither
+takes its word for what it is. Both rebuild the covenant from the terms the
+sale published, and then read the transaction with the operator's own node:
+the buy checks that input 0 is the outpoint this sale rests on, that output 0
+pays the treasury those terms derive exactly what was quoted, that any
+remainder goes back to the sale address, that the tokens arrive at the address
+that was asked for, and that nothing pays anywhere else; the reclaim rebuilds
+the sweep itself and refuses unless the sighash it is being asked to sign is
+the one that falls out of its own build. A signature is over a hash, and a hash
+says nothing about what it hashes, so the only safe check is the one made
+before signing.
+
 ## What a buyer's browser checks for itself
 
 The page rebuilds the sale address from the published terms and compares it
