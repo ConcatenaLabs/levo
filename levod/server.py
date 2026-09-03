@@ -561,6 +561,12 @@ class Handler(BaseHTTPRequestHandler):
             # in levod looks like, and answering one as "malformed request"
             # blamed the caller for the server's mistake and logged nothing at
             # all. TypeError stays, because body parsing still leans on it.
+            # Logged like the TypeError arm below: a KeyError raised anywhere
+            # but the body parser is a bug in levod, and answering it as a
+            # malformed request with nothing in the journal leaves no trace of
+            # a server fault the caller was blamed for.
+            _log_error("KeyError on %s %s: %s" % (method, path, e))
+            _log_error(traceback.format_exc())
             self._json(400, {"error": "malformed request: %s" % _describe(e)})
         except TypeError as e:
             _log_error("malformed request on %s %s: %s" % (method, path, e))
@@ -1098,9 +1104,19 @@ def _fields_of(message):
     return out
 
 
+# A field name a caller can act on: short, and shaped like the keys the API
+# documents. Anything else -- a nonce, a session id, an asset id that reached a
+# dictionary lookup -- is echoed back to nobody, because a key that is not a
+# field name is a value from inside levod, and the caller did not send it.
+FIELD_NAME = re.compile(r"^[a-z][a-z0-9_]{0,31}$")
+
+
 def _describe(e):
     if isinstance(e, KeyError):
-        return "missing field %s" % e
+        key = e.args[0] if e.args else ""
+        if isinstance(key, str) and FIELD_NAME.match(key):
+            return "missing field %r" % key
+        return "a field is missing or has the wrong shape"
     return str(e) or e.__class__.__name__
 
 

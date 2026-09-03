@@ -396,10 +396,21 @@ class Platform:
 
     def list_project(self, account, meta, terms_json):
         """Create a listing. Only a tier that may list can do this."""
+        # The registry is another process over HTTP, so it is asked BEFORE the
+        # lock is taken: a registry that hangs would otherwise stall every
+        # board read, purchase and poll for as long as it hung.
+        answer = REG.look_up(self.registry_url,
+                             str((terms_json or {}).get("token_asset") or "").lower()
+                             if isinstance(terms_json, dict) else "")
         with self.lock:
-            return self._list_project(account, meta, terms_json)
+            p = self._list_project(account, meta, terms_json, answer)
+        # Outside the lock: turning the platform into bytes and putting them on
+        # a disk is the slowest thing levod does, and every board read, plan and
+        # purchase queues behind whoever holds the lock. See Platform.save.
+        self.save()
+        return p
 
-    def _list_project(self, account, meta, terms_json):
+    def _list_project(self, account, meta, terms_json, answer):
         if not isinstance(meta, dict):
             raise PlatformError("project must be an object")
         if not isinstance(terms_json, dict):
@@ -438,8 +449,6 @@ class Platform:
         # registered contract is refused: wallets read the registry, so the
         # sale would show one name and every wallet another, and the price the
         # buyer typed would mean something else again.
-        token_asset = str(terms_json.get("token_asset") or "").lower()
-        answer = REG.look_up(self.registry_url, token_asset)
         clash = REG.disagreement(answer, p.ticker, p.decimals)
         if clash:
             raise PlatformError(clash)
@@ -528,7 +537,6 @@ class Platform:
         p.sale = sale
         p.price_was_reduced = (submitted[0], submitted[1]) != (terms.price_num, terms.price_den)
         self.projects[slug] = p
-        self.save()
         return p
 
     def withdraw(self, account, slug):
@@ -542,7 +550,7 @@ class Platform:
                 raise PlatformError("a funded sale cannot be withdrawn; after the close, "
                                     "reclaim what did not sell")
             del self.projects[slug]
-            self.save()
+        self.save()
 
     def update_project(self, account, slug, meta):
         with self.lock:
@@ -550,8 +558,8 @@ class Platform:
             if p.issuer_account != account:
                 raise NotAuthorised("only the project's issuer can edit it")
             p.update(meta)
-            self.save()
-            return p
+        self.save()
+        return p
 
     def confirm_lock(self, account, slug, txid=None, vout=None):
         """Verify on chain that the project really locked the tokens.
@@ -560,25 +568,15 @@ class Platform:
         and the scriptPubKey it finds must equal the one the published terms
         derive. That equality is the entire trust argument for the sale.
 
-        Without an outpoint, the confirmed UTXO set is scanned for the sale's
-        address, so an issuer who sent the tokens from a wallet that does not
-        show output indexes can still confirm. That scan walks the node's whole
-        UTXO set and can take minutes, so it happens BEFORE the platform's lock
-        is taken -- holding it across a scan would stop every purchase, board
-        and poll on the platform for as long as the node took.
+        EVERY chain read happens before the platform's lock is taken. Without
+        an outpoint the confirmed UTXO set is scanned, which walks the node's
+        whole set and can take minutes; even with one, reading the output and
+        dating it are three calls that a stalled node answers no sooner than
+        the RPC timeout. The lock is what every purchase, board request, poll
+        and the shutdown path all queue behind, so nothing that waits on
+        another process is done while holding it.
         """
-        if not txid:
-            p = self.project(slug)
-            if p.sale is None:
-                raise PlatformError("this project has no sale")
-            if self.rpc is None:
-                raise PlatformError("no node connection; cannot verify the lock")
-            txid, vout = self._find_lock(p.sale)
-        with self.lock:
-            return self._confirm_lock(account, slug, txid, vout)
-
-    def _confirm_lock(self, account, slug, txid, vout):
-        p = self._project(slug)
+        p = self.project(slug)
         if p.issuer_account != account:
             raise NotAuthorised("only the project's issuer can confirm its lock")
         if p.sale is None:
@@ -597,6 +595,24 @@ class Platform:
             raise PlatformError(
                 "no unspent output at %s:%s -- it does not exist, it has "
                 "already been spent, or the node has not seen it yet" % (txid, vout))
+        dating = self._read_funding_date(out)
+        with self.lock:
+            p = self._confirm_lock(account, slug, txid, vout, out, dating)
+        self.save()
+        self.on_stale()
+        return p
+
+    def _confirm_lock(self, account, slug, txid, vout, out, dating):
+        p = self._project(slug)
+        if p.issuer_account != account:
+            raise NotAuthorised("only the project's issuer can confirm its lock")
+        if p.sale is None:
+            raise PlatformError("this project has no sale")
+        txid = str(txid).lower()
+        if not TXID_RE.match(txid):
+            raise PlatformError("txid must be 64 hex characters")
+        if isinstance(vout, bool) or not isinstance(vout, int) or vout < 0:
+            raise PlatformError("vout is the output's index in the transaction, 0 or more")
         spk = (out.get("scriptPubKey") or {}).get("hex")
         asset = out.get("asset") or out.get("assetlabel")
         value = _value_atoms(out)
@@ -611,14 +627,13 @@ class Platform:
                 "that outpoint is already the lock of the sale %r; one output "
                 "funds one sale" % taken.slug)
         p.sale.confirm_lock(txid, vout, spk, value, asset, blinded=blinded)
-        self._date_funding(p.sale, out)
-        self.save()
-        self.on_stale()
+        if p.sale.funding is not None:
+            p.sale.funding.update(dating)
         return p
 
-    def _date_funding(self, sale, out):
-        """Note which block the lock was mined in, or the height at which it
-        was first seen unmined.
+    def _read_funding_date(self, out):
+        """Which block the lock was mined in, or the height at which it was
+        first seen unmined -- as fields to apply, read with no lock held.
 
         The watcher calls a sale a ghost only when the chain says its funding
         is gone, and it can only say that about a funding it can place in time.
@@ -626,25 +641,21 @@ class Platform:
         sells out between the lock and the first poll from being read as one
         that was never funded at all.
         """
-        if sale.funding is None:
-            return
         try:
             conf = int(out.get("confirmations") or 0)
             tip = int(self.rpc.chain_height())
         except Exception:
-            return
+            return {}
         if conf < 1:
-            sale.funding["seen_height"] = tip
-            return
+            return {"seen_height": tip}
         try:
             height = tip - conf + 1
             block = self.rpc.call("getblockhash", height)
             if not block:
                 raise PlatformError("no block at %s" % height)
-            sale.funding["height"] = height
-            sale.funding["block"] = block
+            return {"height": height, "block": block}
         except Exception:
-            sale.funding["mined"] = True     # mined, but the node did not say where
+            return {"mined": True}          # mined, but the node did not say where
 
     def _find_lock(self, sale):
         """The outpoint resting at the sale address with the published amount,
@@ -853,7 +864,9 @@ class Platform:
     def build_reclaim(self, account, slug, body):
         """Sweep unsold tokens after the close. Only the project may ask."""
         with self.lock:
-            return self._build_reclaim(account, slug, body)
+            built = self._build_reclaim(account, slug, body)
+        self.save()
+        return built
 
     def _build_reclaim(self, account, slug, body):
         p = self._project(slug)
@@ -911,7 +924,6 @@ class Platform:
                                        kind="reclaim")
         built["fee"]["paying_atoms"] = int(fee_atoms)
         sale.note_reclaim(built["txid"])
-        self.save()
         return built
 
     def record_purchase(self, account, slug, txid, token_atoms, payment_atoms):
@@ -931,7 +943,16 @@ class Platform:
         else is refused, so a mistyped txid does not consume an allocation.
         """
         with self.lock:
-            return self._record_purchase(account, slug, txid, token_atoms, payment_atoms)
+            recorded = self._record_purchase(account, slug, txid, token_atoms,
+                                             payment_atoms)
+        # The purchase is already in the ledger in memory, so a save that fails
+        # here does not un-record it: `store.write_error` and `store.dirty`
+        # carry that to the health endpoint and to the watcher's retry, and the
+        # buyer is told what is true, which is that their purchase was taken.
+        # The nudge comes after the save so the watcher cannot write first.
+        self.save()
+        self.on_stale()
+        return recorded
 
     def _record_purchase(self, account, slug, txid, token_atoms, payment_atoms):
         p = self._project(slug)
@@ -1038,8 +1059,6 @@ class Platform:
         # Telling the watcher where to look lets it see the remainder in the
         # mempool, so the sale moves as soon as the buy is broadcast.
         sale.expect_remainder_at(txid, 1)
-        self.save()
-        self.on_stale()
         return {
             "recorded": True,
             "purchase": entry,
@@ -1168,8 +1187,8 @@ class Platform:
                 p.hidden = bool(hidden)
             if notice is not None:
                 p.notice = _text(notice, "notice", 400) or None
-            self.save()
-            return p
+        self.save()
+        return p
 
     def projects_of(self, account, limit=None, offset=0):
         h = self.height()
@@ -1487,9 +1506,14 @@ class Platform:
         sale = p.sale
         if sale is None:
             raise NotFound("this project has no sale")
+        # The maps are written by the purchase path and by the watcher, so a
+        # read that walks them unlocked raises the moment somebody buys.
+        with self.lock:
+            rows = [(acct, list(v)) for acct, v in sale.purchases.items()]
+            committed = dict(sale.allocations)
         entries = []
-        for acct, rows in sale.purchases.items():
-            for e in rows:
+        for acct, purchases in rows:
+            for e in purchases:
                 entries.append(dict(e, account=acct))
         entries.sort(key=lambda e: e.get("at") or 0, reverse=True)
         total = len(entries)
@@ -1501,8 +1525,8 @@ class Platform:
             "total": total,
             "offset": offset,
             "limit": limit,
-            "committed_atoms": dict(sale.allocations),
-            "buyers": len([a for a, rows in sale.purchases.items() if rows]),
+            "committed_atoms": committed,
+            "buyers": len([a for a, purchases in rows if purchases]),
             "what_this_is": "Levo's own record, which is what the per-buyer "
                             "caps are measured against. The chain is the "
                             "authority on what the sale holds: a purchase made "

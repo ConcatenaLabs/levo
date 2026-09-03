@@ -349,11 +349,11 @@ class Challenges:
         now = self._now()
         for n, (exp, _) in list(self._open.items()):
             if exp < now:
-                del self._open[n]
+                self._open.pop(n, None)
         excess = len(self._open) - self.max_open
         if excess > 0:
             for n, _ in sorted(self._open.items(), key=lambda kv: kv[1][0])[:excess]:
-                del self._open[n]
+                self._open.pop(n, None)
 
     def redeem(self, message):
         """Spend the nonce named in `message`, and check the message is the

@@ -299,3 +299,65 @@ def test_an_older_snapshot_cannot_overwrite_a_newer_one(t):
     back = json.loads((d / "state.json").read_text())
     t.eq(sorted(back["projects"]), ["a", "b"], "and the disk holds the newer state")
     t.eq(st.write(st.snapshot(), version=st.next_version()), True, "later writes still land")
+
+
+def test_a_slower_save_never_overwrites_a_newer_one(t):
+    """Two savers can build in one order and reach the disk in the other.
+
+    The watcher saves with no platform lock held, so its snapshot can be built
+    before a purchase and land after it. Without an order on the writes the
+    purchase is on disk, then gone, with nothing dirty and nothing logged --
+    and the next restart hands the buyer their whole tier cap back.
+    """
+    d = Path(tempfile.mkdtemp())
+    st = ST.Store(d / "state.json")
+    st.data = {"projects": {}, "note": "old"}
+    old = st.snapshot()
+    v_old = st.next_version()
+    st.data = {"projects": {}, "note": "new"}
+    new = st.snapshot()
+    v_new = st.next_version()
+    t.ok(st.write(new, version=v_new), "the newer write lands")
+    t.ok(not st.write(old, version=v_old), "the older write is dropped")
+    t.eq(json.loads((d / "state.json").read_text())["note"], "new",
+         "what is on disk is the newer state")
+    t.ok(not st.dirty, "a dropped write does not mark the file dirty")
+    t.eq(st.write_error, None, "a dropped write is not an error")
+
+
+def test_a_purchase_and_a_watcher_save_race_without_losing_the_purchase(t):
+    """The real interleaving, with threads: a save loop beside a buyer."""
+    import threading
+    d = Path(tempfile.mkdtemp())
+    p = _platform(d / "state.json")
+    buyers = ["02%062x" % (0x22 + i) for i in range(40)]
+    pr = p.list_project("02" + "11" * 32,
+                        {"slug": "race", "name": "Race", "ticker": "RACE"},
+                        {"token_asset": "aa" * 32, "payment_asset": USDX,
+                         "price_num": 1, "price_den": 4,
+                         "treasury_prog": TREASURY_PROG, "min_lot": 100,
+                         "close_locktime": 2_000_000_000,
+                         "reclaim_xonly": RECLAIM_XONLY, "total_atoms": 10_000})
+    pr.sale.confirm_lock("ab" * 32, 1, pr.sale.script_pubkey, 10_000, "aa" * 32)
+    stop = threading.Event()
+
+    def saver():                      # what the watcher does, on its own poll
+        while not stop.is_set():
+            p.save()
+
+    th = threading.Thread(target=saver, daemon=True)
+    th.start()
+    try:
+        for i, buyer in enumerate(buyers):
+            p.record_purchase(buyer, "race", "%064x" % (i + 1), 100, 25)
+    finally:
+        stop.set()
+        th.join(timeout=5)
+    p.save()
+    on_disk = json.loads((d / "state.json").read_text())
+    sale = on_disk["projects"]["race"]["sale"]
+    # The ledger commits PAYMENT atoms, which is the unit a tier cap is in:
+    # forty buys of 100 tokens at a quarter each.
+    t.eq(sum(sale["allocations"].values()), 1000, "every purchase survived on disk")
+    t.eq(sum(len(v) for v in sale["purchases"].values()), 40,
+         "and so did every ledger entry")

@@ -153,7 +153,17 @@ class Store:
         the health endpoint reads, and `dirty` is what makes the watcher try
         the write again on its next poll.
         """
-        return self._write(self.snapshot())
+        # Versioned like every other write, so a save taken here can never
+        # overwrite a newer one that is still on its way to the disk. Without
+        # the version this path is the one hole in the ordering guard.
+        with self._writing:
+            self._version += 1
+            version = self._version
+            if version <= self._written:
+                return False
+            ok = self._write(self.snapshot())
+            self._written = version
+            return ok
 
     def _write(self, payload):
         tmp = None
