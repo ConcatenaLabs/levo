@@ -1063,6 +1063,90 @@ def run(d):
     ok.eq(code, 400, "a purchase already recorded by another account is refused")
     ok.ok("another account" in (r.get("error") or ""), "saying so", r.get("error"))
 
+    # --- every write endpoint, fed what a broken client sends --------------
+    #
+    # The bar is not that levod accepts any of this. It is that every refusal
+    # is one levod chose: a 4xx it wrote, rather than a 500 from a shape nobody
+    # validated. A handler that reads a field it assumes is a string is one
+    # `{"txid": []}` away from a traceback in the journal for anyone who wants
+    # one, and that mistake is invisible in review because the happy path is
+    # unaffected. This walks the surface instead of trusting the reading.
+    ok.section("hostile bodies")
+    poison = [
+        None, True, False, 0, -1, 2 ** 64, -(2 ** 64), 1.5,
+        "", " ", "0", "-0", "00", "1e9", "0x10", "\u0663", "\u00bd", "nan", "Infinity",
+        "\x00", "\n", "a" * 5000, "../../etc/passwd", "<script>", "%s", "{}",
+        [], {}, [1, 2], {"a": 1}, [[[[[1]]]]],
+    ]
+    spk = "5120" + "aa" * 32
+    made = [0]
+
+    def a_listing():
+        """A fresh sale for each endpoint.
+
+        One poisoned body can leave the platform somewhere the next request
+        reads as 404 -- a flag that hid the listing, a delete that removed it
+        -- and everything after that would be answered by the router rather
+        than by the handler under test. levod also caps how many unfunded
+        listings one issuer may leave lying around, and refuses terms that
+        derive an address another sale already has, so each one differs and
+        the last goes before the next arrives.
+        """
+        if made[0]:
+            req("DELETE", "/api/projects/hostile%d" % made[0], None, token=issuer_tok)
+        made[0] += 1
+        t = dict(terms, min_lot=terms["min_lot"] + made[0])
+        code, r = req("POST", "/api/projects",
+                      {"project": dict(meta, slug="hostile%d" % made[0]), "terms": t},
+                      token=issuer_tok)
+        ok.eq(code, 201, "a listing to aim hostile bodies at")
+        return "/api/projects/hostile%d" % made[0]
+
+    HERE_BE = [
+        ("POST", "/api/auth/challenge", {"account": "x"}, issuer_tok),
+        ("POST", "/api/auth/verify", {"message": "x", "signature": "x", "address": "x"}, None),
+        ("POST", "/api/stake/challenge", {"staker_pubkey": "02" + "11" * 32}, issuer_tok),
+        ("POST", "/api/stake/link",
+         {"message": "x", "signature": "x", "staker_pubkey": "02" + "11" * 32}, issuer_tok),
+        ("POST", "/api/stake/unlink", {"staker_pubkey": "02" + "11" * 32}, issuer_tok),
+        ("POST", "/api/outputs/check", {"outputs": [], "asset": USDX}, issuer_tok),
+        ("POST", "/api/projects", {"project": meta, "terms": terms}, issuer_tok),
+        ("PATCH", "@", {"summary": "s", "links": {}}, issuer_tok),
+        ("POST", "@/lock", {"txid": "aa" * 32, "vout": 0}, issuer_tok),
+        ("POST", "@/buy", {"token_atoms": 100_000}, buyer_tok),
+        ("POST", "@/transaction",
+         {"token_atoms": 100_000, "inputs": [], "fee_atoms": 1000,
+          "token_script_pubkey": spk, "change_script_pubkey": spk}, buyer_tok),
+        ("POST", "@/reclaim", {"fee_atoms": 1000, "destination": spk}, issuer_tok),
+        ("POST", "@/flag", {"hidden": True, "notice": "n"}, issuer_tok),
+        ("POST", "@/confirm", {"txid": "bb" * 32, "token_atoms": 100_000}, buyer_tok),
+        ("POST", "@/withdraw", {"fee_atoms": 1000, "destination": spk}, issuer_tok),
+        ("DELETE", "@", None, issuer_tok),
+    ]
+    broke, tried = [], 0
+    for method, path, template, token in HERE_BE:
+        target = path.replace("@", a_listing()) if "@" in path else path
+        bodies = []
+        if template is None:
+            bodies = [None, {}, {"x": 1}, []]
+        else:
+            for field in list(template):
+                bodies += [dict(template, **{field: v}) for v in poison]
+            bodies += [{}, [], "string", 5]
+        for body in bodies:
+            tried += 1
+            try:
+                code, r = req(method, target, body, token=token)
+            except Exception as e:                       # noqa: BLE001
+                broke.append("%s %s raised %s" % (method, path, e))
+                continue
+            if code >= 500:
+                broke.append("%s %s -> %d on %s"
+                             % (method, path, code, json.dumps(body, default=str)[:120]))
+            if code == 404 and "@" in path:
+                target = path.replace("@", a_listing())
+    ok.eq(broke, [], "%d hostile bodies, and every refusal was levod's own" % tried)
+
     # --- the statement a wallet is asked to sign ---------------------------
     ok.section("login")
     code, ch = req("POST", "/api/auth/challenge")

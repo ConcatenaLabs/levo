@@ -565,6 +565,9 @@ class Handler(BaseHTTPRequestHandler):
                 self.app._peers.pop(peer, None)
 
     def handle_one_request(self):
+        # One keep-alive connection serves many requests through this same
+        # instance, so last request's body must not be this one's.
+        self._body_read = None
         # Wait for a byte before taking a slot.
         #
         # A browser opens several connections and keeps them open; taking a
@@ -714,6 +717,23 @@ class Handler(BaseHTTPRequestHandler):
         self._send(code, body, "application/json", cache=cache, headers=headers)
 
     def _body(self):
+        """The request's JSON body, read once.
+
+        Reading it twice is the trap this caches away. The bytes are gone after
+        the first read, so a second one blocks on a socket that will send no
+        more until the request deadline expires -- a handler that grew a second
+        `self._body()` in an ordinary refactor would hang every call to it for
+        twenty seconds and answer nothing, which reads as a hung server rather
+        than as the one-line mistake it is.
+        """
+        cached = getattr(self, "_body_read", None)
+        if cached is not None:
+            return cached
+        body = self._read_body()
+        self._body_read = body
+        return body
+
+    def _read_body(self):
         if self.headers.get("Transfer-Encoding"):
             raise Unsupported(411, "send the request body with a Content-Length")
         raw = self.headers.get("Content-Length") or "0"
