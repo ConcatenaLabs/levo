@@ -366,3 +366,64 @@ def test_set_witness_walks_confidential_outputs(t):
     again = TX.set_witness(out, 0, [b"\x02"])
     t.ok(again.endswith((b"\x00\x00" + b"\x02\x01\x01\x01\x51" + b"\x00" + b"\x00\x00" * 2).hex()),
          "input 1's witness survives a later write to input 0")
+
+
+def test_the_cli_refuses_a_transaction_that_is_not_the_purchase_it_asked_for(t):
+    """`signrawtransactionwithwallet` signs every input the wallet owns,
+    wherever the outputs go, and the sell leaf constrains only outputs 0 and 1.
+    A transaction that pays the treasury correctly can still send the buyer's
+    tokens and change somewhere else and stay perfectly valid, so the only
+    defence is for the buyer to read it before signing."""
+    from pathlib import Path as _P
+    src = open(str(_P(__file__).resolve().parent.parent.parent / "bin" / "levo")).read()
+    ns = {"__file__": "bin/levo"}
+    exec(compile(src.split("def main(")[0], "bin/levo", "exec"), ns)
+    check, Fail = ns["_check_before_signing"], ns["Fail"]
+
+    want = {"treasury_spk": "5120" + "aa" * 32, "sale_spk": "5120" + "bb" * 32,
+            "payment_asset": "cc" * 32, "token_asset": "dd" * 32,
+            "payment_atoms": 25 * 10**8, "token_atoms": 100 * 10**8,
+            "remainder_atoms": 900 * 10**8,
+            "dest_spk": "0014" + "11" * 20, "change_spk": "0014" + "22" * 20}
+
+    want["funding"] = ("ab" * 32, 1)
+
+    def tx(outs, vin=None):
+        return lambda _hex: {
+            "vin": vin if vin is not None else [{"txid": "ab" * 32, "vout": 1}],
+            "vout": [{"scriptPubKey": {"hex": o[0]}, "asset": o[1], "value": o[2] / 1e8}
+                     for o in outs]}
+
+    honest = [(want["treasury_spk"], want["payment_asset"], 25 * 10**8),
+              (want["sale_spk"], want["token_asset"], 900 * 10**8),
+              (want["dest_spk"], want["token_asset"], 100 * 10**8),
+              (want["change_spk"], want["payment_asset"], 5 * 10**8),
+              ("", want["payment_asset"], 1000)]
+    check("00", want, tx(honest))
+    t.ok(True, "the purchase that was asked for passes")
+
+    for name, outs in (
+        ("the treasury is paid somewhere else",
+         [("5120" + "ee" * 32, want["payment_asset"], 25 * 10**8)] + honest[1:]),
+        ("the treasury is paid less than the price",
+         [(want["treasury_spk"], want["payment_asset"], 24 * 10**8)] + honest[1:]),
+        ("the remainder does not go back to the sale",
+         [honest[0], ("0014" + "33" * 20, want["token_asset"], 900 * 10**8)] + honest[2:]),
+        ("the tokens go to somebody else",
+         honest[:2] + [("0014" + "44" * 20, want["token_asset"], 100 * 10**8)] + honest[3:]),
+        ("the change goes to somebody else",
+         honest[:3] + [("0014" + "55" * 20, want["payment_asset"], 5 * 10**8)] + honest[4:]),
+    ):
+        try:
+            check("00", want, tx(outs))
+            t.ok(False, "refused: %s" % name)
+        except SystemExit as e:
+            t.ok("do NOT sign" in str(e) or "do not sign" in str(e),
+                 "refused: %s" % name, str(e)[:90])
+    # And a transaction that spends some other covenant entirely.
+    try:
+        check("00", want, tx(honest, vin=[{"txid": "ff" * 32, "vout": 0}]))
+        t.ok(False, "refused: input 0 is not this sale's outpoint")
+    except SystemExit as e:
+        t.ok("do NOT sign" in str(e), "refused: input 0 is not this sale's outpoint",
+             str(e)[:90])

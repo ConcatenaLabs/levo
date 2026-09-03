@@ -64,6 +64,7 @@ sys.path.insert(0, str(HERE.parent / "levod"))
 import address as ADDR  # noqa: E402
 import covenant as C  # noqa: E402
 import sale as S_MOD  # noqa: E402
+import tx as TXMOD  # noqa: E402
 import units as U  # noqa: E402
 
 LEVO_URL = os.environ.get("LEVO_URL", "http://127.0.0.1:8099").rstrip("/")
@@ -229,6 +230,22 @@ def sign_in():
                   "staking key set LEVO_SIGN_WIF to its WIF, or run `levo link`.",
                   file=sys.stderr)
     return r["token"]
+
+
+def verified_fee_inputs(outpoints):
+    """The outpoints `unblinded_inputs` picked, with what the node says each
+    one holds -- which is what a builder needs and what a signature commits
+    to. Read here rather than taken from anyone's answer."""
+    out = []
+    for i in outpoints or []:
+        got = node("gettxout", i["txid"], int(i["vout"]), True)
+        if not got:
+            raise Fail("fee input %s:%s is not unspent" % (i["txid"], i["vout"]))
+        out.append({"txid": i["txid"], "vout": int(i["vout"]),
+                    "asset": (got.get("asset") or "").lower(),
+                    "value_atoms": atoms(got.get("value", 0)),
+                    "script_pubkey": (got.get("scriptPubKey") or {}).get("hex")})
+    return out
 
 
 def unblinded_inputs(asset_hex, need_atoms):
@@ -681,6 +698,69 @@ def cmd_lock(args):
     print("locked at %s:%d -- the sale is open" % (txid, int(vout)))
 
 
+def _check_before_signing(hexed, want, node_decode):
+    """Read the transaction levod built, and refuse it unless it does what was
+    asked. Nothing here trusts levod's own description of it.
+
+    `signrawtransactionwithwallet` signs every input the wallet owns wherever
+    the outputs go, and the sell leaf constrains only outputs 0 and 1 -- so a
+    transaction that pays the treasury correctly can still send the buyer's
+    tokens and all their change somewhere else and remain perfectly valid. The
+    only defence is to look, which the browser does (web/src/lib/eltx.js) and
+    this did not.
+
+    `want` names what the caller asked for: the scripts, the assets and the
+    amounts, all derived here or chosen here, never taken from the response.
+    """
+    tx = node_decode(hexed)
+    outs = tx.get("vout") or []
+    def spk(o):
+        return ((o.get("scriptPubKey") or {}).get("hex") or "").lower()
+    def asset(o):
+        return (o.get("asset") or "").lower()
+    def atoms_of(o):
+        if o.get("value") is None:
+            raise Fail("an output in this transaction hides its amount; do not sign it")
+        return atoms(o.get("value", 0))
+
+    if len(outs) < 2:
+        raise Fail("this transaction has too few outputs to be a purchase")
+    # Input 0 is the covenant, and which outpoint that is decides what the
+    # leaf's arithmetic is applied to. An input pointing anywhere else is not
+    # this sale.
+    vin = tx.get("vin") or []
+    if want.get("funding") and (
+            not vin or vin[0].get("txid") != want["funding"][0]
+            or int(vin[0].get("vout", -1)) != int(want["funding"][1])):
+        raise Fail("input 0 of this transaction is not the outpoint this sale "
+                   "rests on; do NOT sign it")
+    if spk(outs[0]) != want["treasury_spk"]:
+        raise Fail("output 0 does not pay the treasury these terms derive; "
+                   "do NOT sign this. It pays %s" % (spk(outs[0])[:24] or "nothing"))
+    if asset(outs[0]) != want["payment_asset"] or atoms_of(outs[0]) != want["payment_atoms"]:
+        raise Fail("output 0 does not pay the treasury the %s this purchase was "
+                   "priced at; do NOT sign this" % want["payment_atoms"])
+    if want["remainder_atoms"]:
+        if spk(outs[1]) != want["sale_spk"] or asset(outs[1]) != want["token_asset"] \
+                or atoms_of(outs[1]) != want["remainder_atoms"]:
+            raise Fail("output 1 does not put the unsold remainder back at the "
+                       "sale address; do NOT sign this")
+    mine = sum(atoms_of(o) for o in outs[2:]
+               if asset(o) == want["token_asset"] and spk(o) == want["dest_spk"])
+    if mine != want["token_atoms"]:
+        raise Fail("this transaction does not send you the %d atoms of the token "
+                   "that were priced, at the address you gave; do NOT sign it"
+                   % want["token_atoms"])
+    stray = [o for o in outs[2:] if spk(o) and spk(o) not in (want["dest_spk"],
+                                                              want["change_spk"],
+                                                              want["sale_spk"],
+                                                              want["treasury_spk"])]
+    if stray:
+        raise Fail("this transaction pays %d output(s) to an address you did not "
+                   "name; do NOT sign it" % len(stray))
+    return tx
+
+
 def cmd_buy(args):
     tok = sign_in()
     p = api("GET", "/api/projects/%s" % args.slug)
@@ -733,6 +813,31 @@ def cmd_buy(args):
         "token_atoms": token_atoms,
         "buyer": {"token_address": dest, "change_address": change,
                   "inputs": ins, "fee_atoms": fee_atoms, "fee_asset": fee_asset}}, tok)
+
+    # Before a signature exists: is this the purchase that was asked for? The
+    # covenant is rebuilt from the terms this sale published, and the
+    # transaction is read with this node -- the buyer's own -- rather than
+    # believed from the response that carried it.
+    terms = C.SaleTerms.from_json(sale["terms"])
+    cov = C.derive(terms)
+    if cov.spk_hex != sale["script_pubkey"]:
+        raise Fail("this sale's published address is not what its terms derive; "
+                   "nothing was signed. Run `levo verify %s`" % args.slug)
+    hrp_here = (p.get("address") or "")[:(p.get("address") or "").rfind("1")] or "tb"
+    _check_before_signing(built["unsigned_tx_hex"], {
+        "treasury_spk": TXMOD.treasury_script_pubkey(terms).hex(),
+        "sale_spk": cov.spk_hex,
+        "payment_asset": terms.payment_asset,
+        "token_asset": terms.token_asset,
+        "payment_atoms": int(plan["payment_atoms"]),
+        "token_atoms": int(token_atoms),
+        "remainder_atoms": int(plan.get("remainder_atoms") or 0),
+        "dest_spk": ADDR.to_script_pubkey(dest, hrp_here).hex(),
+        "change_spk": ADDR.to_script_pubkey(change, hrp_here).hex(),
+        "funding": ((sale.get("funding") or {}).get("txid"),
+                    (sale.get("funding") or {}).get("vout"))
+        if (sale.get("funding") or {}).get("txid") else None,
+    }, lambda h: node("decoderawtransaction", h))
 
     signed = node("signrawtransactionwithwallet", built["unsigned_tx_hex"])
     if not signed.get("complete"):
@@ -831,7 +936,6 @@ def cmd_rescue(args):
     that address on your own node, and sweeps it.
     """
     import secp256k1 as S  # noqa: E402
-    import tx as TXMOD  # noqa: E402
     spec = json.loads(Path(args.terms).read_text())
     terms_json = spec.get("terms", spec)
     terms = C.SaleTerms.from_json(terms_json)
@@ -998,13 +1102,63 @@ def cmd_reclaim(args):
     fee_asset = (resolve_asset(args.fee_asset) if args.fee_asset
                  else sale["terms"]["payment_asset"])
     ins, _ = unblinded_inputs(fee_asset, fee_atoms)
+    # Whatever the fee inputs bring above the fee comes back here, rather than
+    # following the tokens to --to, which may be a wallet that credits only the
+    # token. Chosen here, so the rebuild below can use the same one.
+    change_addr = node("getnewaddress", "levo-reclaim-change")
     r = api("POST", "/api/projects/%s/reclaim" % args.slug, {
         "destination_address": dest,
-        # Whatever the fee inputs bring above the fee comes back here, rather
-        # than following the tokens to --to, which may be a wallet that
-        # credits only the token.
-        "change_address": node("getnewaddress", "levo-reclaim-change"),
+        "change_address": change_addr,
         "fee_inputs": ins, "fee_atoms": fee_atoms, "fee_asset": fee_asset}, tok)
+
+    # Rebuild the same reclaim here, from the terms this sale published and
+    # what this node can see, and refuse unless levod's sighash is the one that
+    # falls out of it.
+    #
+    # A signature is over a hash, and a hash says nothing about what it hashes.
+    # The old check verified levod's signature against a key levod's own
+    # response named, which is true of any thirty-two bytes: one substituted
+    # response would have swept the whole unsold allocation to a stranger while
+    # this printed "reclaimed." The reclaim leaf constrains no output at all,
+    # so nothing downstream would have caught it either.
+    terms = C.SaleTerms.from_json(sale["terms"])
+    cov = C.derive(terms)
+    if cov.spk_hex != sale["script_pubkey"]:
+        raise Fail("this sale's published address is not what its terms derive; "
+                   "nothing was signed. Run `levo verify %s`" % args.slug)
+    if r.get("signs_with") != terms.reclaim_xonly:
+        raise Fail("levod asked for a signature by %s; these terms name %s. "
+                   "Nothing was signed" % (r.get("signs_with"), terms.reclaim_xonly))
+    funding = sale.get("funding") or {}
+    out_now = node("gettxout", funding.get("txid"), int(funding.get("vout", 0)), True) \
+        if funding.get("txid") else None
+    if not out_now:
+        raise Fail("your node cannot see this sale's funding output "
+                   "(%s:%s), so it cannot check what would be signed"
+                   % (funding.get("txid"), funding.get("vout")))
+    if ((out_now.get("scriptPubKey") or {}).get("hex") or "").lower() != cov.spk_hex:
+        raise Fail("the outpoint this sale rests on is not at the address its "
+                   "terms derive; nothing was signed")
+    here = S_MOD.Sale("reclaim", terms, "reclaim")
+    here.rest_on(funding["txid"], int(funding["vout"]), atoms(out_now.get("value", 0)))
+    mine = TXMOD.build_reclaim(
+        here,
+        destination_spk=ADDR.to_script_pubkey(
+            dest, (p.get("address") or "tb1")[:(p.get("address") or "tb1").rfind("1")]).hex(),
+        fee_inputs=verified_fee_inputs(ins),
+        fee_atoms=fee_atoms, fee_asset=fee_asset,
+        genesis_hash=node("getblockhash", 0),
+        locktime=r.get("locktime"),
+        change_spk=ADDR.to_script_pubkey(
+            change_addr,
+            (p.get("address") or "tb1")[:(p.get("address") or "tb1").rfind("1")]).hex())
+    if mine["sighash"] != r["sighash"]:
+        raise Fail(
+            "the reclaim levod built is not the one these terms and this node "
+            "produce: it asks for a signature over %s and the transaction here "
+            "hashes to %s. NOTHING WAS SIGNED. Sweep it yourself with "
+            "`levo terms %s --out sale.json` and `levo rescue --terms sale.json`"
+            % (r["sighash"][:16], mine["sighash"][:16], args.slug))
 
     key = args.reclaim_key or os.environ.get("LEVO_RECLAIM_KEY")
     if not key:
@@ -1020,7 +1174,6 @@ def cmd_reclaim(args):
     # Sign the covenant input locally. The key never leaves this machine, and
     # levod is never asked for it -- it could not use one if it had it.
     import secp256k1 as S  # noqa: E402
-    import tx as TXMOD  # noqa: E402
     sec = int(key, 16)
     sig = S.schnorr_sign(bytes.fromhex(r["sighash"]), sec)
     if not S.schnorr_verify(bytes.fromhex(r["sighash"]), sig,
