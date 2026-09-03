@@ -162,11 +162,11 @@ export function treasurySpk(terms) {
 // What a tier lets you do, from the tier itself. An operator's blurb is
 // flavour on top; the figures and the units come from the deployment, so a
 // card can never quote a ticker the chain does not use.
-export function tierSays(tier, paymentLabel) {
+export function tierSays(tier, paymentLabel, paymentDecimals = 8) {
   if (!tier) return ''
   const cap = big(tier.cap_atoms)
   const lines = cap > 0n
-    ? ['Up to ' + amount(cap, 8) + ' ' + paymentLabel + ' in any one sale.']
+    ? ['Up to ' + amount(cap, paymentDecimals) + ' ' + paymentLabel + ' in any one sale.']
     : ['This tier cannot buy.']
   if (tier.may_list) lines.push('May list a project.')
   return lines.join(' ')

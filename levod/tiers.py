@@ -45,6 +45,17 @@ SEQ_ATOMS = 100_000_000          # SEQ has 8 decimal places
 POS_MIN_STAKE_ATOMS = 4_000_000_000_000   # 40,000 SEQ: the chain's own floor
 
 
+# An atom count on the wire.
+#
+# JavaScript cannot carry a whole number above 2**53, and an asset with a
+# hundred million units at eight places has more atoms than that: the number
+# arrives in a browser silently rounded, and the page then prints -- and puts
+# into a copy-and-run funding command -- an amount that is not the one the
+# terms hold. A decimal string carries it exactly, which is the contract the
+# web app's own formatter states. Every parser here already reads both.
+def atoms_out(n):
+    return str(int(n))
+
 class Tier:
     def __init__(self, level, name, min_stake_atoms, cap_atoms, may_list, blurb):
         self.level = level
@@ -58,9 +69,9 @@ class Tier:
         return {
             "level": self.level,
             "name": self.name,
-            "min_stake_atoms": self.min_stake_atoms,
+            "min_stake_atoms": atoms_out(self.min_stake_atoms),
             "min_stake": self.min_stake_atoms / SEQ_ATOMS,
-            "cap_atoms": self.cap_atoms,
+            "cap_atoms": atoms_out(self.cap_atoms),
             "may_list": self.may_list,
             "blurb": self.blurb,
         }
@@ -86,23 +97,36 @@ USDX_ATOMS = 100_000_000
 # actually runs -- tSEQ on a testnet, SEQ on mainnet -- and a blurb repeating
 # them from memory is how a card ends up saying "50,000 SEQ" next to
 # "50,000 tSEQ".
-DEFAULT_TIERS = [
-    Tier(0, "Visitor", 0, 0, False,
-         "Read every sale and check every address it publishes. Staking opens "
-         "the first allocation tier."),
-    Tier(1, "Contributor", POS_MIN_STAKE_ATOMS, 1_000 * USDX_ATOMS, False,
-         "0.01% of the supply staked, which is the chain's own blocksigner "
-         "floor: below it, consensus ignores a staker's weight entirely."),
-    Tier(2, "Backer", 5 * POS_MIN_STAKE_ATOMS, 10_000 * USDX_ATOMS, False,
-         "0.05% of the supply staked."),
-    Tier(3, "Founder", 25 * POS_MIN_STAKE_ATOMS, 100_000 * USDX_ATOMS, True,
-         "0.25% of the supply staked, and the only tier that may list a project."),
-]
-
-
 def atoms_per_unit(decimals=8):
     """One whole unit of the payment asset, in atoms."""
     return 10 ** int(decimals)
+
+
+# The caps are WHOLE UNITS of the payment asset, and how many atoms a unit is
+# depends on the deployment: baking eight places into the table gave a
+# two-place deployment tiers a million times its own figures, and a tier cap is
+# the only per-buyer limit there is -- the covenant enforces none.
+DEFAULT_CAPS_IN_UNITS = (0, 1_000, 10_000, 100_000)
+
+
+def default_tiers(payment_decimals=8):
+    unit = atoms_per_unit(payment_decimals)
+    caps = [c * unit for c in DEFAULT_CAPS_IN_UNITS]
+    return [
+        Tier(0, "Visitor", 0, caps[0], False,
+             "Read every sale and check every address it publishes. Staking opens "
+             "the first allocation tier."),
+        Tier(1, "Contributor", POS_MIN_STAKE_ATOMS, caps[1], False,
+             "0.01% of the supply staked, which is the chain's own blocksigner "
+             "floor: below it, consensus ignores a staker's weight entirely."),
+        Tier(2, "Backer", 5 * POS_MIN_STAKE_ATOMS, caps[2], False,
+             "0.05% of the supply staked."),
+        Tier(3, "Founder", 25 * POS_MIN_STAKE_ATOMS, caps[3], True,
+             "0.25% of the supply staked, and the only tier that may list a project."),
+    ]
+
+
+DEFAULT_TIERS = default_tiers()
 
 
 def _cap_atoms(cap, unit, name):
@@ -167,8 +191,13 @@ def tiers_from_env(env=None, payment_decimals=8):
 
 
 class TierPolicy:
-    def __init__(self, tiers=None):
-        self.tiers = sorted(tiers or DEFAULT_TIERS, key=lambda t: t.min_stake_atoms)
+    def __init__(self, tiers=None, payment_decimals=8):
+        # The defaults are built at the deployment's own precision. A table
+        # given here has already been read at it (`tiers_from_env`); one taken
+        # from the defaults had not, and a two-place deployment ended up with
+        # caps a million times what its own table said.
+        self.tiers = sorted(tiers or default_tiers(payment_decimals),
+                            key=lambda t: t.min_stake_atoms)
 
     def for_stake(self, stake_atoms):
         """The highest tier whose floor this stake reaches."""

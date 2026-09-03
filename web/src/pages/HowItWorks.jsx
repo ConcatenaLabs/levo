@@ -1,7 +1,7 @@
 import { Link } from 'react-router-dom'
 import { useStore } from '../lib/store'
 import { usePageTitle } from '../components/ui'
-import { amount, compact } from '../lib/format'
+import { amount, big, compact } from '../lib/format'
 
 export default function HowItWorks() {
   usePageTitle('How it works')
@@ -83,7 +83,7 @@ export default function HowItWorks() {
               <tr key={t.level}>
                 <th>{t.name}</th>
                 <td>
-                  {t.min_stake_atoms === 0 ? 'no stake' : compact(t.min_stake_atoms) + ' ' + stake.label + ' staked'}
+                  {big(t.min_stake_atoms) === 0n ? 'no stake' : compact(t.min_stake_atoms) + ' ' + stake.label + ' staked'}
                   <div className="dim small prose">
                     {t.cap_atoms ? 'up to ' + amount(t.cap_atoms, payment.decimals) + ' ' + payment.label + ' per sale' : 'cannot buy'}
                     {t.may_list ? ' · may list a project' : ''}

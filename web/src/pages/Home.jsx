@@ -128,7 +128,7 @@ export default function Home() {
                       </span>
                     </div>
                     <p className="small dim" style={{ margin: '.5rem 0 0' }}>
-                      {tierSays(t, payment.label)}
+                      {tierSays(t, payment.label, payment.decimals)}
                     </p>
                     {t.blurb && <p className="small dim" style={{ margin: '.35rem 0 0' }}>{t.blurb}</p>}
                   </div>

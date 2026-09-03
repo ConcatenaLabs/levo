@@ -554,7 +554,10 @@ def run(d):
     ok.section("buy")
     code, plan = req("POST", "/api/projects/helios/buy", {"token_atoms": 1_000 * 100_000_000}, token=buyer_tok)
     ok.eq(code, 200, "tier 1 buy within cap")
-    ok.eq(plan["payment_atoms"], 250 * 100_000_000, "1,000 tokens cost 250 USDX")
+    # Atom counts cross the wire as decimal strings: a browser cannot carry a
+    # number above 2**53, and an asset with a hundred million units at eight
+    # places has more atoms than that.
+    ok.eq(int(plan["payment_atoms"]), 250 * 100_000_000, "1,000 tokens cost 250 USDX")
     ok.eq(plan["required_outputs"][0]["index"], 0, "treasury credit at output 2k")
     ok.eq(plan["required_outputs"][1]["index"], 1, "remainder re-rests at 2k+1")
     ok.eq(plan["required_outputs"][1]["script_pubkey"], spk, "remainder returns to the identical covenant")

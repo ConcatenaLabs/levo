@@ -401,3 +401,18 @@ def test_an_account_holds_a_bounded_number_of_staking_keys(t):
     fresh.load(over)
     t.eq(len(fresh.keys_for(acct)), T.MAX_LINKED_KEYS + 5,
          "a file written before the cap loads as it is")
+
+
+def test_the_default_caps_are_in_the_deployments_own_units(t):
+    """A cap is a number of WHOLE UNITS of the payment asset, and how many
+    atoms that is depends on how finely the asset divides. Eight places baked
+    into the table gave a two-place deployment caps a million times its own
+    figures -- and a tier cap is the only per-buyer limit there is, since the
+    covenant enforces none."""
+    at8 = T.TierPolicy(payment_decimals=8).tiers
+    at2 = T.TierPolicy(payment_decimals=2).tiers
+    t.eq([x.cap_atoms for x in at8], [0, 1_000 * 10**8, 10_000 * 10**8, 100_000 * 10**8],
+         "eight places: a thousand units is 1e11 atoms")
+    t.eq([x.cap_atoms for x in at2], [0, 1_000 * 100, 10_000 * 100, 100_000 * 100],
+         "two places: a thousand units is 100,000 atoms")
+    t.eq([x.name for x in at2], [x.name for x in at8], "and the tiers are the same tiers")

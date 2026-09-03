@@ -146,7 +146,8 @@ class App:
         self.links = T.StakeLinks()
         self.payment_decimals = _payment_decimals()
         self.policy = T.TierPolicy(T.tiers_from_env(
-            payment_decimals=self.payment_decimals))
+            payment_decimals=self.payment_decimals),
+            payment_decimals=self.payment_decimals)
         self.reader = T.StakeReader(self.node, self.links, self.policy,
                                     floor=lambda: self.staking_floor)
         self.store = ST.Store()
@@ -944,7 +945,7 @@ class Handler(BaseHTTPRequestHandler):
 
         if method == "GET" and parts == ["me"]:
             acct = self._require_account()
-            standing = app.reader.standing(acct)
+            standing = _wire_standing(app.reader.standing(acct))
             if app.links.dirty:
                 # The mutation under the lock; the write outside it. `save`
                 # takes the lock itself to build its snapshot, and the lock is
@@ -1010,7 +1011,7 @@ class Handler(BaseHTTPRequestHandler):
             with app.market.lock:
                 app.links.link(acct, staker)
             app.market.save()
-            return self._json(200, app.reader.standing(acct))
+            return self._json(200, _wire_standing(app.reader.standing(acct)))
 
         if method == "POST" and parts == ["stake", "unlink"]:
             acct = self._require_account()
@@ -1022,7 +1023,7 @@ class Handler(BaseHTTPRequestHandler):
             with app.market.lock:
                 app.links.unlink(acct, staker)
             app.market.save()
-            return self._json(200, app.reader.standing(acct))
+            return self._json(200, _wire_standing(app.reader.standing(acct)))
 
         if method == "POST" and parts == ["outputs", "check"]:
             # Which of these outputs a covenant purchase could spend. The
@@ -1353,6 +1354,24 @@ def _fields_of(message):
 # dictionary lookup -- is echoed back to nobody, because a key that is not a
 # field name is a value from inside levod, and the caller did not send it.
 FIELD_NAME = re.compile(r"^[a-z][a-z0-9_]{0,31}$")
+
+
+def _wire_standing(standing):
+    """An account's standing, with its atom counts as decimal strings.
+
+    `standing()` is read inside levod as well as sent out -- the tier a stake
+    earns is decided by comparing it -- so it holds integers, and the
+    conversion belongs here, at the edge, where a browser is the reader and a
+    number above 2**53 arrives rounded.
+    """
+    out = dict(standing)
+    for key in ("stake_atoms", "to_next_atoms"):
+        if isinstance(out.get(key), int):
+            out[key] = str(out[key])
+    out["keys"] = [dict(k, weight_atoms=str(k["weight_atoms"]))
+                   if isinstance(k.get("weight_atoms"), int) else k
+                   for k in (out.get("keys") or [])]
+    return out
 
 
 def _describe(e):

@@ -225,7 +225,7 @@ def sign_in():
         print("signed in as %s" % r["account"], file=sys.stderr)
     if not wif:
         me = api("GET", "/api/me", token=r["token"])
-        if me["tier"]["cap_atoms"] == 0 and not me["keys"]:
+        if int(me["tier"]["cap_atoms"]) == 0 and not me["keys"]:
             print("note: this account holds no proven stake. To sign in with your "
                   "staking key set LEVO_SIGN_WIF to its WIF, or run `levo link`.",
                   file=sys.stderr)
@@ -412,7 +412,7 @@ def cmd_whoami(args):
     me = api("GET", "/api/me", token=tok)
     print("account  %s" % me["account"])
     label = stake_label()
-    print("tier     %s (%s staked)" % (me["tier"]["name"], U.fmt(me["stake_atoms"], 8, label)))
+    print("tier     %s (%s staked)" % (me["tier"]["name"], U.fmt(int(me["stake_atoms"]), 8, label)))
     for k in me["keys"]:
         print("key      %s  %s%s" % (k["staker_pubkey"], U.fmt(k["weight_atoms"], 8, label),
                                      "  (login key)" if k.get("is_login_key") else ""))
@@ -525,7 +525,7 @@ def cmd_link(args):
     st = api("POST", "/api/stake/link", {"message": ch["message"], "signature": sig,
                                          "staker_pubkey": pk}, tok)
     print("linked. tier %s, %s staked" % (st["tier"]["name"],
-                                          U.fmt(st["stake_atoms"], 8, stake_label())))
+                                          U.fmt(int(st["stake_atoms"]), 8, stake_label())))
 
 
 def cmd_keygen(args):
@@ -784,7 +784,7 @@ def cmd_buy(args):
     plan = api("POST", "/api/projects/%s/buy" % args.slug, {"token_atoms": token_atoms}, tok)
     print("buying %s %s for %s"
           % (args.tokens, plain(p["ticker"]),
-             U.fmt(plan["payment_atoms"], _payment_decimals(p), _payment_label(p))))
+             U.fmt(int(plan["payment_atoms"]), _payment_decimals(p), _payment_label(p))))
 
     pay_asset = sale["terms"]["payment_asset"]
     # A person types a label, because that is what a wallet shows them. levod
@@ -796,12 +796,12 @@ def cmd_buy(args):
         raise Fail("this levod could not suggest a fee (its node did not answer "
                    "with an exchange rate); pass --fee with a number of atoms")
     if fee_asset == pay_asset:
-        ins, _ = unblinded_inputs(pay_asset, plan["payment_atoms"] + fee_atoms)
+        ins, _ = unblinded_inputs(pay_asset, int(plan["payment_atoms"]) + fee_atoms)
     else:
         # Fees are payable in any asset the network accepts, so the fee may
         # come from outputs of its own. They are separate inputs: a purchase
         # spends the payment asset, and this spends whatever pays the fee.
-        ins, _ = unblinded_inputs(pay_asset, plan["payment_atoms"])
+        ins, _ = unblinded_inputs(pay_asset, int(plan["payment_atoms"]))
         fee_ins, _ = unblinded_inputs(fee_asset, fee_atoms)
         seen = {(i["txid"], i["vout"]) for i in ins}
         ins = ins + [i for i in fee_ins if (i["txid"], i["vout"]) not in seen]
@@ -867,7 +867,7 @@ def cmd_buy(args):
     # The purchase is on chain now. Recording it against your allocation is a
     # bookkeeping step, so a failure here is worth saying out loud but must not
     # be reported as a failed purchase.
-    _record(args.slug, txid, token_atoms, plan["payment_atoms"], tok,
+    _record(args.slug, txid, token_atoms, int(plan["payment_atoms"]), tok,
             decimals=decimals)
 
 

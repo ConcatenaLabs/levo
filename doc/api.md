@@ -20,6 +20,13 @@ An error is `{"error": "<a sentence>"}` with a status:
 | 502 | the Sequentia node could not be reached or refused the query |
 | 503 | levod is busy, or unhealthy; `Retry-After` where it makes sense |
 
+Atom counts cross the wire as decimal strings rather than JSON numbers: an
+asset with a hundred million units at eight places has more atoms than a
+JavaScript number can hold, and an amount rounded on the way into a browser
+puts a figure in a funding command that the terms do not name. Every field
+ending in `_atoms`, plus `min_lot` and `total_atoms`, is a string on the way
+out; either a string or a number is accepted on the way in.
+
 ## Signing in
 
 An account is a public key. There is no password and no registration.
