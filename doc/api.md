@@ -92,6 +92,7 @@ query, node_reachable}`.
 | `status` | `open`, `finished`, `draft`, `all` (default `all`) |
 | `sort` | `new`, `closing`, `progress` (default `new`) |
 | `q` | matches a listing's page name, name, ticker or summary |
+| `status=hidden` | what an operator has taken off the board; only an operator may ask, and only their answers carry `hidden` on a row |
 | `limit`, `offset` | a page; a size is always applied, and `total` says how many there are |
 
 **`GET /api/projects/<slug>`** → the listing, its sale, its address, `issuer`
@@ -223,4 +224,8 @@ change rarely and may be held for half a minute.
 **`POST /api/projects/<slug>/flag`** `{hidden?, notice?}` (session, an account
 in `LEVOD_OPERATORS`) takes a listing off the board or puts a notice on its
 page. It reaches the page and nothing else: the sale is a covenant on a public
-chain, and anyone holding its terms can still buy from it.
+chain, and anyone holding its terms can still buy from it. The listing records
+which operator last changed it and when, as `flagged_by` and `flagged_at`, and
+the page shows both beside the notice: an action taken on somebody else's
+listing should say who took it. `GET /api/projects?status=hidden`, as an
+operator, lists what has been taken off.
