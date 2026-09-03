@@ -386,7 +386,12 @@ class Handler(BaseHTTPRequestHandler):
         if self.app and peer in self.app.trusted_proxies:
             fwd = self.headers.get("X-Forwarded-For")
             if fwd:
-                return fwd.split(",")[0].strip()[:64]
+                # The LAST entry, not the first. A proxy appends the address it
+                # received the connection from; everything to the left of that
+                # is whatever the client sent, and taking the leftmost let a
+                # caller choose its own rate-limit bucket per request -- which
+                # is the same as having no rate limit at all.
+                return fwd.split(",")[-1].strip()[:64]
         return peer
 
     def handle_one_request(self):
@@ -645,6 +650,16 @@ class Handler(BaseHTTPRequestHandler):
         app = self.app
         parts = [p for p in path.split("/") if p][1:]      # drop "api"
 
+        # -- what this address may ask for -----------------------------------
+        #
+        # Before any handler, so that the endpoints answered earliest -- the
+        # config, the tier table, the rails, the watcher -- are inside the
+        # limit rather than outside it. Health is the one exemption: an uptime
+        # check must never be the thing that trips a limit.
+        if method in ("GET", "HEAD") and parts[:1] != ["health"] and \
+                not app.read_limit.allow(self.client()):
+            raise Unsupported(429, "too many requests from this address; slow down")
+
         # -- health and static facts ----------------------------------------
         if method == "GET" and parts == ["health"]:
             try:
@@ -736,18 +751,15 @@ class Handler(BaseHTTPRequestHandler):
                                     "exactly as it was rather than guessed at.",
             })
 
-        if method in ("GET", "HEAD") and parts[:1] != ["health"] and \
-                not app.read_limit.allow(self.client()):
-            # Health is left out on purpose: an uptime check must never be the
-            # thing that trips the limit.
-            raise Unsupported(429, "too many requests from this address; slow down")
-
         # -- auth -------------------------------------------------------------
         if method == "POST" and parts[:1] in (["auth"], ["stake"]) and \
                 not app.auth_limit.allow(self.client()):
             raise Unsupported(429, "too many sign-in attempts from this address; "
                                    "wait a minute and try again")
-        if method in ("POST", "PATCH", "DELETE") and parts[:1] == ["projects"] and \
+        # Everything that writes or makes the node work, not only what is
+        # under /projects: `POST /outputs/check` asks the node about up to
+        # thirty-two outputs and was in no limit at all.
+        if method in ("POST", "PATCH", "DELETE") and parts[:1] not in (["auth"], ["stake"]) and \
                 not app.write_limit.allow(self.client()):
             raise Unsupported(429, "too many requests from this address; wait a "
                                    "minute and try again")

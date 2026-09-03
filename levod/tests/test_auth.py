@@ -123,3 +123,26 @@ def test_an_address_that_is_not_an_address_costs_nothing(t):
             t.ok(True, "a %d-character address is refused" % n)
     t.ok(time.time() - start < 0.5, "and refusing it is instant",
          "%.2fs" % (time.time() - start))
+
+
+def test_the_client_a_request_is_from_is_the_one_the_proxy_appended(t):
+    """A proxy appends the address it received the connection from, so the
+    LAST entry is the only one it wrote. Everything left of it is whatever the
+    client sent -- and reading that let a caller choose its own rate-limit
+    bucket on every request, which is the same as having no limit."""
+    import server as SRV
+
+    class Req:
+        def __init__(self, peer, fwd):
+            self.client_address = (peer, 1234)
+            self.headers = {"X-Forwarded-For": fwd}
+            self.app = type("App", (), {"trusted_proxies": {"127.0.0.1"}})()
+
+        client = SRV.Handler.client
+
+    t.eq(Req("127.0.0.1", "9.9.9.9, 203.0.113.7").client(), "203.0.113.7",
+         "the proxy's own entry is the client")
+    t.eq(Req("127.0.0.1", "203.0.113.7").client(), "203.0.113.7",
+         "one entry is that entry")
+    t.eq(Req("198.51.100.4", "9.9.9.9").client(), "198.51.100.4",
+         "a peer that is not a trusted proxy is believed over any header")

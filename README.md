@@ -326,7 +326,7 @@ reaches the box nowhere else.
 | `LEVOD_ORIGIN` | the request's `Host` | The address this Levo is reached at. It is named in the statement a wallet is asked to sign, so behind a proxy set it to the public URL. |
 | `LEVOD_SOURCE_URL` | this repository | Where this Levo's source is. Linked from the site, because a visitor is told to run a command and to rebuild an address themselves. |
 | `LEVOD_OPERATORS` | — | Public keys (compressed hex, comma or space separated) that may hide or flag a listing. Empty means nobody can. |
-| `LEVOD_TRUSTED_PROXIES` | `127.0.0.1 ::1` | Peers whose `X-Forwarded-For` is believed. Set it empty when levod is exposed directly, or any caller can pick their own rate-limit bucket. |
+| `LEVOD_TRUSTED_PROXIES` | `127.0.0.1 ::1` | Peers whose `X-Forwarded-For` is believed, and only its **last** entry, which is the one such a proxy appends. Set it empty when levod is exposed directly, or any caller can pick their own rate-limit bucket. |
 
 Changing `LEVOD_PAYMENT_ASSET` while a sale is open is not supported: every
 sale's covenant is priced in the asset it was listed with.
