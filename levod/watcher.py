@@ -94,6 +94,8 @@ class Watcher:
         self._miss_height = {}
         self._search_after = {}       # sale -> the poll a failed block walk may retry at
         self._blocks = {}             # block hashes and heights, for one poll
+        self._pool = None             # the mempool's spends, for one poll
+        self._pool_at = -1
         self._round = 0
         self.confirm_misses = 2
         # Sales whose funding this levod cannot place in the chain: state
@@ -837,11 +839,31 @@ class Watcher:
 
     def _mempool_spender(self, txid, vout):
         """(spending txid, its decoded outputs) for a mempool transaction that
-        spends this outpoint, or None. Bounded; a miss just means 'not seen'."""
+        spends this outpoint, or None.
+
+        Read ONCE per poll and indexed by the outpoints it spends. Asking per
+        sale meant a poll cost the mempool over again for every sale on the
+        platform -- a hundred sales and a busy mempool is ten thousand RPC
+        calls a minute, all of them the same answer. Bounded either way; a miss
+        just means "not seen".
+        """
+        index = self._mempool_index()
+        if index is None:
+            return None
+        return index.get((str(txid).lower(), int(vout)))
+
+    def _mempool_index(self):
+        """Every outpoint the mempool spends, to the transaction that spends
+        it, for the length of one poll."""
+        if self._pool_at == self._round:
+            return self._pool
+        self._pool_at = self._round
+        self._pool = None
         try:
             pool = self.rpc.call("getrawmempool") or []
         except Exception:
             return None
+        index = {}
         for cand in list(pool)[:MEMPOOL_SEARCH_LIMIT]:
             try:
                 raw = self.rpc.call("getrawtransaction", cand, True)
@@ -849,10 +871,12 @@ class Watcher:
                 continue
             if not raw:
                 continue
+            spender = (raw.get("txid") or cand, raw.get("vout") or [])
             for vin in raw.get("vin") or []:
-                if vin.get("txid") == txid and int(vin.get("vout", -1)) == int(vout):
-                    return raw.get("txid") or cand, raw.get("vout") or []
-        return None
+                if vin.get("txid"):
+                    index[(str(vin["txid"]).lower(), int(vin.get("vout", -1)))] = spender
+        self._pool = index
+        return index
 
     def _note_strays(self, project, found):
         """Record assets resting at a sale's address that are not its token.

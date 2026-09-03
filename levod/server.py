@@ -46,6 +46,11 @@ import tiers as T         # noqa: E402
 import watcher as W       # noqa: E402
 
 MAX_BODY = 256 * 1024
+# What /api/health will name, and how much of an error it will quote. A health
+# answer is a fixed-size fact about the service, not a report that grows with
+# the platform: whatever is watching it reads it every few seconds.
+HEALTH_LIST = 20
+HEALTH_ERROR = 500
 WATCHER_RPC_TIMEOUT = 300         # a UTXO-set scan on a big chain takes a while
 # The chains whose tokens are worth something. Everything else is a test
 # chain, including one this build has never heard of.
@@ -668,8 +673,14 @@ class Handler(BaseHTTPRequestHandler):
                             "last_run_age_seconds": int(age) if age is not None else None,
                             "reconciling": not failing,
                             "consecutive_errors": w.consecutive_errors,
-                            "unverified_sales": list(w.unverified),
-                            "last_error": w.last_error},
+                            # Bounded, both of them. This endpoint is polled
+                            # every few seconds by anything watching the site,
+                            # and a platform with a thousand sales could
+                            # otherwise answer it with a list of a thousand
+                            # slugs and a paragraph per failing sale.
+                            "unverified_sales": list(w.unverified)[:HEALTH_LIST],
+                            "unverified_total": len(w.unverified),
+                            "last_error": (w.last_error or "")[:HEALTH_ERROR] or None},
             })
 
         if method == "GET" and parts == ["config"]:
@@ -761,9 +772,13 @@ class Handler(BaseHTTPRequestHandler):
             acct = self._require_account()
             standing = app.reader.standing(acct)
             if app.links.dirty:
+                # The mutation under the lock; the write outside it. `save`
+                # takes the lock itself to build its snapshot, and the lock is
+                # reentrant, so holding it here would put the serialise and the
+                # fsync inside it -- with every other request behind them.
                 with app.market.lock:
                     app.links.dirty = False
-                    app.market.save()
+                app.market.save()
             # Whether this account may flag a listing on this Levo. Without it
             # a client cannot know whether to offer the control at all.
             standing["operator"] = acct.lower() in app.market.operators
@@ -820,7 +835,7 @@ class Handler(BaseHTTPRequestHandler):
                                      "signed with a different key" % staker)
             with app.market.lock:
                 app.links.link(acct, staker)
-                app.market.save()
+            app.market.save()
             return self._json(200, app.reader.standing(acct))
 
         if method == "POST" and parts == ["stake", "unlink"]:
@@ -832,7 +847,7 @@ class Handler(BaseHTTPRequestHandler):
                 raise M.NotFound("that staking key is not linked to your account")
             with app.market.lock:
                 app.links.unlink(acct, staker)
-                app.market.save()
+            app.market.save()
             return self._json(200, app.reader.standing(acct))
 
         if method == "POST" and parts == ["outputs", "check"]:

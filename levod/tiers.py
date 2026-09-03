@@ -197,6 +197,16 @@ class TierPolicy:
         return [t.to_json() for t in self.tiers]
 
 
+# How many staking keys one account may hold at once.
+#
+# There is no honest reason to need more: a staker with many keys links the
+# ones that carry stake. What the cap stops is an account linking keys in a
+# loop -- every link rewrites the whole state file and every /api/me reads
+# every key's weight from the chain, so an unbounded list is a way to make one
+# account cost the platform more the longer it runs.
+MAX_LINKED_KEYS = 64
+
+
 class StakeLinks:
     """Which staker keys an account has proven it controls.
 
@@ -231,7 +241,7 @@ class StakeLinks:
             + StakeLinks.binding_lines(account_pubkey, staker_pubkey)
             + ["Nonce: %s" % nonce])
 
-    def link(self, account_pubkey, staker_pubkey):
+    def link(self, account_pubkey, staker_pubkey, bounded=True):
         """Attach a proven staker key. One key, one account.
 
         Re-linking to a different account MOVES the key rather than duplicating
@@ -240,6 +250,12 @@ class StakeLinks:
         honest answer, since they demonstrably do.
         """
         staker_pubkey = staker_pubkey.lower()
+        held = self._by_account.get(account_pubkey) or set()
+        if bounded and len(held) >= MAX_LINKED_KEYS and staker_pubkey not in held:
+            raise ValueError(
+                "this account already holds %d staking keys, which is the most "
+                "one account keeps. Unlink one you no longer stake with"
+                % MAX_LINKED_KEYS)
         prior = self._owner.get(staker_pubkey)
         if prior and prior != account_pubkey:
             self._by_account[prior].discard(staker_pubkey)
@@ -259,9 +275,12 @@ class StakeLinks:
         return {a: sorted(k) for a, k in self._by_account.items() if k}
 
     def load(self, d):
+        # What is already on disk is read as it is. The cap is on what an
+        # account may ADD; refusing to start over a file written before it
+        # existed would turn a limit into an outage.
         for account, keys in (d or {}).items():
             for k in keys:
-                self.link(account, k)
+                self.link(account, k, bounded=False)
 
 
 class StakeReader:
