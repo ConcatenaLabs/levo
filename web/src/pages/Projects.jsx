@@ -54,11 +54,13 @@ const FILTERS = [
   ['finished', 'Finished'],
   ['draft', 'Not funded'],
   ['all', 'All'],
+  // Only an operator may ask for this one, and only an operator is offered it.
+  ['hidden', 'Hidden'],
 ]
 
 export default function Projects() {
   usePageTitle('Sales')
-  const { payment, chainHeight } = useStore()
+  const { payment, chainHeight, standing } = useStore()
   const [projects, setProjects] = useState(null)
   const [total, setTotal] = useState(0)
   const [error, setError] = useState(null)
@@ -118,7 +120,8 @@ export default function Projects() {
 
       <div className="board-filters">
         <div className="chips" role="group" aria-label="Which sales">
-          {FILTERS.map(([id, label]) => (
+          {FILTERS.filter(([id]) => id !== 'hidden' || (standing && standing.operator))
+                  .map(([id, label]) => (
             <button key={id} type="button"
                     className={'chip' + (status === id ? ' on' : '')}
                     aria-pressed={status === id}

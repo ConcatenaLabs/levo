@@ -1076,11 +1076,16 @@ class Handler(BaseHTTPRequestHandler):
 
         # -- projects ----------------------------------------------------------
         if method == "GET" and parts == ["projects"]:
+            # An operator sees what they hid, and can ask for only that. A
+            # listing hidden with no way back to it is a decision nobody can
+            # revisit.
+            who = self._account()
             page = app.market.public_projects(
                 status=_one(query, "status"), q=_one(query, "q"),
                 sort=_one(query, "sort") or "new",
                 limit=_int_param(query, "limit"),
-                offset=_int_param(query, "offset") or 0)
+                offset=_int_param(query, "offset") or 0,
+                operator=bool(who and who.lower() in app.market.operators))
             page["node_reachable"] = app.market.height() is not None
             return self._json(200, page)
 

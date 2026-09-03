@@ -382,6 +382,12 @@ function FlagPanel({ project, onFlagged }) {
           take it down.
         </div>
       </div>
+      {project.flagged_by && (
+        <p className="small dim" style={{ margin: '0 0 1rem' }}>
+          Last changed by <span className="mono">{shortHex(project.flagged_by, 8, 4)}</span>
+          {project.flagged_at ? <> on {timeLabel(project.flagged_at)}</> : null}.
+        </p>
+      )}
       {error && <Notice kind="bad" style={{ marginBottom: '1rem' }}>{error}</Notice>}
       <div className="btn-row">
         <button className="btn btn-sm" aria-disabled={busy}
@@ -396,7 +402,9 @@ function FlagPanel({ project, onFlagged }) {
       {project.hidden && (
         <p className="small dim" style={{ margin: '.75rem 0 0' }}>
           This listing is off the board. Its page still answers, and the sale is
-          untouched.
+          untouched. Every listing you have taken off is on{' '}
+          <Link to="/projects?status=hidden">the board under “Hidden”</Link>,
+          which only an operator can ask for.
         </p>
       )}
     </div>
@@ -505,6 +513,10 @@ export default function ProjectDetail() {
           <div className="small" style={{ marginTop: '.4rem' }}>
             This is a note on the page. The sale is a covenant on chain: Levo can
             neither stop it nor change its terms.
+            {project.flagged_by && (
+              <> Written by <span className="mono">{shortHex(project.flagged_by, 8, 4)}</span>
+                {project.flagged_at ? <> on {timeLabel(project.flagged_at)}</> : null}.</>
+            )}
           </div>
         </Notice>
       )}

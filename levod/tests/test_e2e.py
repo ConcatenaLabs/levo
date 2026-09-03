@@ -899,6 +899,27 @@ def run(d):
     code, r = req("GET", "/api/projects")
     ok.ok("helios" in [p["slug"] for p in r["projects"]], "back on the board")
 
+    # A listing taken off the board has to be findable again, or hiding one is
+    # a decision nobody can revisit -- and the action carries who took it.
+    code, r = req("POST", "/api/projects/helios/flag",
+                  {"hidden": True, "notice": "Under review."}, token=issuer_tok)
+    ok.eq(code, 200, "an operator hides it again")
+    code, r = req("GET", "/api/projects")
+    ok.ok("helios" not in [p["slug"] for p in r["projects"]], "and it is off the board")
+    code, r = req("GET", "/api/projects?status=hidden")
+    ok.eq(code, 400, "a visitor cannot ask for what is hidden")
+    code, r = req("GET", "/api/projects?status=hidden", token=issuer_tok)
+    ok.eq(code, 200, "an operator can")
+    ok.eq([p["slug"] for p in r["projects"]], ["helios"], "and finds it there")
+    ok.eq(r["projects"][0]["hidden"], True, "marked as hidden")
+    code, r = req("GET", "/api/projects/helios")
+    ok.eq(r["flagged_by"], SH.pubkey_of(d.issuer_sec),
+          "the page says which operator flagged it")
+    ok.ok(r["flagged_at"], "and when")
+    code, r = req("POST", "/api/projects/helios/flag",
+                  {"hidden": False, "notice": ""}, token=issuer_tok)
+    ok.eq(code, 200, "and it goes back on the board")
+
     # --- what each path takes ----------------------------------------------
     ok.section("verbs")
     code, r, h = _req(d.base, "OPTIONS", "/api/health")

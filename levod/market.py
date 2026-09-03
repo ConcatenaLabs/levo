@@ -61,6 +61,9 @@ PER_INPUT_VSIZE = 70
 
 SALE_FILTERS = ("all", "open", "draft", "finished")
 SALE_SORTS = ("new", "closing", "progress")
+# A hidden listing is off the board for everyone. An operator has to be able to
+# find one again, or hiding something is a decision nobody can revisit.
+OPERATOR_STATUSES = ("hidden",)
 DEFAULT_PAGE = 50                # listings a request returns when it asks for no size
 MAX_PAGE = 200                   # the most one request will return
 MAX_STRAYS_KEPT = 20             # foreign outputs kept when a state file is read
@@ -300,6 +303,8 @@ class Project:
         # carries on regardless, because it is a covenant on a public chain
         # and Levo has no power over it.
         self.hidden = False
+        self.flagged_by = None            # the operator who last hid or noticed it
+        self.flagged_at = None
         self.notice = None
         # What a registry said about this project's token when it was listed.
         # An empty answer means nothing was asked, which is not the same as an
@@ -350,6 +355,8 @@ class Project:
             "registry": dict(self.registry or {}),
             "created_at": self.created_at,
             "hidden": self.hidden,
+            "flagged_by": self.flagged_by,
+            "flagged_at": self.flagged_at,
             "notice": self.notice,
             "sale": self.sale.to_json(height=height, now=now) if self.sale else None,
         }
@@ -430,6 +437,8 @@ class Platform:
                         d.get("links"), d.get("created_at"), d.get("decimals", 8),
                         issuance_txid=d.get("issuance_txid"))
             p.hidden = bool(d.get("hidden"))
+            p.flagged_by = d.get("flagged_by")
+            p.flagged_at = d.get("flagged_at")
             p.notice = d.get("notice")
             p.registry = dict(d.get("registry") or {})
             sd = d.get("sale")
@@ -1298,7 +1307,8 @@ class Platform:
             raise NotFound("no such project")
         return p
 
-    def public_projects(self, status=None, q=None, sort="new", limit=None, offset=0):
+    def public_projects(self, status=None, q=None, sort="new", limit=None,
+                        offset=0, operator=False):
         """The board: everything but the long description, which the detail
         page carries.
 
@@ -1318,8 +1328,9 @@ class Platform:
         # node will accept.
         now = None
         wanted = (status or "all").lower()
-        if wanted not in SALE_FILTERS:
-            raise PlatformError("status must be one of: %s" % ", ".join(sorted(SALE_FILTERS)))
+        allowed = SALE_FILTERS + (OPERATOR_STATUSES if operator else ())
+        if wanted not in allowed:
+            raise PlatformError("status must be one of: %s" % ", ".join(sorted(allowed)))
         sort = (sort or "new").lower()
         if sort not in SALE_SORTS:
             raise PlatformError("sort must be one of: %s" % ", ".join(SALE_SORTS))
@@ -1333,7 +1344,9 @@ class Platform:
         with self.lock:
             everything = list(self.projects.values())
         for p in everything:
-            if p.hidden:
+            if p.hidden and not operator:
+                continue
+            if wanted == "hidden" and not p.hidden:
                 continue
             if not self._matches(p, wanted, h, now):
                 continue
@@ -1352,6 +1365,8 @@ class Platform:
         for p in items:
             d = p.to_json(height=h, now=now)
             d.pop("description", None)
+            if not operator:
+                d.pop("hidden", None)     # a visitor is told about what is there
             if p.sale:
                 d["address"] = self.sale_address(p.sale)
             out.append(d)
@@ -1360,7 +1375,7 @@ class Platform:
                 "query": needle or None}
 
     def _matches(self, p, wanted, height, now):
-        if wanted == "all":
+        if wanted in ("all", "hidden"):
             return True
         sale = p.sale
         shown = sale.shown_status(height=height, now=now) if sale else None
@@ -1411,6 +1426,12 @@ class Platform:
                 p.hidden = bool(hidden)
             if notice is not None:
                 p.notice = _text(notice, "notice", 400, oneline=True) or None
+            # An action taken on somebody else's listing carries who took it
+            # and when. Without that, a notice on a project's page is a
+            # sentence from nobody, and an operator cannot answer for it.
+            if hidden is not None or notice is not None:
+                p.flagged_by = account
+                p.flagged_at = int(time.time())
         self.save()
         return p
 
