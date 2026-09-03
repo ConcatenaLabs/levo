@@ -162,7 +162,7 @@ function MyProjects() {
             </p>
           )}
           {p.sale && p.sale.strays && p.sale.strays.length > 0 && (
-            <p className="small" style={{ margin: '.5rem 0 0', color: 'var(--alarm)' }}>Other assets are resting at the sale address.</p>
+            <p className="small" style={{ margin: '.5rem 0 0', color: 'var(--alarm)' }}>More than the sale is resting at the sale address, and a buyer can take it.</p>
           )}
         </Link>
       ))}

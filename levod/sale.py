@@ -135,10 +135,14 @@ class Sale:
         """
         if self.status not in (DRAFT, GHOST):
             raise SaleError(
-                "this sale is already funded at %s:%s; a sale is locked once. "
-                "The tokens you sent are resting at the sale address alongside "
-                "it and are not for sale" % ((self.funding or {}).get("txid"),
-                                            (self.funding or {}).get("vout")))
+                "this sale is already funded at %s:%s, and a sale is locked "
+                "once. Anything else you have sent to the sale address is "
+                "resting there beside it AND IS BUYABLE: the sell leaf reads "
+                "the amount it spends, never which output it is, so a buyer "
+                "can take any output at that address at the sale's price. "
+                "Move it before the close if it was not meant to be sold"
+                % ((self.funding or {}).get("txid"),
+                   (self.funding or {}).get("vout")))
         self.verify_funding_spk(spk_hex)
         if blinded or asset_hex is None or value_atoms is None:
             # A confidential output states nothing; it commits. The sell leaf

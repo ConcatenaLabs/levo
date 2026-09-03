@@ -593,9 +593,32 @@ def test_other_assets_at_the_sale_address_are_reported_as_strays(t):
         {"txid": "99" * 32, "vout": 0, "scriptPubKey": s.script_pubkey, "amount": 100.0, "asset": USDX},
     ]
     _watch(s, rpc).poll()
-    t.eq(s.strays, [{"txid": "99" * 32, "vout": 0, "asset": USDX, "atoms": 100 * 10**8}],
-         "the stray USDX is recorded")
+    t.eq(s.strays, [{"txid": "99" * 32, "vout": 0, "asset": USDX,
+                     "atoms": 100 * 10**8, "sellable": True}],
+         "the stray USDX is recorded, and that anyone can buy it")
     t.eq(s.locked_atoms, 600 * 10**8, "and does not count as the sale")
+
+
+def test_a_second_lot_of_the_sale_token_is_reported_as_buyable(t):
+    """The sell leaf never reads WHICH outpoint it spends, so a second token
+    output at the sale address is buyable by anyone at the sale's price -- and
+    the project had been told the opposite."""
+    s = _sale()
+    rpc = FakeRPC()
+    rpc.txouts[("ab" * 32, 0)] = {"value": TOTAL / 1e8, "confirmations": 6}
+    rpc.blocks[95] = "block-95"
+    rpc.unspents = [
+        {"txid": "ab" * 32, "vout": 0, "scriptPubKey": s.script_pubkey,
+         "amount": TOTAL / 1e8, "asset": GOLD},
+        {"txid": "77" * 32, "vout": 3, "scriptPubKey": s.script_pubkey,
+         "amount": 5_000.0, "asset": GOLD},
+    ]
+    w = _watch(s, rpc)
+    w._round = STRAY_ROUND - 1             # the next poll is a stray round
+    w.poll()
+    t.eq([(x["txid"], x["sellable"]) for x in s.strays],
+         [("77" * 32, True)], "the extra token output is reported as buyable")
+    t.eq(s.locked_atoms, TOTAL, "and the sale still rests on its own funding")
 
 
 def test_a_sale_that_sells_out_before_the_first_poll_is_not_a_ghost(t):

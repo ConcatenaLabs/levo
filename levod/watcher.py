@@ -215,12 +215,6 @@ class Watcher:
                 found = None
 
         if found is not None:
-            for slug, p in scan_for:
-                try:
-                    note = self._note_strays(p, found)
-                    dirty = dirty or note
-                except Exception as e:
-                    errors.append("%s strays: %s" % (slug, e))
             for slug, p in pending:
                 was = _shape(p.sale)
                 try:
@@ -229,6 +223,15 @@ class Watcher:
                     self._announce(slug, p.sale, was)
                 except Exception as e:
                     errors.append("%s: %s" % (slug, e))
+            # After reconciling, never before: a remainder this poll has just
+            # adopted is the sale's own funding, and reading the scan first
+            # would report it as something a stranger had sent.
+            for slug, p in scan_for:
+                try:
+                    note = self._note_strays(p, found)
+                    dirty = dirty or note
+                except Exception as e:
+                    errors.append("%s strays: %s" % (slug, e))
 
         # A save that failed leaves the platform's state ahead of the disk;
         # trying again every poll is the only thing that recovers a full disk
@@ -836,9 +839,18 @@ class Watcher:
     def _note_strays(self, project, found):
         """Record assets resting at a sale's address that are not its token.
 
-        The sell leaf reads the value of the input it spends, not its asset, so
-        anything else that lands at the address can be taken by anyone at the
-        sale's price. The project is told so it can sweep it after the close.
+        The sell leaf reads the value of the input it spends and never which
+        outpoint it is, so EVERY output at the address is spendable through it,
+        not only the one Levo watches. A second lot of the sale token sent
+        there is therefore buyable by anyone at the sale's price -- the payment
+        reaches the project's treasury, but tokens the project believed were
+        parked are sold, and the board's remaining figure is short by that
+        much. Anything of another asset is worse: the leaf reads the value and
+        not the asset, so a stranger can buy it for the sale token's price.
+
+        Each is reported with which of those it is, because the advice
+        differs: one has to be moved before the close, the other only swept
+        after it.
         """
         sale = project.sale
         at_address = found.get(sale.script_pubkey.lower(), [])
@@ -846,17 +858,20 @@ class Watcher:
         # exists to tell a project that something is there, and a hundred lines
         # of dust say that no better than twenty do. The largest are kept,
         # because those are the ones worth sweeping.
-        # Anything at the address the covenant cannot sell: another asset, or
-        # an amount of the sale token below the minimum lot, which the sell
-        # leaf would refuse to leave behind and so can only have been sent.
+        # Everything at the address except the one output this sale rests on.
+        # Not "everything the covenant cannot sell": it can sell all of them,
+        # which is the reason to report them.
+        funding = sale.funding or {}
         others = [u for u in at_address
-                  if u["asset"] != sale.terms.token_asset
-                  or (u["atoms"] < sale.terms.min_lot
-                      and not (sale.funding and u["txid"] == sale.funding.get("txid")
-                               and u["vout"] == sale.funding.get("vout")))]
+                  if not (u["txid"] == funding.get("txid")
+                          and u["vout"] == funding.get("vout"))]
         others.sort(key=lambda u: -u["atoms"])
         strays = [{"txid": u["txid"], "vout": u["vout"], "asset": u["asset"],
-                   "atoms": u["atoms"]}
+                   "atoms": u["atoms"],
+                   # Whether a buyer could take this one through the sell leaf.
+                   # An amount below the minimum lot is the one case it cannot:
+                   # the leaf refuses to leave less than a lot resting.
+                   "sellable": u["atoms"] >= sale.terms.min_lot}
                   for u in others[:MAX_STRAYS]]
         if len(others) > MAX_STRAYS:
             self.log("watcher: %s has %d foreign outputs at its address; the "

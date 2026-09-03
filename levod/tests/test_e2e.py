@@ -411,6 +411,15 @@ def run(d):
     code, r = req("POST", "/api/projects", {"project": dict(meta, slug="x-big"),
                                             "terms": dict(terms, close_locktime=5_000_000_000)}, token=issuer_tok)
     ok.eq(code, 400, "a close above 32 bits is refused")
+    # A price and a minimum lot that together pay the treasury less than a
+    # node will relay: every purchase this sale allows would be refused by the
+    # network, so the sale itself is refused.
+    code, r = req("POST", "/api/projects", {"project": dict(meta, slug="x-dust"),
+                                            "terms": dict(terms, price_num=1, price_den=100_000,
+                                                          min_lot=100)}, token=issuer_tok)
+    ok.eq(code, 400, "a sale whose smallest purchase pays dust is refused")
+    ok.ok("minimum lot" in (r.get("error") or ""), "and the refusal says how to fix it",
+          r.get("error"))
     code, r = req("POST", "/api/projects", {"project": dict(meta, slug="x-lot"),
                                             "terms": dict(terms, min_lot=total + 1)}, token=issuer_tok)
     ok.eq(code, 400, "a minimum lot above the total is refused")
@@ -758,6 +767,13 @@ def run(d):
     ok.eq(code, 400, "a reclaim needs a destination")
     code, r = req("POST", "/api/projects/closing/reclaim",
                   {"destination_address": buyer_addr, "fee_inputs": [{"txid": "77" * 32, "vout": 0}], "fee_atoms": 200_000},
+                  token=issuer_tok)
+    ok.eq(code, 400, "change from the fee inputs needs somewhere of its own to go")
+    ok.ok("change_address" in (r.get("error") or ""), "and the refusal says which field",
+          r.get("error"))
+    code, r = req("POST", "/api/projects/closing/reclaim",
+                  {"destination_address": buyer_addr, "change_address": ADDR.from_script_pubkey("0014" + "ee" * 20, "tb"),
+                   "fee_inputs": [{"txid": "77" * 32, "vout": 0}], "fee_atoms": 200_000},
                   token=issuer_tok)
     ok.eq(code, 200, "after the close a reclaim builds")
     ok.ok("sighash" in r and "leaf" in r and "control_block" in r and "signature" not in r,

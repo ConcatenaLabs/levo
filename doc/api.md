@@ -112,9 +112,13 @@ the sale page's own shape. Without an outpoint levod scans the confirmed set
 for the sale's address; with one it can confirm a lock still in the mempool.
 
 **`POST /api/projects/<slug>/reclaim`** `{destination_address, fee_inputs,
-fee_atoms, fee_asset?}` (session, the issuer, after the close) → the unsigned
-transaction, the `sighash` to sign with the reclaim key, the leaf and the
-control block. levod never sees a key.
+fee_atoms, fee_asset?, change_address?}` (session, the issuer, after the close)
+→ the unsigned transaction, the `sighash` to sign with the reclaim key, the
+leaf and the control block. levod never sees a key. Whatever the fee inputs
+bring above the fee is change and needs `change_address`: it does not follow
+the tokens to the destination, which is often a cold wallet or a custodian
+that credits only the token. A request with change and no change address is
+refused rather than guessing.
 
 **`GET /api/projects/<slug>/purchases`** (session, the issuer or an operator) →
 Levo's own ledger for that sale, newest first, with `limit`, `offset` and

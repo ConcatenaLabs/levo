@@ -110,8 +110,11 @@ def build_pset(inputs, outputs, version=2, locktime=0):
 
     `asset` and `txid` are display hex; the reversing onto the wire happens here
     so no caller has to remember. Every output is explicit: a covenant reads the
-    values it checks and can police nothing it cannot read, and a blinder index
-    of zero tells the wallet not to blind anything.
+    values it checks and can police nothing it cannot read. What makes an output
+    explicit is the absence of a blinding pubkey, which is what a wallet reads to
+    decide whether an output is blinded at all; the blinder index written beside
+    it names which input's owner would do the blinding, and with no pubkey to go
+    with it, it does nothing.
     """
     if not inputs:
         raise ValueError("a PSET needs at least one input")

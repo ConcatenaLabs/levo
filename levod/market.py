@@ -14,6 +14,7 @@ policy. Keeping that boundary sharp is what lets the documentation say exactly
 which promises survive Levo going away.
 """
 
+import os
 import re
 import threading
 import time
@@ -66,6 +67,11 @@ PURCHASES_SHOWN = 20             # purchases carried inline with a position
 MAX_PURCHASES_PER_ACCOUNT = 64   # ledger entries one account keeps per sale
 MAX_DRAFTS = 3                   # unfunded listings one account may hold at once
 DEFAULT_PAYMENT_ASSET = "2a515539da5e6a60caa7766ecd65bac0c10d15717ddd2088844ba58f4d04b9de"
+# The node's dust rate, in reference units per kvB. It is compiled into the
+# node (DUST_RELAY_TX_FEE) rather than reported over RPC, and only a debug
+# option changes it, so a deployment that runs against a node built otherwise
+# sets this to match.
+DUST_RELAY_UNITS_PER_KVB = int(os.environ.get("LEVOD_DUST_RELAY") or 100)
 
 
 def _txid_or_none(value):
@@ -521,6 +527,22 @@ class Platform:
                     "the sale closes at block %d and the chain is already at "
                     "%d, so it would be closed the moment it was listed"
                     % (terms.close_locktime, h))
+        # The covenant's treasury credit is an ordinary output, so it has to
+        # clear the node's dust rule. A sale whose SMALLEST purchase pays less
+        # than that is a sale no one can ever buy from: every purchase it
+        # allows is refused by every node it is offered to.
+        floor = self.dust_atoms(terms.payment_asset,
+                                spk_len=len(terms.treasury_prog) // 2 + 2)
+        if floor:
+            least = terms.cost_for(terms.min_lot)
+            if least < floor:
+                need = -(-floor * terms.price_den // terms.price_num)
+                raise PlatformError(
+                    "the smallest purchase this sale allows pays %d atoms to "
+                    "the treasury, and a node will not relay an output below "
+                    "%d atoms. Raise the price, or raise the minimum lot to at "
+                    "least %d atoms of the token"
+                    % (least, floor, need))
         sale = self._make_sale(p, terms)
         # Identical terms derive an identical covenant address, and the address
         # is the whole of what a lock is proven against. Two listings sharing
@@ -833,7 +855,18 @@ class Platform:
         self.check_fee_asset(fee_asset, buyer.get("fee_atoms"))
         self.check_fee_atoms(p.sale, buyer.get("fee_atoms"),
                              n_inputs=len(buyer["inputs"]), fee_asset=fee_asset)
-        built = TX.build_buy(p.sale, plan, buyer)
+        # A purchase whose treasury credit is below the node's dust rule is
+        # refused here rather than at the node, which would be after the buyer
+        # had signed it.
+        floor = self.dust_atoms(p.sale.terms.payment_asset,
+                                spk_len=self._treasury_spk_len(p.sale.terms))
+        if floor and plan.payment_atoms < floor:
+            raise PlatformError(
+                "this purchase pays %s to the treasury, and a node will not "
+                "relay an output that small. Buy a larger lot: %s is the least "
+                "that will move"
+                % (p.sale.payment(plan.payment_atoms), p.sale.payment(floor)))
+        built = TX.build_buy(p.sale, plan, buyer, hrp=self.hrp)
         built["token_atoms"] = plan.token_atoms
         built["payment_atoms"] = plan.payment_atoms
         built["remainder_atoms"] = plan.remainder_atoms
@@ -901,6 +934,12 @@ class Platform:
         genesis = self.rpc.call("getblockhash", 0)
         dest = self._spk(body, "destination_script_pubkey", "destination_address",
                          "where the reclaimed tokens go")
+        # Change from the fee inputs, if any, and a separate address on
+        # purpose: the destination may be a wallet that credits only the token.
+        change = None
+        if body.get("change_address") or body.get("change_script_pubkey"):
+            change = self._spk(body, "change_script_pubkey", "change_address",
+                               "where the change from your fee inputs goes")
         fee_inputs = self.verify_buyer_inputs(body.get("fee_inputs"))
         fee_asset = self.resolve_asset(body.get("fee_asset") or sale.terms.payment_asset)
         fee_atoms = body.get("fee_atoms")
@@ -914,7 +953,8 @@ class Platform:
             fee_atoms=fee_atoms,
             fee_asset=fee_asset,
             genesis_hash=genesis,
-            locktime=body.get("locktime"))
+            locktime=body.get("locktime"),
+            change_spk=change)
         # The transaction id is fixed before any signature is added, so the
         # watcher can recognise this reclaim on chain by its output 0 and call
         # the sale reclaimed rather than merely empty.
@@ -1277,6 +1317,36 @@ class Platform:
             "%s: %r is neither a 64-character asset id nor a label this node "
             "knows. The node lists the labels it has (dumpassetlabels)."
             % (what, text))
+
+    def dust_atoms(self, asset, spk_len=34):
+        """The smallest output of `asset` a node will relay, in atoms.
+
+        A node drops a transaction carrying an output worth less than what it
+        would cost to spend it -- three times over, since the rule is written
+        as the fee for the output plus a minimum spending input, at a fixed
+        rate. The rate is not something a node reports, so it is a deployment
+        setting here, defaulting to the node's own compiled-in figure of 100
+        reference units per kvB.
+
+        Returns None when the node cannot price the asset, which is the same
+        answer the fee floor gives: unknown, so do not refuse anything.
+        """
+        try:
+            rates = self.rpc.call("getfeeexchangerates") or {} if self.rpc else {}
+        except Exception:
+            return None
+        rate = _rate_for(rates, str(asset).lower(), self._labels())
+        if not rate:
+            return None
+        # An explicit Elements output: asset (33), value (9), nonce (1), the
+        # length byte, the program -- and the 67 bytes the rule adds for the
+        # input that would one day spend it.
+        size = 33 + 9 + 1 + 1 + int(spk_len) + 67
+        units = -(-DUST_RELAY_UNITS_PER_KVB * size // 1000)
+        return -(-units * 100_000_000 // int(rate))
+
+    def _treasury_spk_len(self, terms):
+        return len(terms.treasury_prog) // 2 + 2
 
     def check_fee_atoms(self, sale, fee_atoms, n_inputs, fee_asset, vsize=None,
                         kind="buy"):

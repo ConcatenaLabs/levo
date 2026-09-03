@@ -724,10 +724,14 @@ def cmd_rescue(args):
                     "asset": (out.get("asset") or "").lower(),
                     "value_atoms": atoms(out.get("value", 0)),
                     "script_pubkey": (out.get("scriptPubKey") or {}).get("hex")})
+    # Change from the fee inputs goes back to this wallet, never to --to: that
+    # address may be a cold wallet or a custodian that credits only the token.
+    change_spk = ADDR.to_script_pubkey(
+        node("getnewaddress", "levo-rescue-change"), args.hrp).hex()
     built = TXMOD.build_reclaim(sale, destination_spk=dest_spk, fee_inputs=ins,
                                 fee_atoms=fee_atoms, fee_asset=fee_asset,
                                 genesis_hash=node("getblockhash", 0),
-                                locktime=args.locktime)
+                                locktime=args.locktime, change_spk=change_spk)
     sig = S.schnorr_sign(bytes.fromhex(built["sighash"]), int(key, 16))
     if not S.schnorr_verify(bytes.fromhex(built["sighash"]), sig,
                             bytes.fromhex(terms.reclaim_xonly)):
@@ -795,6 +799,10 @@ def cmd_reclaim(args):
     ins, _ = unblinded_inputs(fee_asset, fee_atoms)
     r = api("POST", "/api/projects/%s/reclaim" % args.slug, {
         "destination_address": dest,
+        # Whatever the fee inputs bring above the fee comes back here, rather
+        # than following the tokens to --to, which may be a wallet that
+        # credits only the token.
+        "change_address": node("getnewaddress", "levo-reclaim-change"),
         "fee_inputs": ins, "fee_atoms": fee_atoms, "fee_asset": fee_asset}, tok)
 
     key = args.reclaim_key or os.environ.get("LEVO_RECLAIM_KEY")

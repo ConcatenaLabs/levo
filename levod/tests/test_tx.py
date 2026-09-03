@@ -240,8 +240,21 @@ def test_reclaim_builds_what_the_project_signs(t):
     s.confirm_lock("ab" * 32, 0, s.script_pubkey, 100_000 * 10**8, GOLD)
     fee_inputs = [{"txid": "cd" * 32, "vout": 1, "asset": USDX, "value_atoms": 5000,
                    "script_pubkey": "0014" + "cc" * 20}]
-    r = TX.build_reclaim(s, "5120" + "dd" * 32, fee_inputs, 1000, USDX, "ee" * 32)
+    try:
+        TX.build_reclaim(s, "5120" + "dd" * 32, fee_inputs, 1000, USDX, "ee" * 32)
+        t.ok(False, "fee-input change with nowhere to go is refused")
+    except TX.BuildError:
+        t.ok(True, "fee-input change with nowhere to go is refused")
+    r = TX.build_reclaim(s, "5120" + "dd" * 32, fee_inputs, 1000, USDX, "ee" * 32,
+                         change_spk="0014" + "ee" * 20)
     t.ok("signature" not in r, "levod signs nothing")
+    # The tokens go where the project said; the leftover of its fee input goes
+    # to its own change address, not along with them.
+    raw = r["unsigned_tx_hex"]
+    t.ok(("5120" + "dd" * 32) in raw, "the tokens go to the destination")
+    t.ok(("0014" + "ee" * 20) in raw, "the change goes to the change address")
+    t.eq(raw.count("5120" + "dd" * 32), 1,
+         "and the destination is paid exactly once")
     t.eq(r["signs_with"], xonly, "it names the key that must sign")
     t.eq(r["locktime"], 100, "the locktime is the close")
     t.eq(len(r["sighash"]), 64, "a 32-byte sighash")
@@ -255,13 +268,15 @@ def test_reclaim_builds_what_the_project_signs(t):
     finished = TX.set_witness(r["unsigned_tx_hex"], 0, stack)
     t.ok(len(finished) > len(r["unsigned_tx_hex"]), "and the witness fits into the transaction")
     try:
-        TX.build_reclaim(s, "5120" + "dd" * 32, fee_inputs, 1000, USDX, "ee" * 32, locktime=99)
+        TX.build_reclaim(s, "5120" + "dd" * 32, fee_inputs, 1000, USDX, "ee" * 32,
+                         locktime=99, change_spk="0014" + "ee" * 20)
         t.ok(False, "a locktime before the close is refused")
     except TX.BuildError:
         t.ok(True, "a locktime before the close is refused")
     s.locked_atoms = 0
     try:
-        TX.build_reclaim(s, "5120" + "dd" * 32, fee_inputs, 1000, USDX, "ee" * 32)
+        TX.build_reclaim(s, "5120" + "dd" * 32, fee_inputs, 1000, USDX, "ee" * 32,
+                         change_spk="0014" + "ee" * 20)
         t.ok(False, "an empty covenant has nothing to reclaim")
     except TX.BuildError:
         t.ok(True, "an empty covenant has nothing to reclaim")

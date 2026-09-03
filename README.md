@@ -305,6 +305,7 @@ reaches the box nowhere else.
 | `LEVOD_LINKS` | — | JSON of label to URL for the rest of the deployment (wallet, faucet, staking pools), shown on the site. |
 | `LEVOD_REGISTRY_URL` | — | An asset registry, read as `<url>/<asset id>`. A listing whose ticker or decimals contradict a registered contract is refused; an unregistered asset lists as it is. A registry that cannot be reached blocks nothing. |
 | `LEVOD_WATCH_SECONDS` | `60` | How often the watcher reconciles. |
+| `LEVOD_DUST_RELAY` | `100` | The node's dust rate, in reference units per kvB. A node will not relay an output worth less than this rate charges for it, and it does not report the figure, so it is set here. Levo refuses a sale whose smallest purchase would pay the treasury less than that, and a purchase that would. Match it to the node if it was built with another figure. |
 | `LEVOD_CHAIN_TTL` | `2` | Seconds the node's tip may be reused. Set it to 0 on a chain that mines on demand, where a block can arrive and be acted on in the same second. |
 | `LEVOD_AUTH_PER_MINUTE` / `LEVOD_WRITES_PER_MINUTE` / `LEVOD_READS_PER_MINUTE` | `30` / `120` / `600` | Per-client limits on signing in, on the calls that write, and on reads. Health is never limited. |
 | `LEVOD_VERBOSE` | — | Log every request, including successful health checks and asset fetches. |
