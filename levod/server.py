@@ -27,6 +27,7 @@ import signal
 import re
 import sys
 import threading
+import socket
 import time
 import traceback
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -46,6 +47,24 @@ import tiers as T         # noqa: E402
 import watcher as W       # noqa: E402
 
 MAX_BODY = 256 * 1024
+# The whole of one request -- its line, its headers and its body -- against one
+# wall clock. A socket timeout re-arms on every read, so on its own it bounds
+# nothing: a client that sends a byte every few seconds holds a handler slot
+# for as long as it likes.
+REQUEST_DEADLINE = float(os.environ.get("LEVOD_REQUEST_DEADLINE") or 20)
+
+
+def _int_env(name, default):
+    """A whole number from the environment, or the default. A setting that is
+    not a number is a typo, and reading it as zero would silently disarm
+    whatever it protects."""
+    raw = (os.environ.get(name) or "").strip()
+    if not raw:
+        return default
+    try:
+        return int(raw)
+    except ValueError:
+        return default
 # What /api/health will name, and how much of an error it will quote. A health
 # answer is a fixed-size fact about the service, not a report that grows with
 # the platform: whatever is watching it reads it every few seconds.
@@ -203,6 +222,14 @@ class App:
         # on the node while real visitors wait behind them.
         self.read_limit = RateLimit(per_minute=int(os.environ.get("LEVOD_READS_PER_MINUTE", "600")))
         self.handlers = threading.BoundedSemaphore(MAX_HANDLERS)
+        # How many of those slots ONE address may hold at once, when that
+        # address is not a proxy this Levo believes. Sixty-four sockets from a
+        # single client is what makes a slow-request attack cost a few bytes;
+        # a reverse proxy is exempt because every request behind it arrives
+        # from the same address, and capping it would cap the whole site.
+        self.per_peer = _int_env("LEVOD_PER_PEER", 8)
+        self._peers = {}
+        self._peers_lock = threading.Lock()
         # The reverse proxy in front of levod, whose X-Forwarded-For is worth
         # believing. Loopback by default, because that is where a proxy on the
         # same host connects from; set it empty when levod is exposed directly.
@@ -336,6 +363,43 @@ class App:
                        "proven you control.")
 
 
+class _Deadline:
+    """A request's own reads, against one wall-clock budget.
+
+    Everything the stdlib reads for a request goes through `rfile`, so setting
+    the socket's timeout to what is LEFT of the budget before each read makes
+    the budget total rather than per read. Anything else on the file object is
+    passed through untouched.
+    """
+
+    def __init__(self, rfile, sock, deadline):
+        self._rfile, self._sock, self._deadline = rfile, sock, deadline
+
+    def _arm(self):
+        left = self._deadline - time.monotonic()
+        if left <= 0:
+            raise socket.timeout("the request took longer than levod waits for one")
+        try:
+            self._sock.settimeout(min(left, 30))
+        except Exception:
+            pass
+
+    def read(self, *a, **k):
+        self._arm()
+        return self._rfile.read(*a, **k)
+
+    def readline(self, *a, **k):
+        self._arm()
+        return self._rfile.readline(*a, **k)
+
+    def peek(self, *a, **k):
+        self._arm()
+        return self._rfile.peek(*a, **k)
+
+    def __getattr__(self, name):
+        return getattr(self._rfile, name)
+
+
 class Handler(BaseHTTPRequestHandler):
     server_version = "levod"
     sys_version = ""
@@ -362,13 +426,14 @@ class Handler(BaseHTTPRequestHandler):
         actually looking at."""
         if self.app and self.app.origin:
             return self.app.origin
-        host = (self.headers.get("Host") or "").strip()[:100]
+        headers = getattr(self, "headers", None)
+        host = ((headers.get("Host") if headers else "") or "").strip()[:100]
         if not host or any(c in host for c in " \r\n"):
             return None
         proto = "http"
         peer = self.client_address[0] if self.client_address else "?"
         if self.app and peer in self.app.trusted_proxies:
-            proto = (self.headers.get("X-Forwarded-Proto") or "http").strip().lower()
+            proto = (headers.get("X-Forwarded-Proto") or "http").strip().lower()
             if proto not in ("http", "https"):
                 proto = "http"
         return "%s://%s" % (proto, host)
@@ -383,8 +448,13 @@ class Handler(BaseHTTPRequestHandler):
         as having no rate limit at all.
         """
         peer = self.client_address[0] if self.client_address else "?"
-        if self.app and peer in self.app.trusted_proxies:
-            fwd = self.headers.get("X-Forwarded-For")
+        # `headers` exists only once a request line has PARSED. This is called
+        # from the logger, which the stdlib calls while answering a malformed
+        # request -- and reading it there raised, so the client got no answer
+        # at all and the fault appeared as a traceback rather than a line.
+        headers = getattr(self, "headers", None)
+        if headers and self.app and peer in self.app.trusted_proxies:
+            fwd = headers.get("X-Forwarded-For")
             if fwd:
                 # The LAST entry, not the first. A proxy appends the address it
                 # received the connection from; everything to the left of that
@@ -393,6 +463,30 @@ class Handler(BaseHTTPRequestHandler):
                 # is the same as having no rate limit at all.
                 return fwd.split(",")[-1].strip()[:64]
         return peer
+
+    def _take_peer_slot(self):
+        """Whether this peer may hold another handler slot."""
+        app, peer = self.app, (self.client_address[0] if self.client_address else "?")
+        if not app or not app.per_peer or peer in app.trusted_proxies:
+            return True
+        with app._peers_lock:
+            if app._peers.get(peer, 0) >= app.per_peer:
+                return False
+            app._peers[peer] = app._peers.get(peer, 0) + 1
+        self._peer_held = peer
+        return True
+
+    def _drop_peer_slot(self):
+        peer = getattr(self, "_peer_held", None)
+        if not peer or not self.app:
+            return
+        self._peer_held = None
+        with self.app._peers_lock:
+            left = self.app._peers.get(peer, 1) - 1
+            if left > 0:
+                self.app._peers[peer] = left
+            else:
+                self.app._peers.pop(peer, None)
 
     def handle_one_request(self):
         # Wait for a byte before taking a slot.
@@ -413,8 +507,21 @@ class Handler(BaseHTTPRequestHandler):
         # the request is known here yet. BaseHTTPRequestHandler's reply helpers
         # all need a parsed request, so the refusal is written as bytes and the
         # connection closed.
+        if not self._take_peer_slot():
+            body = b'{"error": "too many connections from this address"}'
+            try:
+                self.wfile.write(b"HTTP/1.1 429 Too Many Requests\r\n"
+                                 b"Content-Type: application/json\r\n"
+                                 b"Content-Length: " + str(len(body)).encode() + b"\r\n"
+                                 b"Retry-After: 5\r\n"
+                                 b"Connection: close\r\n\r\n" + body)
+            except Exception:
+                pass
+            self.close_connection = True
+            return
         acquired = self.app.handlers.acquire(timeout=BUSY_WAIT_SECONDS) if self.app else True
         if not acquired:
+            self._drop_peer_slot()
             body = b'{"error": "levod is busy; try again in a moment"}'
             try:
                 self.wfile.write(b"HTTP/1.1 503 Service Unavailable\r\n"
@@ -427,10 +534,28 @@ class Handler(BaseHTTPRequestHandler):
             self.close_connection = True
             return
         try:
-            super().handle_one_request()
+            # One deadline for the whole request, head and body together.
+            #
+            # A socket timeout is per read, and it re-arms: a client sending
+            # one byte every few seconds never trips it, and holds a handler
+            # slot for as long as it cares to. This is the wall clock, and it
+            # is the only thing a dribbling client cannot outlast.
+            deadline = time.monotonic() + REQUEST_DEADLINE
+            plain, self.rfile = self.rfile, _Deadline(self.rfile, self.connection, deadline)
+            try:
+                super().handle_one_request()
+            except socket.timeout:
+                self.close_connection = True
+            finally:
+                self.rfile = plain
+                try:
+                    self.connection.settimeout(self.timeout)
+                except Exception:
+                    pass
         finally:
             if self.app:
                 self.app.handlers.release()
+            self._drop_peer_slot()
 
     # --- plumbing -----------------------------------------------------------
 
@@ -460,6 +585,28 @@ class Handler(BaseHTTPRequestHandler):
 
     def log_error(self, fmt, *args):
         pass                            # the request line is logged once, above
+
+    def send_error(self, code, message=None, explain=None):
+        """A refusal the stdlib raises before any handler runs -- a request
+        line that does not parse, a version this does not speak, a header block
+        too large -- answered the way everything else here is answered.
+
+        The default is an HTML page carrying the interpreter's own words, on a
+        server that speaks JSON and never otherwise says which Python it is.
+        """
+        body = json.dumps({"error": str(message or "bad request")}).encode()
+        try:
+            self.send_response(code, message)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Connection", "close")
+            self.send_header("X-Content-Type-Options", "nosniff")
+            self.end_headers()
+            if self.command != "HEAD":
+                self.wfile.write(body)
+        except Exception:
+            pass                        # the client is already gone
+        self.close_connection = True
 
     def _send(self, code, body, ctype, cache="no-store", headers=None):
         self.send_response(code)
