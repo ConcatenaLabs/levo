@@ -230,6 +230,7 @@ p { margin: 0 0 1rem; }
 }
 .copy:hover { color: var(--brass); border-color: var(--brass-dim); }
 .copy.did { color: var(--verdigris); border-color: var(--verdigris-dim); }
+.copy.failed { color: var(--alarm); border-color: var(--alarm); }
 
 :where(a, button, input, select, textarea):focus-visible {
   outline: 2px solid var(--brass-bright);

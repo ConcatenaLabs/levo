@@ -218,3 +218,35 @@ def test_the_ledger_is_indexed_by_transaction(t):
     q = _platform(d / "state.json")
     t.eq(q.projects["one"].sale.recorded_by("cd" * 32), "02" + "22" * 32,
          "and it is rebuilt when the state is read back")
+
+
+def test_a_listing_that_contradicts_the_registry_is_refused(t):
+    """Wallets read the registry. A sale that names its token otherwise would
+    show one ticker here and another everywhere else, and the price a buyer
+    typed would mean something different again."""
+    import registry as REG
+
+    class Entry:
+        def __init__(self, body): self.body = body
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+        def read(self): return json.dumps(self.body).encode()
+
+    registered = {"contract": {"ticker": "REAL", "name": "The Real Token",
+                               "precision": 2, "entity": {"domain": "example.test"}}}
+    answer = REG.look_up("https://registry.test", "aa" * 32,
+                         opener=lambda url, timeout=None: Entry(registered))
+    t.eq(answer.ticker, "REAL", "the registry's own ticker is read")
+    t.eq(REG.disagreement(answer, "REAL", 2), None, "a listing that agrees is fine")
+    t.ok("not FAKE" in (REG.disagreement(answer, "FAKE", 2) or ""),
+         "a different ticker is a disagreement")
+    t.ok("2 places, not 8" in (REG.disagreement(answer, "REAL", 8) or ""),
+         "and so is a different precision")
+
+    def unreachable(url, timeout=None):
+        raise OSError("no route to host")
+
+    quiet = REG.look_up("https://registry.test", "aa" * 32, opener=unreachable)
+    t.eq(quiet.checked, False, "a registry that cannot be reached checked nothing")
+    t.eq(REG.disagreement(quiet, "ANYTHING", 8), None,
+         "and blocks no listing, because a registry outage is not a project's fault")

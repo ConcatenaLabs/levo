@@ -88,7 +88,13 @@ floor: `{asset, vsize_estimate, min_atoms, suggested_atoms, rate_atoms_per_kvb}`
 `project`: `slug`, `name`, `ticker`, `decimals`, `summary`, `description`,
 `links`, and optionally `issuance_txid` -- the transaction that created the
 token, published as a link so a reader can look up whether the supply can grow.
-Levo does not check it, and says so on the page. `terms`: `token_asset`, `price_num`, `price_den`, `min_lot`,
+Levo does not check it, and says so on the page.
+
+Where the deployment reads an asset registry (`LEVOD_REGISTRY_URL`, published in
+`/api/config`), the token is looked up there when the listing is made. A listing
+whose ticker or decimals contradict a registered contract is refused, because a
+wallet reading the registry would show something else; an asset with no entry is
+listed as it is, and the sale page says which of the two it is. `terms`: `token_asset`, `price_num`, `price_den`, `min_lot`,
 `total_atoms`, `close_locktime`, `reclaim_xonly`, and the treasury as either
 `treasury_address` or `treasury_prog` (+ `treasury_ver`). The price is stored
 in lowest terms, so the response is what the address was derived from.

@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { api } from '../lib/api'
 import { useStore } from '../lib/store'
@@ -13,18 +13,40 @@ import Beam from '../components/Beam'
 // reload. Between the two nothing is investable, because a sale nobody has
 // funded is a promise rather than an offer.
 
+// Fourteen fields, some of them 64-character ids copied from elsewhere. Losing
+// them to a reload or a stray click is the difference between listing today and
+// listing tomorrow. Nothing here is secret: it is all about to be published.
+const DRAFT_KEY = 'levo.launch'
+
+function readDraft() {
+  try {
+    const raw = sessionStorage.getItem(DRAFT_KEY)
+    return raw ? JSON.parse(raw) : null
+  } catch { return null }
+}
+
+function writeDraft(value) {
+  try { sessionStorage.setItem(DRAFT_KEY, JSON.stringify(value)) } catch { /* private mode */ }
+}
+
+function clearDraft() {
+  try { sessionStorage.removeItem(DRAFT_KEY) } catch { /* private mode */ }
+}
+
 export default function Launch() {
   usePageTitle('Launch a project')
   const navigate = useNavigate()
   const { signedIn, standing, tiers, mayList, loading, payment, stake, config } = useStore()
-  const [form, setForm] = useState({
+  const [form, setForm] = useState(() => ({
     slug: '', name: '', ticker: '', summary: '', description: '', website: '',
     token_asset: '', decimals: '8', issuance_txid: '', treasury_address: '', reclaim_xonly: '',
     total: '', price: '', min_lot: '', close: '',
-  })
+    ...(readDraft() || {}),
+  }))
   const [error, setError] = useState(null)
   const [busy, setBusy] = useState(false)
   const [invalid, setInvalid] = useState({})
+  useEffect(() => { writeDraft(form) }, [form])
 
   const set = (k) => (e) => setForm({ ...form, [k]: e.target.value })
 
@@ -73,6 +95,7 @@ export default function Launch() {
         issuance_txid: form.issuance_txid.trim() || undefined,
       }
       const r = await api.createProject(project, terms)
+      clearDraft()
       navigate('/p/' + r.project.slug)
     } catch (err) {
       setError(capitalise(err.message))
@@ -232,6 +255,7 @@ export default function Launch() {
           <div className="field">
             <label htmlFor="close">Reclaim opens</label>
             <input id="close" type="date" value={form.close} onChange={set('close')}
+                   min={new Date(Date.now() + 86400000).toISOString().slice(0, 10)}
                    required aria-invalid={invalid.close || undefined} />
             <div className="hint">
               At the end of this day, UTC. From then on you can take back whatever did

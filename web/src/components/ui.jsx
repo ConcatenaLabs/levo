@@ -4,18 +4,27 @@ import { useEffect, useState } from 'react'
 // that screen readers announce, a hex value that wraps, and the page title.
 
 export function Copy({ value, label = 'Copy' }) {
-  const [did, setDid] = useState(false)
+  // Three states, because the clipboard can refuse: an insecure origin, a
+  // browser that asks, a permission the reader denied. Swallowing that left
+  // the button looking broken, on a page whose whole point is values you have
+  // to take somewhere else.
+  const [state, setState] = useState('')
   async function go() {
     try {
       await navigator.clipboard.writeText(String(value))
-      setDid(true)
-      setTimeout(() => setDid(false), 1500)
-    } catch {}
+      setState('did')
+    } catch {
+      setState('failed')
+    }
+    setTimeout(() => setState(''), 2500)
   }
   return (
-    <button type="button" className={'copy' + (did ? ' did' : '')} onClick={go}
-            aria-label={label + (did ? ', copied' : '')}>
-      {did ? 'Copied' : 'Copy'}
+    <button type="button" className={'copy' + (state ? ' ' + state : '')} onClick={go}
+            aria-label={label + (state === 'did' ? ', copied'
+              : state === 'failed' ? ', could not copy: select it and copy by hand' : '')}
+            title={state === 'failed' ? 'Your browser would not let the page copy this. '
+              + 'Select it and copy it by hand.' : undefined}>
+      {state === 'did' ? 'Copied' : state === 'failed' ? 'Copy failed' : 'Copy'}
     </button>
   )
 }

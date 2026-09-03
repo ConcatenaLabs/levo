@@ -21,6 +21,7 @@ from urllib.parse import urlparse
 
 import address as ADDR
 import covenant as C
+import registry as REG
 import rpc as RPCMOD
 import sale as S
 import tx as TX
@@ -166,6 +167,10 @@ class Project:
         # and Levo has no power over it.
         self.hidden = False
         self.notice = None
+        # What a registry said about this project's token when it was listed.
+        # An empty answer means nothing was asked, which is not the same as an
+        # asset that is not registered.
+        self.registry = {}
 
     def update(self, meta):
         """Change what a project says about itself. The terms and the page
@@ -207,6 +212,7 @@ class Project:
             "links": dict(self.links),
             "decimals": self.decimals,
             "issuance_txid": self.issuance_txid,
+            "registry": dict(self.registry or {}),
             "created_at": self.created_at,
             "hidden": self.hidden,
             "notice": self.notice,
@@ -217,7 +223,8 @@ class Project:
 class Platform:
     def __init__(self, store, stake_reader, rails=None, rpc=None, hrp="tb",
                  payment_asset=None, payment_label=None, stake_label="SEQ",
-                 on_stale=None, operators=(), payment_decimals=8):
+                 on_stale=None, operators=(), payment_decimals=8,
+                 registry_url=None):
         self.store = store
         self.stake = stake_reader
         self.rails = rails
@@ -237,6 +244,12 @@ class Platform:
         # default: nobody has that power unless the operator grants it to a
         # named key.
         self.operators = {str(a).lower() for a in (operators or ()) if a}
+        # A registry maps asset ids to the contracts committed at their
+        # issuance. Levo asks one, when it has one, to check what a project
+        # says about its own token -- and never to decide whether a token may
+        # be sold: an unregistered asset is an ordinary asset, and a registry
+        # that is down must not stop a listing.
+        self.registry_url = registry_url
         # Called when a purchase or lock changes what the chain holds, so the
         # watcher can look now rather than at its next interval.
         self.on_stale = on_stale or (lambda: None)
@@ -283,6 +296,7 @@ class Platform:
                         issuance_txid=d.get("issuance_txid"))
             p.hidden = bool(d.get("hidden"))
             p.notice = d.get("notice")
+            p.registry = dict(d.get("registry") or {})
             sd = d.get("sale")
             if sd:
                 terms = C.SaleTerms.from_json(sd["terms"])
@@ -419,6 +433,16 @@ class Platform:
                     meta.get("description"), account, meta.get("links"),
                     decimals=meta.get("decimals", 8),
                     issuance_txid=meta.get("issuance_txid"))
+        # What the registry says this asset is. A listing that contradicts a
+        # registered contract is refused: wallets read the registry, so the
+        # sale would show one name and every wallet another, and the price the
+        # buyer typed would mean something else again.
+        token_asset = str(terms_json.get("token_asset") or "").lower()
+        answer = REG.look_up(self.registry_url, token_asset)
+        clash = REG.disagreement(answer, p.ticker, p.decimals)
+        if clash:
+            raise PlatformError(clash)
+        p.registry = answer.to_json()
         terms_json = dict(terms_json)
         for k in ("token_asset", "price_num", "price_den", "min_lot",
                   "close_locktime", "reclaim_xonly", "total_atoms"):

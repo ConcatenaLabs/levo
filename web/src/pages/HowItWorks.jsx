@@ -29,7 +29,7 @@ export default function HowItWorks() {
         <strong>To buy:</strong> a Levo account, which is a key you can sign with
         {wallet ? <> (<a href={wallet} target="_blank" rel="noopener noreferrer">a wallet</a>, or any wallet that signs messages)</> : ' (a browser extension, or any wallet that signs messages)'};
         staked Sequence under a key you can prove you control, at or above the first
-        tier; and unblinded {payment.label} to pay with -- unblinded meaning the
+        tier; and unblinded {payment.label} to pay with — unblinded meaning the
         amount is written on the chain in the clear, which is how Sequentia pays
         by default{config.testnet && faucet ? <> (on the testnet, <a href={faucet} target="_blank" rel="noopener noreferrer">the faucet</a> hands both out)</> : ''}.
         A browser extension that can sign a transaction a website built does the
@@ -174,7 +174,7 @@ export default function HowItWorks() {
         <span className="mono">levo</span> is a command-line client for everything
         on this site: it lists sales, rebuilds a sale address from its terms and
         compares it with the chain, and drives a purchase, a lock or a reclaim
-        against your own Sequentia node. It holds no keys of its own -- your node's
+        against your own Sequentia node. It holds no keys of its own — your node's
         wallet signs, on your machine.
         {source ? <> It lives in <a href={source} target="_blank" rel="noopener noreferrer">
           the Levo repository</a> at <span className="mono">bin/levo</span>.</> : null}
