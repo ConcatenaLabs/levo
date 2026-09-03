@@ -25,6 +25,8 @@ never sends a key anywhere: signing happens in your own wallet, locally.
 
 Environment:
     LEVO_URL            the levod to talk to (default http://127.0.0.1:8099)
+    LEVO_SESSION        where to keep the signed-in session
+                        (default ~/.levo-session)
     SEQUENTIA_CLI       the node's CLI binary (default sequentia-cli on PATH)
     SEQUENTIA_DATADIR   passed as -datadir, for a node in a non-default place
     SEQUENTIA_WALLET    passed as -rpcwallet, when several wallets are loaded
@@ -62,7 +64,11 @@ LEVO_URL = os.environ.get("LEVO_URL", "http://127.0.0.1:8099").rstrip("/")
 CLI = os.environ.get("SEQUENTIA_CLI", "sequentia-cli")
 DATADIR = os.environ.get("SEQUENTIA_DATADIR", "")
 WALLET = os.environ.get("SEQUENTIA_WALLET", "")
-SESSION_FILE = Path(os.path.expanduser("~/.levo-session"))
+# Where the signed-in session is kept. One file, which remembers which levod it
+# belongs to; LEVO_SESSION moves it, for a machine where several people or
+# several deployments share an account.
+SESSION_FILE = Path(os.path.expanduser(
+    os.environ.get("LEVO_SESSION") or "~/.levo-session"))
 
 
 class Fail(SystemExit):
@@ -481,6 +487,44 @@ def cmd_create(args):
                                    r["project"]["sale"]["terms"]["price_den"]))
 
 
+def _send_explicit(address, atoms_, asset, fee_asset):
+    """Send an amount of an asset, leaving every output explicit.
+
+    `sendtoaddress` blinds the change when the destination is not one of the
+    wallet's own addresses -- and a sale address never is. The issuer's
+    remaining balance then commits to its value instead of stating one, and a
+    covenant cannot read it: the very next thing they try to do with those
+    funds, buying from their own sale or paying a reclaim's fee, fails with
+    "not enough UNBLINDED".
+
+    Funding the transaction with a change address per asset keeps the whole
+    thing explicit. The amount is formatted from atoms without a float in the
+    middle: a float carries fifteen digits, an allocation can need more, and
+    sending a different number of atoms than the sale published would strand
+    the tokens at the address as an amount the covenant refuses.
+    """
+    raw = node("createrawtransaction", [], [{address: _units(atoms_), "asset": asset}])
+    change = {a: node("getnewaddress") for a in {asset, fee_asset}}
+    try:
+        funded = node("fundrawtransaction", raw,
+                      {"fee_asset": fee_asset, "changeAddress": change})
+    except Fail as e:
+        # An older node, or one that will not take a change address per asset.
+        # Send it the ordinary way and say what that costs.
+        print("note: this node would not fund the transaction with explicit "
+              "change (%s), so the send is being made the ordinary way and "
+              "your change will be confidential. Send it to one of your own "
+              "addresses afterwards to get an explicit output back." % e)
+        txid = node("sendtoaddress", address=address, amount=_units(atoms_),
+                    assetlabel=asset, fee_asset_label=fee_asset)
+        return txid, node("gettransaction", txid)["hex"]
+    signed = node("signrawtransactionwithwallet", funded["hex"])
+    if not signed.get("complete"):
+        raise Fail("your wallet could not sign the funding transaction: %s"
+                   % signed.get("errors"))
+    return node("sendrawtransaction", signed["hex"]), signed["hex"]
+
+
 def cmd_lock(args):
     tok = sign_in()
     p = api("GET", "/api/projects/%s" % args.slug)
@@ -495,14 +539,9 @@ def cmd_lock(args):
         txid, vout = args.txid, args.vout
     else:
         print("sending %s of %s to %s" % (U.fmt(amount), sale["terms"]["token_asset"], addr))
-        # Atoms to a decimal string WITHOUT a float in the middle: a float
-        # carries 15 digits and an allocation can need more, so "%.8f" would
-        # send a different number of atoms than the sale published and strand
-        # the tokens at the address as an amount the covenant refuses.
-        txid = node("sendtoaddress", address=addr, amount=_units(amount),
-                    assetlabel=args.asset_label or sale["terms"]["token_asset"],
-                    fee_asset_label=fee_asset)
-        raw = node("getrawtransaction", txid, 1)
+        txid, hexed = _send_explicit(
+            addr, amount, args.asset_label or sale["terms"]["token_asset"], fee_asset)
+        raw = node("decoderawtransaction", hexed)
         vout = next((o["n"] for o in raw["vout"]
                      if o.get("scriptPubKey", {}).get("hex") == sale["script_pubkey"]), None)
         if vout is None:

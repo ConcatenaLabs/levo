@@ -173,6 +173,7 @@ bin/levo buy helios-grid --tokens 40                 # picks unblinded inputs, b
 | Variable | Meaning |
 |---|---|
 | `LEVO_URL` | The levod to talk to. Default `http://127.0.0.1:8099`. |
+| `LEVO_SESSION` | Where the signed-in session is kept. Default `~/.levo-session`. |
 | `SEQUENTIA_CLI` | The node's CLI binary. Default `sequentia-cli` on `PATH`. |
 | `SEQUENTIA_DATADIR` | Passed as `-datadir`, for a node in a non-default place. |
 | `SEQUENTIA_WALLET` | Passed as `-rpcwallet`, when several wallets are loaded. |
@@ -197,6 +198,7 @@ python3 levod/tests/run.py        # crypto, covenant, tiers, transactions, watch
 python3 levod/tests/test_e2e.py   # the API end to end, against a stub node
 python3 levod/tests/test_node.py  # the whole life of a sale against a real sequentiad; skipped without one
 python3 levod/tests/test_render.py # every page, in a real browser; skipped without a chromium
+python3 levod/tests/test_cli.py   # bin/levo end to end against a real node; skipped without one
 npm --prefix web test             # formatting, the beam's geometry, bech32
 npm --prefix web run build        # the frontend gate
 ```
@@ -216,6 +218,11 @@ Chromium, failing on a console error or a page that painted nothing. It is
 there because every other test reads code or talks to the API: a change can
 leave the bundle building and the routes answering and still ship a white
 screen.
+
+The CLI test starts a node and a levod and drives `bin/levo` as a person would:
+sign in, list, lock, verify, price, buy, and reclaim after the close. The CLI
+has its own input handling, its own unit conversions and its own wallet calls,
+and nothing else here executes a line of it.
 
 No CI and no framework. Those commands are the whole gate.
 
@@ -289,6 +296,7 @@ reaches the box nowhere else.
 | `LEVOD_EXPLORER_URL` | — | An esplora-style explorer base (`.../tx/`, `.../address/`, `.../asset/`), for links. |
 | `LEVOD_LINKS` | — | JSON of label to URL for the rest of the deployment (wallet, faucet, staking pools), shown on the site. |
 | `LEVOD_WATCH_SECONDS` | `60` | How often the watcher reconciles. |
+| `LEVOD_CHAIN_TTL` | `2` | Seconds the node's tip may be reused. Set it to 0 on a chain that mines on demand, where a block can arrive and be acted on in the same second. |
 | `LEVOD_AUTH_PER_MINUTE` / `LEVOD_WRITES_PER_MINUTE` / `LEVOD_READS_PER_MINUTE` | `30` / `120` / `600` | Per-client limits on signing in, on the calls that write, and on reads. Health is never limited. |
 | `LEVOD_VERBOSE` | — | Log every request, including successful health checks and asset fetches. |
 | `LEVOD_CHAIN` | — | What to call the chain when the node cannot be asked. levod asks the node and keeps asking until it answers, so this is only a fallback. |
