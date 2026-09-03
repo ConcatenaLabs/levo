@@ -1,0 +1,17 @@
+[
+ {
+  "treasury_prog": "4f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa",
+  "treasury_ver": 1,
+  "script_pubkey": "51204f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa"
+ },
+ {
+  "treasury_prog": "cccccccccccccccccccccccccccccccccccccccc",
+  "treasury_ver": 0,
+  "script_pubkey": "0014cccccccccccccccccccccccccccccccccccccccc"
+ },
+ {
+  "treasury_prog": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+  "treasury_ver": 0,
+  "script_pubkey": "0020dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+ }
+]
