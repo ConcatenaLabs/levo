@@ -13,6 +13,18 @@ export function big(v) {
   return /^-?\d+$/.test(s) ? BigInt(s) : 0n
 }
 
+// Is this atom count more than nothing?
+//
+// The reason this is a function rather than `x > 0` at each site: an atom count
+// arrives as a decimal STRING, and the string "0" is truthy in JavaScript. A
+// plain `atoms ? a : b` therefore takes the wrong branch on exactly the value
+// it was written to catch, which is how a tier that cannot buy came to be
+// described as buying "up to 0". Every decision about an amount goes through
+// here, so the string never gets a vote.
+export function positive(v) {
+  return big(v) > 0n
+}
+
 // Exact formatting of an atom count in the asset's own units, thousands
 // grouped, trailing zeros dropped, at most `maxFrac` decimals shown.
 export function amount(atoms, decimals = 8, maxFrac = 8) {

@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { useParams, Link } from 'react-router-dom'
 import { api } from '../lib/api'
 import { useStore } from '../lib/store'
-import { amount, capitalise, closeIn, closeLabel, compact, priceLabel, prose, shortHex, timeLabel, treasurySpk } from '../lib/format'
+import { amount, capitalise, closeIn, closeLabel, compact, positive, priceLabel, prose, shortHex, timeLabel, treasurySpk } from '../lib/format'
 import { addressOf } from '../lib/bech32'
 import { Copy, Hex, Notice, usePageTitle } from '../components/ui'
 import SignIn from '../components/SignIn'
@@ -140,7 +140,7 @@ function BuyPanel({ project, onBought }) {
   }
 
   const tier = standing.tier
-  const canInvest = tier.cap_atoms > 0
+  const canInvest = positive(tier.cap_atoms)
   const first = tiers && tiers.tiers.length > 1 ? tiers.tiers[1] : null
 
   return (
@@ -307,7 +307,7 @@ function LedgerPanel({ project }) {
       {page && page.purchases.length === 0 && (
         <p className="small dim" style={{ marginBottom: 0 }}>
           Nothing recorded yet.{' '}
-          {project.sale && project.sale.sold_atoms > 0
+          {project.sale && positive(project.sale.sold_atoms)
             ? 'The chain says some of this sale has sold, so those purchases were made without Levo.'
             : ''}
         </p>
@@ -568,9 +568,9 @@ export default function ProjectDetail() {
                       <tr><th>Internal key</th>
                           <td className="prose">{prose(project.verify.internal_key)}</td></tr>
                       {sale.funding && (
-                        <tr><th>{sale.sold_atoms > 0 ? 'Resting at' : 'Locked at'}</th>
+                        <tr><th>{positive(sale.sold_atoms) ? 'Resting at' : 'Locked at'}</th>
                             <td><Hex value={sale.funding.txid + ':' + sale.funding.vout} href={explorer('tx', sale.funding.txid)} label="outpoint" />
-                              {sale.sold_atoms > 0 && (
+                              {positive(sale.sold_atoms) && (
                                 <div className="dim small prose">
                                   a partial buy re-rests what is left at the same address,
                                   so this is where the covenant sits now, not where it was funded
@@ -627,10 +627,10 @@ export default function ProjectDetail() {
           ) : (
             <BuyPanel project={project} onBought={load} />
           )}
-          {issuer && sale && (sale.status === 'closed') && sale.locked_atoms > 0 && (
+          {issuer && sale && (sale.status === 'closed') && positive(sale.locked_atoms) && (
             <Reclaim project={project} />
           )}
-          {sale && sale.terms.total_atoms && (
+          {sale && positive(sale.terms.total_atoms) && (
             <div className="card" style={{ marginTop: '1rem' }}>
               <div className="kv"><span>Sold</span><b>{amount(sale.sold_atoms, d)} {project.ticker}</b></div>
               <div className="kv"><span>Still locked</span><b>{amount(sale.locked_atoms, d)} {project.ticker}</b></div>

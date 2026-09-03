@@ -3,7 +3,7 @@ import { api } from '../lib/api'
 import { hasProvider, getUtxos, getAddress, broadcastHex, signPset, broadcastPset,
          supportsPset, friendly } from '../lib/wallet'
 import { useStore } from '../lib/store'
-import { amount, atomsArg, big, capitalise, plain, shortHex, timeLabel, toAtoms, treasurySpk } from '../lib/format'
+import { amount, atomsArg, big, capitalise, plain, positive, shortHex, timeLabel, toAtoms, treasurySpk } from '../lib/format'
 import { outputsOf } from '../lib/eltx'
 import { scriptForAddress } from '../lib/bech32'
 import { Copy, Hex, Notice } from './ui'
@@ -193,7 +193,7 @@ export default function BuyFlow({ project, tier, onSettled }) {
       const p = await api.buy(project.slug, { token_atoms: atomsArg(atoms), rail })
       setPlan(p)
       setNow(Date.now() / 1000)
-      if (!funding.fee && p.fee && p.fee.suggested_atoms) {
+      if (!funding.fee && p.fee && positive(p.fee.suggested_atoms)) {
         setFunding((f) => ({ ...f, fee: amount(p.fee.suggested_atoms, payment.decimals) }))
       }
     } catch (e) { fail(e) } finally { setBusy(false) }
@@ -545,10 +545,10 @@ export default function BuyFlow({ project, tier, onSettled }) {
               <input id="fee" className="mono" inputMode="decimal" value={funding.fee} required
                      aria-describedby="fee-hint"
                      onChange={(e) => setFunding({ ...funding, fee: e.target.value })}
-                     placeholder={plan.fee && plan.fee.suggested_atoms
+                     placeholder={plan.fee && positive(plan.fee.suggested_atoms)
                        ? amount(plan.fee.suggested_atoms, payment.decimals) : ''} />
               <div className="hint" id="fee-hint">
-                {plan.fee && plan.fee.min_atoms ? (
+                {plan.fee && positive(plan.fee.min_atoms) ? (
                   <>
                     This node relays a transaction of about {plan.fee.vsize_estimate} vB for{' '}
                     {amount(plan.fee.min_atoms, payment.decimals)} {label} or more.

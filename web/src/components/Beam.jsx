@@ -1,4 +1,4 @@
-import { big, compact } from '../lib/format'
+import { big, compact, positive } from '../lib/format'
 import { xFor, yFor } from '../lib/beam'
 
 // Levo's one drawing: the rule itself, plotted.
@@ -23,8 +23,10 @@ export default function Beam({ tiers, stakeAtoms = 0, compactMode = false, showM
   const H = compactMode ? 104 : 168
   const padB = compactMode ? 14 : 18
   const padT = compactMode ? 20 : 30
-  const stops = tiers.map((t) => Number(t.min_stake_atoms))
-  const caps = tiers.map((t) => Number(t.cap_atoms))
+  // geometry: a log scale needs doubles, and a pixel does not care about
+  // the last atom. Every decision drawn on top of these is made exactly.
+  const stops = tiers.map((t) => Number(t.min_stake_atoms))  // geometry
+  const caps = tiers.map((t) => Number(t.cap_atoms))  // geometry
   const maxCap = Math.max(...caps, 1)
 
   const seg = W / tiers.length
@@ -36,7 +38,11 @@ export default function Beam({ tiers, stakeAtoms = 0, compactMode = false, showM
   // Keep the marker inside the drawing: a zero stake sits at the very edge,
   // and half a dot is not a position.
   const mx = Math.min(W - 6, Math.max(6, xFor(stake, stops) * W))
-  const reachedIndex = steps.reduce((acc, s, i) => (stake >= stops[i] ? i : acc), 0)
+  // Which tier the reader has reached is a claim, not a pixel, so it is decided
+  // on the exact atom counts rather than on the floats the drawing uses. Every
+  // label below reads its state from this one index for the same reason.
+  const reachedIndex = tiers.reduce(
+    (acc, t, i) => (big(stakeAtoms) >= big(t.min_stake_atoms) ? i : acc), 0)
   const my = steps[reachedIndex].y
 
   const path = steps.map((s, i) =>
@@ -46,11 +52,11 @@ export default function Beam({ tiers, stakeAtoms = 0, compactMode = false, showM
   // where they stand on it. A tier with no cap cannot buy, which is a
   // different fact from a cap of zero.
   const label = 'Per-sale cap by amount staked. ' + tiers.map((t) => {
-    const from = Number(t.min_stake_atoms) > 0
+    const from = positive(t.min_stake_atoms)
       ? 'from ' + compact(t.min_stake_atoms, stakeDecimals) + ' ' + stakeLabel + ' staked'
       : 'below the first threshold'
     return t.name + ', ' + from + ', ' +
-      (Number(t.cap_atoms) > 0
+      (positive(t.cap_atoms)
         ? 'up to ' + compact(t.cap_atoms, paymentDecimals) + ' ' + paymentLabel + ' per sale'
         : 'cannot buy') +
       (t.may_list ? ', and may list a project' : '')
@@ -121,10 +127,10 @@ export default function Beam({ tiers, stakeAtoms = 0, compactMode = false, showM
       <div className="beam-labels" aria-hidden="true">
         {tiers.map((t, i) => (
           <div key={t.level}
-               className={'beam-label' + (stake >= Number(t.min_stake_atoms) ? ' reached' : '')}
+               className={'beam-label' + (i <= reachedIndex ? ' reached' : '')}
                style={{ left: (i / tiers.length) * 100 + '%' }}>
             <b>{t.name}</b>
-            <span>{Number(t.min_stake_atoms) === 0 ? 'no stake'
+            <span>{!positive(t.min_stake_atoms) ? 'no stake'
                                                    : compact(t.min_stake_atoms, stakeDecimals) + ' ' + stakeLabel}</span>
           </div>
         ))}
@@ -133,14 +139,14 @@ export default function Beam({ tiers, stakeAtoms = 0, compactMode = false, showM
           screen (four of them in 320px overprint each other) and the figures
           are what the panel is for. */}
       <ul className="beam-list" aria-hidden="true">
-        {tiers.map((t) => (
-          <li key={t.level} className={stake >= Number(t.min_stake_atoms) ? 'reached' : ''}>
+        {tiers.map((t, i) => (
+          <li key={t.level} className={i <= reachedIndex ? 'reached' : ''}>
             <b>{t.name}</b>
             <span>
-              {Number(t.min_stake_atoms) === 0
+              {!positive(t.min_stake_atoms)
                 ? 'no stake'
                 : compact(t.min_stake_atoms, stakeDecimals) + ' ' + stakeLabel}
-              {big(t.cap_atoms) > 0n
+              {positive(t.cap_atoms)
                 ? ' · up to ' + compact(t.cap_atoms, paymentDecimals) + ' ' + paymentLabel
                 : ''}
             </span>

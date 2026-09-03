@@ -1,7 +1,7 @@
 import { Link } from 'react-router-dom'
 import { useStore } from '../lib/store'
 import { usePageTitle } from '../components/ui'
-import { amount, big, compact } from '../lib/format'
+import { amount, big, compact, positive } from '../lib/format'
 
 export default function HowItWorks() {
   usePageTitle('How it works')
@@ -85,7 +85,7 @@ export default function HowItWorks() {
                 <td>
                   {big(t.min_stake_atoms) === 0n ? 'no stake' : compact(t.min_stake_atoms) + ' ' + stake.label + ' staked'}
                   <div className="dim small prose">
-                    {t.cap_atoms ? 'up to ' + amount(t.cap_atoms, payment.decimals) + ' ' + payment.label + ' per sale' : 'cannot buy'}
+                    {positive(t.cap_atoms) ? 'up to ' + amount(t.cap_atoms, payment.decimals) + ' ' + payment.label + ' per sale' : 'cannot buy'}
                     {t.may_list ? ' · may list a project' : ''}
                   </div>
                 </td>
@@ -97,7 +97,9 @@ export default function HowItWorks() {
       <p style={{ marginTop: '1.25rem' }}>
         {config.first_tier_is_chain_floor
           ? 'The first tier begins at ' + floor + ' ' + stake.label + ' because that is the chain\'s own blocksigner floor. Below it, consensus ignores a staker\'s weight entirely. Levo did not invent a threshold; it borrowed the one already being enforced.'
-          : 'The first tier begins at ' + compact(firstAtoms) + ' ' + stake.label + ' on this deployment. The chain\'s own blocksigner floor is ' + floor + ' ' + stake.label + ', below which consensus ignores a staker\'s weight entirely.'}
+          : config.staking_floor_from_chain
+            ? 'The first tier begins at ' + compact(firstAtoms) + ' ' + stake.label + ' on this deployment. The chain\'s own blocksigner floor, read from the node Levo watches, is ' + floor + ' ' + stake.label + ', below which consensus ignores a staker\'s weight entirely.'
+            : 'The first tier begins at ' + compact(firstAtoms) + ' ' + stake.label + ' on this deployment. Levo could not read the chain\'s blocksigner floor from its node, so the ' + floor + ' ' + stake.label + ' it quotes for that floor is configured rather than checked.'}
         {' '}The thresholds are Levo's configuration; the stake behind each key is read
         from the chain.
       </p>
