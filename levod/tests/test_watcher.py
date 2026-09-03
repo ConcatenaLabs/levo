@@ -19,6 +19,7 @@ import watcher as W  # noqa: E402
 USDX = "2a515539da5e6a60caa7766ecd65bac0c10d15717ddd2088844ba58f4d04b9de"
 GOLD = "3a0f9192219db59f8d7f87d93ac6311095dfe1255d149727b87baaa7d2cc71a1"
 TOTAL = 1000 * 10**8
+STRAY_ROUND = W.STRAY_SCAN_EVERY
 
 
 class FakeRPC:
@@ -981,3 +982,70 @@ def test_a_poll_asks_the_chain_for_each_block_once(t):
          Counting.hashes)
     t.ok(Counting.headers <= 1, "and reads the tip's header once", Counting.headers)
     t.eq([p.sale.status for p in sales.values()], [S.LIVE] * 6, "every sale is live")
+
+
+def test_adopting_one_hint_does_not_throw_away_another(t):
+    """Two buys can be in flight at once. The watcher used to clear the whole
+    hint list when it adopted one, so the second buyer's remainder had to wait
+    for a block and a scan -- and the poll's own save persisted the loss."""
+    s = _sale()
+    rpc = FakeRPC()
+    rpc.blocks[95] = "block-95"
+    rpc.txouts[("ab" * 32, 0)] = {"value": TOTAL / 1e8, "confirmations": 6}
+    _watch(s, rpc).poll()
+    del rpc.txouts[("ab" * 32, 0)]
+    s.expect_remainder_at("ee" * 32)
+    s.expect_remainder_at("ff" * 32)
+    rpc.txouts[("ee" * 32, 1)] = {"value": 600.0, "asset": GOLD,
+                                  "scriptPubKey": {"hex": s.script_pubkey}}
+    rpc.txs["ee" * 32] = {"txid": "ee" * 32, "vin": [{"txid": "ab" * 32, "vout": 0}]}
+    _watch(s, rpc).poll()
+    t.eq(s.funding["txid"], "ee" * 32, "the sale follows the hint it could use")
+    t.eq([c["txid"] for c in s.candidates], ["ff" * 32],
+         "and the other buyer's hint is still there")
+
+
+def test_a_closed_sale_is_looked_at_again(t):
+    """A closed, emptied sale can still receive: a stray, or tokens sent after
+    the close. Short-circuiting it for ever meant nothing would ever see them,
+    on any screen, and the project could not reclaim through Levo."""
+    s = _sale()
+    s.terms.close_locktime = 90
+    rpc = FakeRPC()
+    rpc.blocks[95] = "block-95"
+    rpc.txouts[("ab" * 32, 0)] = {"value": TOTAL / 1e8, "confirmations": 6}
+    _watch(s, rpc).poll()
+    del rpc.txouts[("ab" * 32, 0)]
+    _settle(s, rpc)
+    t.eq(s.status, S.CLOSED, "closed and empty")
+    # Tokens arrive at the address afterwards.
+    rpc.unspents = [{"txid": "cc" * 32, "vout": 0, "scriptPubKey": s.script_pubkey,
+                     "amount": 40.0, "asset": GOLD, "height": 96}]
+    w = _watch(s, rpc)
+    w._round = STRAY_ROUND - 1
+    w.poll()
+    t.eq(s.funding["txid"], "cc" * 32, "the sale finds what arrived")
+    t.eq(s.locked_atoms, 40 * 10**8, "and holds it, so it can be reclaimed")
+
+
+def test_a_hint_below_the_minimum_lot_is_not_adopted(t):
+    """The covenant refuses to leave less than the minimum lot resting, so an
+    output that size at the sale address did not come from a buy -- and resting
+    the sale on it means every later purchase is refused for being under the
+    floor. The boundary is the test: one atom below is not the sale, exactly at
+    the floor is."""
+    for atoms, adopted in ((10 * 10**8 - 1, False), (10 * 10**8, True)):
+        s = _sale()
+        rpc = FakeRPC()
+        rpc.blocks[95] = "block-95"
+        rpc.txouts[("ab" * 32, 0)] = {"value": TOTAL / 1e8, "confirmations": 6}
+        _watch(s, rpc).poll()
+        del rpc.txouts[("ab" * 32, 0)]
+        s.expect_remainder_at("ee" * 32)
+        rpc.txouts[("ee" * 32, 1)] = {"value": atoms / 1e8, "asset": GOLD,
+                                      "scriptPubKey": {"hex": s.script_pubkey}}
+        rpc.txs["ee" * 32] = {"txid": "ee" * 32, "vin": [{"txid": "ab" * 32, "vout": 0}]}
+        _watch(s, rpc).poll()
+        took = s.funding is not None and s.funding.get("txid") == "ee" * 32
+        t.eq(took, adopted,
+             "a hint of %d atoms is %s" % (atoms, "adopted" if adopted else "left alone"))

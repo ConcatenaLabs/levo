@@ -336,3 +336,24 @@ def test_signing_in_with_a_linked_key_moves_it(t):
     t.eq(links.owner_of("02" + "aa" * 32), "02" + "aa" * 32, "and the key moved")
     t.eq(links.dirty, True, "which is flagged for saving")
     t.eq(r.standing("02" + "bb" * 32)["stake_atoms"], 0, "so X no longer has it")
+
+
+def test_an_offer_never_buys_more_than_it_offered(t):
+    """Offering an amount to spend converts to tokens by rounding DOWN.
+
+    The covenant charges the CEILING of the price, so rounding the other way
+    quotes a purchase costing more than was offered, and the buyer is then told
+    their own funds are short of the number they just typed. Prices that do not
+    divide evenly are where the two roundings disagree.
+    """
+    top = T.TierPolicy().tiers[-1]
+    for num, den in ((3, 2), (7, 3), (1, 4), (5, 5)):
+        s = _sale(price_num=num, min_lot=1)
+        s.terms.price_num, s.terms.price_den = num, den
+        for offer in (100, 1000, 12345, 10 ** 8):
+            plan = s.plan_buy("buyer-%d-%d-%d" % (num, den, offer), top,
+                              payment_atoms=offer, height=1)
+            cost = s.terms.cost_for(plan.token_atoms)
+            t.ok(cost <= offer,
+                 "a %d/%d sale never charges more than the %d offered" % (num, den, offer),
+                 "%d tokens cost %d" % (plan.token_atoms, cost))

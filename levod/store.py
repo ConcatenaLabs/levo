@@ -98,13 +98,17 @@ class Store:
         self.data.setdefault("projects", {})
         self.data.setdefault("stake_links", {})
 
-    def snapshot(self):
-        """The bytes to write, made while the caller still holds its lock.
+    def snapshot(self, data=None):
+        """The bytes to write.
 
-        Serialising is the part that has to see a state nobody is changing;
-        writing is not, and it is the slow half.
+        Compact, not pretty. Indenting a state file with a large allocation
+        ledger costs about five times the CPU and two thirds again the bytes,
+        on every purchase, for a file whose readers are this program and
+        `json.load`. `sort_keys` stays: it makes two saves of the same state
+        the same bytes, which is what makes a backup worth diffing.
         """
-        return json.dumps(self.data, indent=2, sort_keys=True).encode()
+        return json.dumps(self.data if data is None else data,
+                          separators=(",", ":"), sort_keys=True).encode()
 
     def write(self, payload):
         """Put an already-serialised state on disk, atomically."""

@@ -66,10 +66,11 @@ class Tier:
         }
 
 
-# Cap figures are payment-asset atoms, per sale. The defaults below are
-# written in whole units of an asset with eight places, which is what Elements
-# issues by default; a deployment whose payment asset divides differently sets
-# its own table with LEVOD_TIERS, whose `cap` is in whole units either way.
+# The defaults below are written in whole units of an asset with eight places,
+# which is what Elements issues by default. A `cap` in LEVOD_TIERS is in whole
+# units too, and is converted at the deployment's own precision -- reading it
+# at eight places on a two-place asset would multiply every cap by a million
+# and stop it binding at all.
 USDX_ATOMS = 100_000_000
 
 # The default thresholds are shares of the 400,000,000 SEQ supply, which is
@@ -99,7 +100,27 @@ DEFAULT_TIERS = [
 ]
 
 
-def tiers_from_env(env=None):
+def atoms_per_unit(decimals=8):
+    """One whole unit of the payment asset, in atoms."""
+    return 10 ** int(decimals)
+
+
+def _cap_atoms(cap, unit, name):
+    """A cap in whole units, as atoms, or a refusal.
+
+    A cap that is not a whole number of atoms at this deployment's precision is
+    a typo, and rounding it silently is how a cap stops meaning what its table
+    says.
+    """
+    atoms = float(cap) * unit
+    if abs(atoms - round(atoms)) > 1e-6:
+        raise ValueError(
+            "the %s tier's cap of %s is not a whole number of atoms at this "
+            "deployment's precision" % (name or "unnamed", cap))
+    return int(round(atoms))
+
+
+def tiers_from_env(env=None, payment_decimals=8):
     """Thresholds an operator can set without editing code.
 
     LEVOD_TIERS is a JSON list of objects with `name`, `min_stake` (in whole
@@ -115,13 +136,14 @@ def tiers_from_env(env=None):
     raw = env.get("LEVOD_TIERS")
     if not raw:
         return None
+    unit = atoms_per_unit(payment_decimals)
     spec = json.loads(raw)
     tiers = []
     for level, t in enumerate(sorted(spec, key=lambda x: float(x.get("min_stake", 0)))):
         tiers.append(Tier(
             level, t["name"],
             int(round(float(t.get("min_stake", 0)) * SEQ_ATOMS)),
-            int(round(float(t.get("cap", 0)) * USDX_ATOMS)),
+            _cap_atoms(t.get("cap", 0), unit, t.get("name")),
             bool(t.get("may_list", False)),
             t.get("blurb", "")))
     if not tiers:
@@ -245,10 +267,18 @@ class StakeLinks:
 class StakeReader:
     """Turns 'who am I' into 'what am I allowed to do', against the live chain."""
 
-    def __init__(self, rpc, links, policy=None):
+    def __init__(self, rpc, links, policy=None, floor=None):
         self.rpc = rpc
         self.links = links
         self.policy = policy or TierPolicy()
+        # What the CHAIN requires of a signer, when something can ask it.
+        # POS_MIN_STAKE_ATOMS is this network's value and not every network's.
+        self._floor = floor
+
+    @property
+    def floor(self):
+        value = self._floor() if callable(self._floor) else self._floor
+        return POS_MIN_STAKE_ATOMS if value is None else value
 
     def standing(self, account_pubkey):
         """The account's staked total, its tier, and the evidence behind both.
@@ -280,7 +310,7 @@ class StakeReader:
                            "is_login_key": k == account_pubkey,
                            "delegated": bool(entry.get("delegated")),
                            "delegated_to": entry.get("signer"),
-                           "eligible_blocksigner": w >= POS_MIN_STAKE_ATOMS})
+                           "eligible_blocksigner": w >= self.floor})
             total += w
         tier = self.policy.for_stake(total)
         nxt = self.policy.next_tier(total)

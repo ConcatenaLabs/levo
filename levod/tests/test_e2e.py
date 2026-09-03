@@ -49,6 +49,7 @@ class FakeNode:
         self.unspents = []
         self.rates = {"SBTC": 6400000000000, "USDX": 100000000}
         self.down = False
+        self.floor = 4_000_000_000_000     # what this chain requires of a signer
         self.mempool = {}        # txid -> decoded tx
         self.txs = {}            # txid -> decoded tx the node knows but has not got unspent
 
@@ -80,6 +81,10 @@ class FakeNode:
 
     def min_relay_fee_atoms_per_kvb(self):
         return 100_000
+
+    def staking_floor(self):
+        self._up()
+        return self.floor
 
     def with_timeout(self, seconds):
         return self
@@ -254,6 +259,10 @@ def run(d):
     ok.eq(r["first_tier_is_chain_floor"], True, "the default first tier is the chain floor")
     code, r = req("GET", "/api/tiers")
     ok.ok("40,000 tSEQ" in r["note"], "the tiers note is built from the table", r["note"])
+    ok.eq(r["staking_floor_atoms"], 4_000_000_000_000, "the floor comes from the node")
+    ok.eq(r["staking_floor_from_chain"], True, "and says that it did")
+    ok.ok("consensus ignores" in r["note"],
+          "so the note may say what consensus does", r["note"])
     code, _, h = _req(d.base, "HEAD", "/api/health")
     ok.eq(code, 200, "HEAD works on the API")
     ok.ok(h.get("Content-Length") not in (None, "0"), "HEAD carries the length it would send")

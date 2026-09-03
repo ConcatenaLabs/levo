@@ -84,6 +84,11 @@ class Sale:
         self.sold_atoms = 0
         self.allocations = {}      # account pubkey -> payment atoms committed
         self.purchases = {}        # account pubkey -> [{txid, token_atoms, payment_atoms, at, verified}]
+        # Which account recorded each transaction. A purchase counts once, and
+        # finding out whether one is already recorded must not mean walking
+        # every entry of every account: that walk runs under the platform lock
+        # on the path a busy sale takes most often.
+        self.by_txid = {}
         self.candidates = []       # outpoints a recorded purchase said the remainder rests at
         self.reclaim_txids = []    # reclaims Levo built for this sale, by txid
         self.strays = []           # other assets seen resting at the sale address
@@ -281,7 +286,19 @@ class Sale:
                  "token_atoms": token_atoms, "payment_atoms": payment_atoms,
                  "at": int(at or time.time()), "verified": verified}
         self.purchases.setdefault(account, []).append(entry)
+        if entry["txid"]:
+            self.by_txid[entry["txid"]] = account
         return entry
+
+    def recorded_by(self, txid):
+        """Which account recorded this transaction against this sale, if any."""
+        return self.by_txid.get(str(txid or "").lower())
+
+    def index_purchases(self):
+        """Rebuild the transaction index from the ledger, after a load."""
+        self.by_txid = {e["txid"]: acct
+                        for acct, entries in self.purchases.items()
+                        for e in entries if e.get("txid")}
 
     def expect_remainder_at(self, txid, vout=1):
         """A purchase was made with this transaction; if it left a remainder,

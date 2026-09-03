@@ -96,10 +96,13 @@ class NodeRPC:
             return None
         return b64encode(("%s:%s" % (user, password or "")).encode()).decode()
 
-    def call(self, method, *params):
+    def call(self, method, *params, **named):
+        """One JSON-RPC call. Positional arguments, or named ones where the
+        node's own signature makes that the only way to reach a later
+        parameter without inventing a value for an earlier one."""
         self._id += 1
-        body = json.dumps({"jsonrpc": "1.0", "id": self._id,
-                           "method": method, "params": list(params)}).encode()
+        body = json.dumps({"jsonrpc": "1.0", "id": self._id, "method": method,
+                           "params": named if named else list(params)}).encode()
         req = urllib.request.Request(self.url, data=body,
                                      headers={"Content-Type": "application/json"})
         auth = self._auth()
@@ -200,6 +203,23 @@ class NodeRPC:
 
     def chain_height(self):
         return int(self.chain_info()["blocks"])
+
+    def staking_floor(self):
+        """The weight a signer needs before the chain will let it produce at
+        all, in atoms, or None when this chain cannot say.
+
+        Levo's first tier is usually this number, and it is the one figure the
+        interface presents as a fact about consensus rather than about Levo. It
+        is not the same on every chain -- a custom chain sets it, and a regtest
+        leaves it at zero -- so it is asked rather than assumed. `window=0`
+        skips the production measurement, which is the expensive half.
+        """
+        try:
+            answer = self.call("listpools", window=0) or {}
+        except Exception:
+            return None
+        floor = answer.get("min_stake")
+        return int(floor) if floor is not None else None
 
     def forget_chain_info(self):
         """Drop the held tip. For a caller that has just changed the chain and

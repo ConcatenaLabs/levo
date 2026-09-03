@@ -196,3 +196,25 @@ def test_a_sale_that_no_longer_derives_its_own_address_stops_the_service(t):
     except SystemExit as e:
         t.eq(e.code, ST.BAD_STATE_EXIT, "with the do-not-restart status")
         t.ok("no longer derives" in err.getvalue(), "and says what happened")
+
+
+def test_the_ledger_is_indexed_by_transaction(t):
+    """A purchase counts once, and finding out whether one is already recorded
+    runs under the platform lock on the path a busy sale takes most often. It
+    is a lookup, not a walk over every entry of every account."""
+    d = Path(tempfile.mkdtemp())
+    p = _platform(d / "state.json")
+    pr = p.list_project("02" + "11" * 32,
+                        {"slug": "one", "name": "One", "ticker": "ONE", "decimals": 2},
+                        {"token_asset": "aa" * 32, "payment_asset": USDX, "price_num": 1,
+                         "price_den": 4, "treasury_prog": TREASURY_PROG, "min_lot": 100,
+                         "close_locktime": 2_000_000_000, "reclaim_xonly": RECLAIM_XONLY,
+                         "total_atoms": 10_000})
+    sale = pr.sale
+    sale.record_purchase("02" + "22" * 32, 25, 100, txid="cd" * 32)
+    t.eq(sale.recorded_by("cd" * 32), "02" + "22" * 32, "the index knows who recorded it")
+    t.eq(sale.recorded_by("ff" * 32), None, "and knows when nobody did")
+    p.save()
+    q = _platform(d / "state.json")
+    t.eq(q.projects["one"].sale.recorded_by("cd" * 32), "02" + "22" * 32,
+         "and it is rebuilt when the state is read back")

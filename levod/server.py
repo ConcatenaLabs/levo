@@ -101,24 +101,22 @@ class App:
     def __init__(self, node=None):
         self.node = node or RPC.NodeRPC()
         self.links = T.StakeLinks()
-        self.policy = T.TierPolicy(T.tiers_from_env())
-        self.reader = T.StakeReader(self.node, self.links, self.policy)
+        self.payment_decimals = _payment_decimals()
+        self.policy = T.TierPolicy(T.tiers_from_env(
+            payment_decimals=self.payment_decimals))
+        self.reader = T.StakeReader(self.node, self.links, self.policy,
+                                    floor=lambda: self.staking_floor)
         self.store = ST.Store()
         payment_asset = os.environ.get("LEVOD_PAYMENT_ASSET", M.DEFAULT_PAYMENT_ASSET).lower()
+        if not M.ASSET_RE.match(payment_asset):
+            # Every sale is priced in this. A typo here first reaches a PROJECT
+            # as "payment_asset is not 32 bytes" when they try to list, and
+            # never reaches the operator at all.
+            raise SystemExit(
+                "levod: LEVOD_PAYMENT_ASSET must be a 64-character asset id; "
+                "got %r" % payment_asset)
         payment_label = os.environ.get("LEVOD_PAYMENT_LABEL", "USDX")
-        # Every amount of the payment asset is displayed and typed through
-        # this. Eight is what Elements issues by default and what the testnet's
-        # USDX uses; an asset with another precision would be quoted a hundred
-        # times wrong in both directions.
-        try:
-            payment_decimals = int(os.environ.get("LEVOD_PAYMENT_DECIMALS", "8"))
-        except ValueError:
-            payment_decimals = 8
-            _log_warning("LEVOD_PAYMENT_DECIMALS is not a number; using 8")
-        if not 0 <= payment_decimals <= 8:
-            payment_decimals = 8
-            _log_warning("LEVOD_PAYMENT_DECIMALS is out of range; using 8")
-        self.payment_decimals = payment_decimals
+
         self._chain = None
         self._stake_label_env = os.environ.get("LEVOD_STAKE_LABEL")
         # levod is often started beside the node it reads, and wins the race.
@@ -132,6 +130,8 @@ class App:
         # unless an operator says otherwise.
         self._hrp_env = os.environ.get("LEVOD_HRP")
         self._warned_hrp = False
+        self._floor = None
+        self._floor_from_chain = False
         self.explorer_url = os.environ.get("LEVOD_EXPLORER_URL", "").rstrip("/")
         self.site_links = _site_links(os.environ.get("LEVOD_LINKS"))
         # Where this Levo's own source is. A visitor is told to run a command
@@ -186,6 +186,24 @@ class App:
         # is not now, something removed it and every page is a 404.
         self.had_webroot = (self.webroot / "index.html").is_file()
         self.verbose = bool(os.environ.get("LEVOD_VERBOSE"))
+
+    @property
+    def staking_floor(self):
+        """The weight the CHAIN requires before a staker counts at all.
+
+        Asked of the node, because it is not the same everywhere: a custom
+        chain sets it and a regtest leaves it at zero, and the interface
+        presents this number as a fact about consensus rather than about Levo.
+        Falls back to the mainnet constant, and says which it is using so the
+        copy can stop asserting what it cannot check.
+        """
+        if self._floor is None:
+            try:
+                self._floor = self.node.staking_floor()
+            except Exception:
+                self._floor = None
+            self._floor_from_chain = self._floor is not None
+        return T.POS_MIN_STAKE_ATOMS if self._floor is None else self._floor
 
     @property
     def hrp(self):
@@ -245,9 +263,11 @@ class App:
                         "label": self.rails.payment_label,
                         "decimals": self.payment_decimals},
             "stake": {"label": self.stake_label, "decimals": 8},
-            "staking_floor_atoms": T.POS_MIN_STAKE_ATOMS,
+            "staking_floor_atoms": self.staking_floor,
+            "staking_floor_from_chain": self._floor_from_chain,
             "first_tier_atoms": first.min_stake_atoms,
-            "first_tier_is_chain_floor": first.min_stake_atoms == T.POS_MIN_STAKE_ATOMS,
+            "first_tier_is_chain_floor": (self._floor_from_chain
+                                         and first.min_stake_atoms == self.staking_floor),
             "links": self.site_links,
             "source_url": self.source_url,
         }
@@ -256,13 +276,21 @@ class App:
         first = self.policy.tiers[1] if len(self.policy.tiers) > 1 else None
         if first is None:
             return "Only staked Sequence counts, and only for keys you have proven you control."
+        floor = self.staking_floor
         text = "The first tier begins at %s staked." % _seq(first.min_stake_atoms, self.stake_label)
-        if first.min_stake_atoms == T.POS_MIN_STAKE_ATOMS:
+        # Only the chain can say what the chain enforces. Where the node did
+        # not answer, Levo says what its own table does and stops there.
+        if not self._floor_from_chain:
+            pass
+        elif not floor:
+            text += (" This chain sets no blocksigner floor, so the threshold "
+                     "above is Levo's own.")
+        elif first.min_stake_atoms == floor:
             text += (" That is the chain's own blocksigner floor: below it, "
                      "consensus ignores a staker's weight entirely.")
         else:
             text += (" The chain's own blocksigner floor is %s."
-                     % _seq(T.POS_MIN_STAKE_ATOMS, self.stake_label))
+                     % _seq(floor, self.stake_label))
         return text + (" Only staked Sequence counts, and only for keys you have "
                        "proven you control.")
 
@@ -562,6 +590,9 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(200 if ok else 503, {
                 "service": "levod", "ok": ok, "node": node,
                 "app": {"serving": serving, "webroot": str(app.webroot)},
+                "payment": {"asset": app.rails.payment_asset,
+                            "label": app.rails.payment_label,
+                            "decimals": app.payment_decimals},
                 "state_file": {"writable": not write_error,
                                "unsaved_changes": bool(app.store.dirty),
                                "last_error": write_error},
@@ -581,7 +612,8 @@ class Handler(BaseHTTPRequestHandler):
         if method == "GET" and parts == ["tiers"]:
             return self._json(200, cache="public, max-age=30", payload={
                 "tiers": app.policy.to_json(),
-                "staking_floor_atoms": T.POS_MIN_STAKE_ATOMS,
+                "staking_floor_atoms": app.staking_floor,
+                "staking_floor_from_chain": app._floor_from_chain,
                 "stake_label": app.stake_label,
                 "note": app.tiers_note(),
                 "caps_enforced_by": "levo",
@@ -925,6 +957,26 @@ def _log_warning(message):
 
 def _log_notice(message):
     sys.stderr.write("<5>levod %s\n" % str(message).rstrip())
+
+
+def _payment_decimals():
+    """How many places the payment asset divides into.
+
+    Every amount of it is displayed, typed and capped through this. Eight is
+    what Elements issues by default and what this testnet's USDX uses; an asset
+    with another precision would be quoted a hundred times wrong in both
+    directions, and its tier caps a million times.
+    """
+    raw = os.environ.get("LEVOD_PAYMENT_DECIMALS", "8")
+    try:
+        value = int(raw)
+    except ValueError:
+        _log_warning("LEVOD_PAYMENT_DECIMALS is not a number; using 8")
+        return 8
+    if not 0 <= value <= 8:
+        _log_warning("LEVOD_PAYMENT_DECIMALS is out of range; using 8")
+        return 8
+    return value
 
 
 def _accounts(text):
