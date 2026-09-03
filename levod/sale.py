@@ -48,6 +48,17 @@ import covenant as C
 import units as U
 
 
+# An atom count on the wire.
+#
+# JavaScript cannot carry a whole number above 2**53, and an asset with a
+# hundred million units at eight places has more atoms than that: the number
+# arrives in a browser silently rounded, and the page then prints -- and puts
+# into a copy-and-run funding command -- an amount that is not the one the
+# terms hold. A decimal string carries it exactly, which is the contract the
+# web app's own formatter states. Every parser here already reads both.
+def atoms_out(n):
+    return str(int(n))
+
 # `str.isdigit()` is true of a superscript, of another script's digits,
 # and of a string int() then refuses; it is a question about characters,
 # not about numbers. The numbers here are amounts, so the gate is the
@@ -460,8 +471,8 @@ class Sale:
             "script_pubkey": self.script_pubkey,
             "terms": self.terms.to_json(),
             "funding": self.funding,
-            "locked_atoms": self.locked_atoms,
-            "sold_atoms": self.sold_atoms,
+            "locked_atoms": atoms_out(self.locked_atoms),
+            "sold_atoms": atoms_out(self.sold_atoms),
             "buyers": len([a for a, v in self.allocations.items() if v > 0]),
             "reclaim_txids": list(self.reclaim_txids),
             "strays": list(self.strays),
@@ -507,7 +518,7 @@ class BuyPlan:
             "index": 2 * self.k,
             "role": "treasury payment",
             "asset": t.payment_asset,
-            "min_atoms": self.payment_atoms,
+            "min_atoms": atoms_out(self.payment_atoms),
             "script_pubkey": t.treasury_spk.hex(),
             "why": "the sell leaf checks this output pays the project at least "
                    "the ceiling price for what you take",
@@ -517,7 +528,7 @@ class BuyPlan:
                 "index": 2 * self.k + 1,
                 "role": "unsold remainder, re-rested",
                 "asset": t.token_asset,
-                "exact_atoms": self.remainder_atoms,
+                "exact_atoms": atoms_out(self.remainder_atoms),
                 "script_pubkey": self.sale.script_pubkey,
                 "why": "the leaf requires the remainder to return to the "
                        "identical covenant, so the sale keeps resting",
@@ -525,9 +536,9 @@ class BuyPlan:
         return {
             "sale": self.sale.project_id,
             "buyer": self.account,
-            "token_atoms": self.token_atoms,
-            "payment_atoms": self.payment_atoms,
-            "remainder_atoms": self.remainder_atoms,
+            "token_atoms": atoms_out(self.token_atoms),
+            "payment_atoms": atoms_out(self.payment_atoms),
+            "remainder_atoms": atoms_out(self.remainder_atoms),
             "covenant": {
                 "input_index": self.k,
                 "outpoint": self.sale.funding,

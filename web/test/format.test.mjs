@@ -1,7 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { amount, compact, toAtoms, atomsArg, closeLabel, closeIn, isHeightClose, pricePerToken, treasurySpk, plain,
-         capitalise, big, prose, priceLabel } from '../src/lib/format.js'
+         capitalise, big, prose, priceLabel, tierSays } from '../src/lib/format.js'
 import { xFor, yFor } from '../src/lib/beam.js'
 import { addressOf, encodeSegwit, scriptForAddress } from '../src/lib/bech32.js'
 
@@ -145,4 +145,23 @@ test('an address decodes to the script it pays, and a wrong one to nothing', () 
   assert.equal(scriptForAddress(addressOf(v0, 'tb'), 'tb'), v0)
   assert.equal(scriptForAddress('not an address', 'tb'), null)
   assert.equal(scriptForAddress('', 'tb'), null)
+})
+
+test('an amount above 2**53 survives the wire as a string', () => {
+  // levod sends atom counts as decimal strings for exactly this reason: a
+  // supply of a hundred million units at eight places is more atoms than a
+  // JavaScript number can hold, and the lock command printed from it would
+  // ask an issuer to send a different amount than the terms name.
+  const wire = JSON.parse('{"total_atoms": "9007199254740993"}')
+  assert.equal(big(wire.total_atoms), 9007199254740993n)
+  assert.equal(plain(wire.total_atoms, 8), '90071992.54740993')
+  // ...and the same number sent as a JSON number does not.
+  const asNumber = JSON.parse('{"total_atoms": 9007199254740993}')
+  assert.notEqual(big(asNumber.total_atoms), 9007199254740993n)
+})
+
+test('a tier card quotes the cap in the deployment’s own units', () => {
+  const tier = { cap_atoms: '1000000', may_list: false }   // 10,000 units at 2 places
+  assert.match(tierSays(tier, 'USDX', 2), /10,000 USDX/)
+  assert.match(tierSays(tier, 'USDX', 8), /0.01 USDX/)
 })

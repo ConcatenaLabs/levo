@@ -52,6 +52,17 @@ from script import Op, NUMS
 VECTORS_PATH = Path(__file__).with_name("vectors.json")
 
 
+# An atom count on the wire.
+#
+# JavaScript cannot carry a whole number above 2**53, and an asset with a
+# hundred million units at eight places has more atoms than that: the number
+# arrives in a browser silently rounded, and the page then prints -- and puts
+# into a copy-and-run funding command -- an amount that is not the one the
+# terms hold. A decimal string carries it exactly, which is the contract the
+# web app's own formatter states. Every parser here already reads both.
+def atoms_out(n):
+    return str(int(n))
+
 # `str.isdigit()` is true of a superscript, of another script's digits,
 # and of a string int() then refuses; it is a question about characters,
 # not about numbers. The numbers here are amounts, so the gate is the
@@ -387,10 +398,10 @@ class SaleTerms:
             "price_den": self.price_den,
             "treasury_prog": self.treasury_prog,
             "treasury_ver": self.treasury_ver,
-            "min_lot": self.min_lot,
+            "min_lot": atoms_out(self.min_lot),
             "close_locktime": self.close_locktime,
             "reclaim_xonly": self.reclaim_xonly,
-            "total_atoms": self.total_atoms,
+            "total_atoms": atoms_out(self.total_atoms),
         }
 
     @classmethod
