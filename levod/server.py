@@ -100,6 +100,53 @@ MAX_HANDLERS = 64                 # concurrent requests before the rest wait
 WATCHER_FAILURES_BEFORE_UNHEALTHY = 3
 
 
+# The bundle levod is serving, and whether it is older than the source it was
+# built from.
+#
+# levod serves a built SPA out of web/dist, and nothing about a stale bundle is
+# visible from the outside: every API check passes, the pages render, and they
+# are last month's pages. A deploy that pulls the new commit and then fails to
+# build looks exactly like a deploy that worked -- which is how this check came
+# to be written, after a build that could not run on the box's Node went on
+# reporting success for two commits.
+#
+# Reported, not fatal. A site serving an old bundle is still serving, and an
+# uptime check that pages someone at 3am for it would be wrong; the deploy is
+# what should refuse. So `ok` is left alone and the facts are put where a
+# deploy script, and a person, can read them.
+def _bundle_state(app):
+    try:
+        index = app.webroot / "index.html"
+        if not index.is_file():
+            return {}
+        built = index.stat().st_mtime
+        out = {"built_at": int(built)}
+        # The hashed entry filename is the bundle's identity: two deployments
+        # serving the same one are serving the same site, whatever else differs.
+        try:
+            m = re.search(r'src="[^"]*/(assets/[^"]+\.js)"', index.read_text("utf-8"))
+            if m:
+                out["bundle"] = m.group(1)
+        except (OSError, UnicodeDecodeError):
+            pass
+        # A source tree beside the bundle means this is a checkout rather than
+        # a packaged copy, so the comparison can be made at all.
+        src = app.webroot.parent / "src"
+        if src.is_dir():
+            newest = 0.0
+            for path in src.rglob("*"):
+                try:
+                    if path.is_file():
+                        newest = max(newest, path.stat().st_mtime)
+                except OSError:
+                    continue
+            if newest:
+                out["source_newer_than_bundle"] = newest > built
+        return out
+    except OSError:
+        return {}
+
+
 # `str.isdigit()` is true of a superscript, of another script's digits,
 # and of a string int() then refuses; it is a question about characters,
 # not about numbers. The numbers here are amounts, so the gate is the
@@ -875,13 +922,14 @@ class Handler(BaseHTTPRequestHandler):
                 # and it is not a reason for the endpoint that says so to
                 # answer with a traceback.
                 serving, node = False, dict(node, webroot_error=str(e))
+            built = _bundle_state(app)
             ok = (node["reachable"] and not stale and not failing
                   and not write_error and serving)
             return self._json(200 if ok else 503, {
                 "service": "levod", "ok": ok, "node": node,
                 # No path here: nothing reads it, and an unauthenticated
                 # endpoint should not name the filesystem it runs on.
-                "app": {"serving": serving},
+                "app": dict({"serving": serving}, **built),
                 "payment": {"asset": app.rails.payment_asset,
                             "label": app.rails.payment_label,
                             "decimals": app.payment_decimals},

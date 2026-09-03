@@ -213,6 +213,14 @@ the platform holds: `watcher.unverified_sales` names at most twenty sales with
 `watcher.unverified_total` beside it, and the errors it quotes are cut. The
 whole list is on `GET /api/watcher`.
 
+`app` says which build is being served: `bundle` is the hashed entry script,
+`built_at` when it was written, and `source_newer_than_bundle` whether the
+checkout beside it has moved on. That last one is for a deploy to check rather
+than an uptime monitor -- a site serving an old bundle is still serving -- and
+it is how a build that failed after a successful pull is told apart from one
+that ran. It is absent where there is no source tree to compare against, which
+is any packaged copy of the app.
+
 **`GET /api/watcher`** → what the watcher is doing, and any sale whose funding
 it cannot place in the chain.
 
