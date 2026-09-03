@@ -494,6 +494,22 @@ def run(d):
                   token=issuer_tok)
     ok.eq(code, 400, "a listing that derives an existing sale address is refused")
     ok.ok("same sale address" in (r.get("error") or ""), "with the reason")
+    # A second ROUND of the same token at the same price and close is the
+    # ordinary way to meet this, and the refusal has to name a fix that works:
+    # the amount for sale is not part of the address, so raising it changes
+    # nothing. A fresh reclaim key does.
+    ok.ok("amount for sale is NOT part of the address" in (r.get("error") or ""),
+          "and says the amount is not what makes the address", r.get("error"))
+    code, r = req("POST", "/api/projects",
+                  {"project": dict(meta, slug="bigger-round"),
+                   "terms": dict(terms, total_atoms=terms["total_atoms"] * 2)},
+                  token=issuer_tok)
+    ok.eq(code, 400, "so a bigger second round of the same terms is still refused")
+    code, r = req("POST", "/api/projects",
+                  {"project": dict(meta, slug="second-round"),
+                   "terms": dict(terms, reclaim_xonly="33" * 32)},
+                  token=issuer_tok)
+    ok.eq(code, 201, "while a fresh reclaim key opens a second round")
     second = dict(terms, min_lot=terms["min_lot"] + 1)
     code, r = req("POST", "/api/projects", {"project": dict(meta, slug="to-withdraw"), "terms": second}, token=issuer_tok)
     ok.eq(code, 201, "a second listing")

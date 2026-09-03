@@ -104,7 +104,11 @@ offers the node path instead and says so. A node signs the same purchase with
 **A project** needs a tier that may list, an issued asset (registered, so
 wallets show its name), the whole allocation in a wallet it can send from, an
 address for the treasury, and a reclaim key it can sign with outside a browser
-wallet, because reclaiming means signing a raw sighash. It should keep the
+wallet, because reclaiming means signing a raw sighash. A second round of the
+same token needs a fresh reclaim key: the amount for sale is not part of the
+sale address, so two rounds at the same price and close would otherwise derive
+one covenant, and Levo refuses that rather than let two sales share an
+address. It should keep the
 sale's terms beside that key: `bin/levo terms <sale> --out sale.json`, or the
 same file from the sale's own page. The address is made of those values, and so
 is the leaf the key spends through, so with the file, the key and any node,
