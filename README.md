@@ -237,9 +237,15 @@ port, stripping the prefix:
 ```
 redir /levo /levo/ permanent
 handle_path /levo/* {
+    encode gzip zstd
     reverse_proxy 127.0.0.1:8099
 }
 ```
+
+`encode` belongs in the proxy rather than in levod: the answers worth
+compressing are the app's own bundle and the board, and negotiating an encoding
+by hand inside a standard-library handler is the kind of code that goes wrong
+quietly.
 
 One route covers both the API (`/levo/api/...`) and the app, because levod
 serves them from one origin. Uptime checks should watch `/levo/api/health`,

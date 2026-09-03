@@ -271,6 +271,7 @@ class Platform:
                 sl.sold_atoms = int(sd.get("sold_atoms", 0))
                 sl.allocations = {k: int(v) for k, v in (sd.get("allocations") or {}).items()}
                 sl.purchases = {k: list(v) for k, v in (sd.get("purchases") or {}).items()}
+                sl.index_purchases()
                 sl.candidates = list(sd.get("candidates") or [])
                 sl.reclaim_txids = list(sd.get("reclaim_txids") or [])
                 sl.strays = list(sd.get("strays") or [])[:MAX_STRAYS_KEPT]
@@ -294,10 +295,16 @@ class Platform:
     def save(self):
         """Write the platform to disk.
 
-        The lock is held while the state is assembled and dropped before the
-        bytes go to the disk. A save with a thousand listings on a busy disk is
-        the longest thing levod does, and holding the lock across it would park
-        every purchase, lock and listing behind an fsync.
+        The lock is held for the shortest part of this: making a structure that
+        no other thread can change under the writer. Turning that into bytes
+        and putting them on the disk are the slow halves -- a purchase on a
+        platform with a thousand sales spent about a second inside the lock,
+        which every other purchase, listing, lock and board request waited for
+        -- and both now happen outside it.
+
+        What the lock buys is a snapshot nobody else holds a reference into, so
+        every mutable value is copied on the way out. A shared list mid-append
+        would otherwise be serialised halfway.
         """
         with self.lock:
             out = {}
@@ -306,9 +313,12 @@ class Platform:
                 if p.sale:
                     d["sale"] = p.sale.to_json()
                     d["sale"]["allocations"] = dict(p.sale.allocations)
-                    d["sale"]["purchases"] = {k: list(v) for k, v in p.sale.purchases.items()}
-                    d["sale"]["candidates"] = list(p.sale.candidates)
-                    d["sale"]["strays"] = list(p.sale.strays)
+                    d["sale"]["purchases"] = {k: [dict(e) for e in v]
+                                              for k, v in p.sale.purchases.items()}
+                    d["sale"]["candidates"] = [dict(c) for c in p.sale.candidates]
+                    d["sale"]["strays"] = [dict(x) for x in p.sale.strays]
+                    d["sale"]["funding"] = dict(p.sale.funding) if p.sale.funding else None
+                    d["sale"]["reclaim_txids"] = list(p.sale.reclaim_txids)
                     d["sale"]["created_at"] = p.sale.created_at
                     # Written so a later load can check the terms still derive
                     # it. Nothing reads it but that check.
@@ -316,10 +326,11 @@ class Platform:
                     # `status` is recomputed on read for closure; persist the raw one.
                     d["sale"]["status"] = p.sale.status
                 out[slug] = d
-            self.store.data["projects"] = out
-            self.store.data["stake_links"] = self.stake.links.to_json()
-            payload = self.store.snapshot()
-        self.store.write(payload)
+            data = dict(self.store.data)
+            data["projects"] = out
+            data["stake_links"] = self.stake.links.to_json()
+            self.store.data = data
+        self.store.write(self.store.snapshot(data))
 
     # --- chain context ------------------------------------------------------
 
@@ -889,15 +900,13 @@ class Platform:
                 "your tier has none. Stake to a tier that may buy, then record "
                 "it -- the purchase itself is on chain either way, and the "
                 "watcher reads the sale from there")
-        elsewhere = any(e.get("txid") == txid
-                        for acct, entries in sale.purchases.items()
-                        if acct != account
-                        for e in entries)
-        if elsewhere:
+        owner = sale.recorded_by(txid)
+        if owner is not None and owner != account:
             raise PlatformError(
                 "that transaction is already recorded against another account. "
                 "A purchase counts once, for whoever recorded it first")
-        already = next((e for e in sale.purchases.get(account, []) if e.get("txid") == txid), None)
+        already = (next((e for e in sale.purchases.get(account, []) if e.get("txid") == txid), None)
+                   if owner == account else None)
         if already is not None:
             # The same purchase, recorded again: it counted once and counts
             # once. Answer as the first call did rather than double the ledger.
@@ -1110,6 +1119,7 @@ class Platform:
         limit = DEFAULT_PAGE if limit is None else max(1, min(int(limit), MAX_PAGE))
         for p in mine[offset:offset + limit]:
             d = p.to_json(height=h)
+            d.pop("description", None)      # the detail page carries it
             if p.sale:
                 d["address"] = self.sale_address(p.sale)
                 d["lock"] = self.lock_instructions(p) if p.sale.status in (S.DRAFT, S.GHOST) else None

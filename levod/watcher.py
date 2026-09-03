@@ -379,9 +379,13 @@ class Watcher:
             return False, False
         if sale.status == S.CLOSED and sale.locked_atoms == 0:
             if self._reclaim_landed(sale):
-                sale.mark_emptied(reclaimed=True)
+                with self._held():
+                    sale.mark_emptied(reclaimed=True)
                 return True, False
-            return False, False
+            # Nothing rests here as far as this sale knows, but the address can
+            # still receive: a stray, or tokens sent after the close. Let the
+            # scan look on its ordinary cadence rather than never again.
+            return None if (self._round % STRAY_SCAN_EVERY) == 0 else False, False
         return None, False
 
     def _reconcile(self, project, found, chain):
@@ -415,7 +419,12 @@ class Watcher:
                 # Adopting one would leave the sale resting on an amount every
                 # later purchase is refused against.
                 continue
-            sale.candidates = []
+            with self._held():
+                # Only the one that was adopted. Clearing the list threw away a
+                # second buy's hint, which another thread may have added
+                # between two of the chain reads above, and the poll's own save
+                # then persisted the loss.
+                sale.candidates = [c for c in sale.candidates if c != cand]
             self._misses.pop(slug, None)
             self._miss_height.pop(slug, None)
             adopted = self._rest(sale, cand["txid"], cand["vout"], atoms)

@@ -81,6 +81,11 @@ def _bech32_verify(hrp, data):
 # reads the outputs it checks, so nothing it builds can be addressed to one.
 CONFIDENTIAL_HRPS = ("tsqb", "sqb", "el", "lq", "tlq")
 
+# The unblinded prefix a wallet uses on the same chain as each confidential
+# one. Sequentia's unblinded addresses are Bitcoin's own format, which is why
+# `tsqb` sits beside `tb` rather than beside a prefix of its own.
+UNBLINDED_FOR = {"tsqb": "tb", "sqb": "bc", "el": "ert", "lq": "ex", "tlq": "tex"}
+
 
 def decode(addr):
     """(hrp, witness version, program bytes) for a bech32 or bech32m address.
@@ -100,10 +105,16 @@ def decode(addr):
         raise ValueError("%r is not a bech32 address" % addr)
     hrp, body = a[:pos], a[pos + 1:]
     if hrp in CONFIDENTIAL_HRPS:
+        # The unblinded twin of a confidential address on the same chain: the
+        # wallet has one, and naming its prefix is the difference between an
+        # instruction and a riddle. UNBLINDED_FOR maps each confidential prefix
+        # to it, rather than naming one chain's.
+        plain = UNBLINDED_FOR.get(hrp)
         raise ValueError(
             "%s is a confidential address. Everything a sale covenant touches "
-            "has to be explicit, so use an unblinded address (the same wallet "
-            "has one; on the Sequentia testnet it begins tb1)" % addr)
+            "has to be explicit, so use an unblinded address%s" %
+            (addr, (" -- the same wallet has one, beginning %s1" % plain)
+             if plain else ", which the same wallet also has"))
     if any(c not in CHARSET for c in body):
         raise ValueError("%r is not a bech32 address" % addr)
     data = [CHARSET.index(c) for c in body]
