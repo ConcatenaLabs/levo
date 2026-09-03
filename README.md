@@ -215,7 +215,7 @@ note on what each field means; `bin/levo create listing.json` submits it.
 ## Tests
 
 ```sh
-python3 levod/tests/run.py        # crypto, covenant, tiers, transactions, watcher, persistence
+python3 levod/tests/run.py        # crypto, covenant, tiers, precision, transactions, watcher, persistence
 python3 levod/tests/test_e2e.py   # the API end to end, against a stub node
 python3 levod/tests/test_node.py  # the whole life of a sale against a real sequentiad; skipped without one
 python3 levod/tests/test_render.py # every page, in a real browser; skipped without a chromium
