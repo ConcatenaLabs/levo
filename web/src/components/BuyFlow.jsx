@@ -3,7 +3,7 @@ import { api } from '../lib/api'
 import { hasProvider, getUtxos, getAddress, broadcastHex, signPset, broadcastPset,
          supportsPset, friendly } from '../lib/wallet'
 import { useStore } from '../lib/store'
-import { amount, atomsArg, big, capitalise, shortHex, timeLabel, toAtoms, treasurySpk } from '../lib/format'
+import { amount, atomsArg, big, capitalise, plain, shortHex, timeLabel, toAtoms, treasurySpk } from '../lib/format'
 import { Copy, Hex, Notice } from './ui'
 import SignIn from './SignIn'
 
@@ -387,7 +387,7 @@ export default function BuyFlow({ project, tier, onSettled }) {
           {expired && (
             <Notice style={{ marginBottom: '1rem' }}>
               <strong>The BTC rate above is stale.</strong> What you pay the
-              covenant has not changed -- it is fixed by the sale's own price --
+              covenant has not changed — it is fixed by the sale's own price —
               only the sats a swap would cost. If you have already swapped, carry
               on and spend the {label} you received.
               <div style={{ marginTop: '.5rem' }}>
@@ -542,7 +542,7 @@ export default function BuyFlow({ project, tier, onSettled }) {
                       and tell Levo below.</>
                   )}
                   {' '}Or let{' '}
-                  <span className="mono">levo buy {project.slug} --tokens {amount(built.token_atoms, decimals)}</span>{' '}
+                  <span className="mono">levo buy {project.slug} --tokens {plain(built.token_atoms, decimals)}</span>{' '}
                   do the whole purchase from your node.
                 </div>
               </div>

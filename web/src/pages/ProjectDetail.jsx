@@ -44,6 +44,26 @@ function Terms({ project, sale }) {
             {Number(t.treasury_ver ?? 1) === 1 ? 'taproot' : 'version-0'} witness program{' '}
             {shortHex(t.treasury_prog, 10, 6)}
           </div></td></tr>
+        <tr><th>Registered as</th>
+          <td>
+            {!project.registry || !project.registry.checked
+              ? <>Levo did not check this token against a registry.</>
+              : project.registry.found
+                ? <>{project.registry.name} ({project.registry.ticker}),
+                    {project.registry.precision !== null && project.registry.precision !== undefined
+                      ? <> {project.registry.precision} decimal places,</> : null}
+                    {project.registry.domain ? <> registered to {project.registry.domain}</> : null}.</>
+                : <>This token is not in the registry Levo reads.</>}
+            <div className="dim small prose">
+              {project.registry && project.registry.checked && project.registry.found
+                ? <>a listing may not contradict a registered contract: the ticker
+                    and the decimals above are the ones the asset itself carries,
+                    which is what a wallet will show.</>
+                : <>an unregistered token is an ordinary token, and the ticker and
+                    decimals above are what the project typed. A registry entry is
+                    a name bound to the asset id; without one, check the id.</>}
+            </div>
+          </td></tr>
         <tr><th>Supply</th>
           <td>
             {project.issuance_txid
@@ -55,7 +75,7 @@ function Terms({ project, sale }) {
             <div className="dim small prose">
               a Sequentia asset can carry a reissuance token, and whoever holds
               that can create more of it. Levo cannot see whether one exists or
-              who holds it, and nothing in the covenant limits the supply --
+              who holds it, and nothing in the covenant limits the supply —
               only how much of it this sale holds. Look the asset up before you
               buy{explorer('asset', t.token_asset) ? <>, starting with{' '}
                 <a href={explorer('asset', t.token_asset)} target="_blank"
@@ -512,7 +532,8 @@ export default function ProjectDetail() {
                       <li key={s.txid + s.vout}>
                         {amount(s.atoms, s.asset === sale.terms.payment_asset ? payment.decimals : 8)}{' '}
                         {s.asset === sale.terms.payment_asset ? payment.label : <span className="mono">{shortHex(s.asset, 8, 6)}</span>}
-                        {' '}at <span className="mono">{shortHex(s.txid, 8, 6)}:{s.vout}</span>
+                        {' '}at <Hex value={s.txid + ':' + s.vout}
+                                    href={explorer('tx', s.txid)} short={14} />
                       </li>
                     ))}
                   </ul>

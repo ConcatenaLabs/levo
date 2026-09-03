@@ -108,3 +108,11 @@ test('plain drops the separators a command cannot take', () => {
   assert.equal(plain(1n, 8), '0.00000001')
   assert.equal(plain(123456789012345678n, 8), '1234567890.12345678')
 })
+
+test('one of something is never "1 minutes"', () => {
+  assert.equal(closeIn(120000, 119999), 'in about 1 block (1 minute)')
+  assert.equal(closeIn(120000, 119998), 'in about 2 blocks (2 minutes)')
+  assert.equal(closeIn(1792307521, null, 1792307521 - 60), 'in 1 minute')
+  assert.equal(closeIn(1792307521, null, 1792307521 - 3600), 'in 1 hour')
+  assert.equal(closeIn(1792307521, null, 1792307521 - 86400), 'in 1 day')
+})

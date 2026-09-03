@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { api } from '../lib/api'
 import { useStore } from '../lib/store'
 import { amount, capitalise, toAtoms } from '../lib/format'
-import { Copy, Notice } from './ui'
+import { Copy, Hex, Notice } from './ui'
 
 // After the close, whatever did not sell is the project's to sweep. The
 // covenant will only allow it under the project's own reclaim key, so Levo
@@ -136,7 +136,8 @@ export default function Reclaim({ project }) {
             <div className="hint">
               Put [signature, leaf, control block] in input 0's witness, sign your fee
               inputs with your wallet, and broadcast. Levo recognises the reclaim by its
-              transaction id, {built.txid.slice(0, 12)}…, once it is on chain.
+              transaction id, which is{' '}
+              <Hex value={built.txid} short={12} />, once it is on chain.
             </div>
           </div>
         </div>

@@ -162,12 +162,16 @@ class App:
                                  or R.BTC_RATE_LABEL))
         self.watcher = None
         self.operators = _accounts(os.environ.get("LEVOD_OPERATORS"))
+        # An asset registry to check a listing's claims against, if this
+        # deployment has one.
+        self.registry_url = (os.environ.get("LEVOD_REGISTRY_URL") or "").rstrip("/") or None
         self.market = M.Platform(self.store, self.reader, self.rails, self.node,
                                  hrp=lambda: self.hrp, payment_asset=payment_asset,
                                  payment_label=payment_label,
                                  stake_label=self.stake_label,
                                  payment_decimals=self.payment_decimals,
                                  operators=self.operators,
+                                 registry_url=self.registry_url,
                                  on_stale=lambda: self.watcher and self.watcher.nudge())
         watch_node = self.node.with_timeout(WATCHER_RPC_TIMEOUT) \
             if hasattr(self.node, "with_timeout") else self.node
@@ -286,6 +290,7 @@ class App:
                                          and first.min_stake_atoms == self.staking_floor),
             "links": self.site_links,
             "source_url": self.source_url,
+            "registry_url": self.registry_url,
         }
 
     def tiers_note(self):

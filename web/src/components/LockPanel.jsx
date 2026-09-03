@@ -46,7 +46,7 @@ export default function LockPanel({ project, onLocked }) {
         <p className="small dim">
           The chain does not have the output that funded this sale: either it never
           reached a block, or a Bitcoin-driven reorg took the block that held it.
-          Either way the tokens are yours again -- check your wallet, and if the old
+          Either way the tokens are yours again — check your wallet, and if the old
           transaction is still sitting there unconfirmed, abandon it first. Then send
           them to the same sale address and confirm the new lock.
         </p>

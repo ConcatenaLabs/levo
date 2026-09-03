@@ -139,7 +139,12 @@ function LinkKey({ onLinked }) {
 function MyProjects() {
   const [projects, setProjects] = useState(null)
   const [error, setError] = useState(null)
-  useEffect(() => { api.myProjects().then((r) => setProjects(r.projects)).catch((e) => setError(e.message)) }, [])
+  const [total, setTotal] = useState(0)
+  useEffect(() => {
+    api.myProjects({ limit: 25 })
+      .then((r) => { setProjects(r.projects); setTotal(r.total) })
+      .catch((e) => setError(e.message))
+  }, [])
   if (error) return <Notice kind="bad">{error}</Notice>
   if (!projects) return <p className="dim small">Loading…</p>
   if (!projects.length) return <p className="dim small">You have not listed a project. <Link to="/launch">Launch one.</Link></p>
@@ -161,6 +166,11 @@ function MyProjects() {
           )}
         </Link>
       ))}
+      {total > projects.length && (
+        <p className="small dim">
+          The {projects.length} most recent of {total}. The rest are on the board.
+        </p>
+      )}
     </div>
   )
 }
@@ -169,7 +179,12 @@ function MyPositions() {
   const { payment, explorer } = useStore()
   const [positions, setPositions] = useState(null)
   const [error, setError] = useState(null)
-  useEffect(() => { api.myPositions().then((r) => setPositions(r.positions)).catch((e) => setError(e.message)) }, [])
+  const [total, setTotal] = useState(0)
+  useEffect(() => {
+    api.myPositions({ limit: 25 })
+      .then((r) => { setPositions(r.positions); setTotal(r.total) })
+      .catch((e) => setError(e.message))
+  }, [])
   if (error) return <Notice kind="bad">{error}</Notice>
   if (!positions) return <p className="dim small">Loading…</p>
   if (!positions.length) return <p className="dim small">No purchases through Levo yet. <Link to="/projects">See the sales.</Link></p>
@@ -186,12 +201,22 @@ function MyPositions() {
           {p.purchases.map((e) => (
             <div key={e.txid + e.at} className="small dim" style={{ marginTop: '.4rem' }}>
               {timeLabel(e.at)}: {amount(e.token_atoms, p.decimals)} {p.ticker} for {amount(e.payment_atoms, payment.decimals)} {payment.label}
-              {e.txid && <> · <Hex value={e.txid} href={explorer('tx', e.txid)} short={12} copy={false} /></>}
+              {e.txid && <> · <Hex value={e.txid} href={explorer('tx', e.txid)} short={12} /></>}
               {e.verified === true ? ' · treasury payment checked' : e.verified === false ? '' : ' · not checked on chain'}
             </div>
           ))}
+          {p.purchases_total > p.purchases.length && (
+            <p className="small dim" style={{ margin: '.4rem 0 0' }}>
+              The {p.purchases.length} most recent of {p.purchases_total} purchases.
+            </p>
+          )}
         </div>
       ))}
+      {total > positions.length && (
+        <p className="small dim">
+          The {positions.length} most recent of {total} positions.
+        </p>
+      )}
     </div>
   )
 }
@@ -291,6 +316,7 @@ export default function Account() {
               <div style={{ display: 'flex', justifyContent: 'space-between', gap: '1rem', flexWrap: 'wrap', alignItems: 'center' }}>
                 <span className="mono small" style={{ overflowWrap: 'anywhere' }}>
                   {shortHex(k.staker_pubkey, 16, 10)}
+                  <Copy value={k.staker_pubkey} label="Copy this staking key" />
                 </span>
                 <span className="num small">{compact(k.weight_atoms)} {stake.label}</span>
               </div>

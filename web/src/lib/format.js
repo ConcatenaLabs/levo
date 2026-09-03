@@ -105,19 +105,25 @@ export function closeIn(locktime, height, now = Date.now() / 1000) {
     if (height === null || height === undefined) return ''
     const blocks = Number(locktime) - Number(height)
     if (blocks <= 0) return 'closed'
-    return 'in about ' + blocks.toLocaleString('en-US') + ' blocks (' + duration(blocks * 60) + ')'
+    return 'in about ' + blocks.toLocaleString('en-US') +
+      (blocks === 1 ? ' block (' : ' blocks (') + duration(blocks * 60) + ')'
   }
   const secs = Number(locktime) - now
   if (secs <= 0) return 'closed'
   return 'in ' + duration(secs)
 }
 
+// One of something is never "1 minutes". The countdown on a sale page is read
+// most often in its last hour, which is exactly when the numbers are small.
+function plural(n, word) {
+  return n + ' ' + word + (n === 1 ? '' : 's')
+}
+
 export function duration(seconds) {
   const s = Math.max(0, Math.floor(seconds))
-  if (s < 3600) return Math.max(1, Math.round(s / 60)) + ' minutes'
-  if (s < 86400) { const h = Math.round(s / 3600); return h + (h === 1 ? ' hour' : ' hours') }
-  const d = Math.round(s / 86400)
-  return d + (d === 1 ? ' day' : ' days')
+  if (s < 3600) return plural(Math.max(1, Math.round(s / 60)), 'minute')
+  if (s < 86400) return plural(Math.round(s / 3600), 'hour')
+  return plural(Math.round(s / 86400), 'day')
 }
 
 export function capitalise(s) {
