@@ -99,7 +99,12 @@ offers the node path instead and says so. A node signs the same purchase with
 **A project** needs a tier that may list, an issued asset (registered, so
 wallets show its name), the whole allocation in a wallet it can send from, an
 address for the treasury, and a reclaim key it can sign with outside a browser
-wallet, because reclaiming means signing a raw sighash. `bin/levo keygen` makes
+wallet, because reclaiming means signing a raw sighash. It should keep the
+sale's terms beside that key: `bin/levo terms <sale> --out sale.json`, or the
+same file from the sale's own page. The address is made of those values, and so
+is the leaf the key spends through, so with the file, the key and any node,
+`bin/levo rescue --terms sale.json` sweeps what is left after the close whether
+or not Levo still exists. `bin/levo keygen` makes
 one. The treasury may be any witness address the project's wallet hands out,
 taproot or version-0: the version is compiled into the leaf beside the program,
 so a wallet without taproot addresses can still run a sale. The project locks
@@ -181,8 +186,8 @@ bin/levo buy helios-grid --tokens 40                 # picks unblinded inputs, b
 | `LEVO_RECLAIM_KEY` | The 32-byte hex reclaim secret, for `levo reclaim` (or pass `--reclaim-key`). |
 
 `levo --help` lists every command: `sales`, `show`, `verify`, `whoami`,
-`link`, `keygen`, `create`, `lock`, `buy`, `record`, `reclaim`, `withdraw`, and
-`flag` for an operator. `record` exists because Levo reads its own node, which
+`link`, `keygen`, `create`, `lock`, `buy`, `record`, `reclaim`, `terms`,
+`rescue`, `withdraw`, and `flag` for an operator. `record` exists because Levo reads its own node, which
 is not the node a purchase was broadcast to: for a few seconds it has not heard
 of the transaction, and a purchase whose record did not go through then can be
 recorded whenever. Fees are
