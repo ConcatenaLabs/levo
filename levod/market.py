@@ -366,7 +366,8 @@ class Platform:
             data["projects"] = out
             data["stake_links"] = self.stake.links.to_json()
             self.store.data = data
-        self.store.write(self.store.snapshot(data))
+            version = self.store.next_version()
+        self.store.write(self.store.snapshot(data), version=version)
 
     # --- chain context ------------------------------------------------------
 
@@ -561,8 +562,18 @@ class Platform:
 
         Without an outpoint, the confirmed UTXO set is scanned for the sale's
         address, so an issuer who sent the tokens from a wallet that does not
-        show output indexes can still confirm.
+        show output indexes can still confirm. That scan walks the node's whole
+        UTXO set and can take minutes, so it happens BEFORE the platform's lock
+        is taken -- holding it across a scan would stop every purchase, board
+        and poll on the platform for as long as the node took.
         """
+        if not txid:
+            p = self.project(slug)
+            if p.sale is None:
+                raise PlatformError("this project has no sale")
+            if self.rpc is None:
+                raise PlatformError("no node connection; cannot verify the lock")
+            txid, vout = self._find_lock(p.sale)
         with self.lock:
             return self._confirm_lock(account, slug, txid, vout)
 
