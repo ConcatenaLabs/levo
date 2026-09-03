@@ -762,7 +762,8 @@ class Handler(BaseHTTPRequestHandler):
         verbs = list(allowed)
         if "GET" in verbs and "HEAD" not in verbs:
             verbs.append("HEAD")
-        self._json(405, {"error": "%s is not allowed here%s"
+        self._json(405, {"code": "method_not_allowed",
+                         "error": "%s is not allowed here%s"
                                   % (self.command,
                                      ("; this path takes " + ", ".join(allowed))
                                      if allowed else "")},
@@ -781,20 +782,22 @@ class Handler(BaseHTTPRequestHandler):
         except Unsupported as e:
             # A 429 without a Retry-After tells a client to back off and gives
             # it nothing to back off by.
-            self._json(e.code, {"error": str(e)},
+            self._json(e.code, {"code": "rate_limited" if e.code == 429 else "refused",
+                                "error": str(e)},
                        headers={"Retry-After": "60"} if e.code == 429 else None)
         except Unauthorised as e:
-            self._json(401, {"error": str(e)})
+            self._json(401, {"code": "sign_in_required", "error": str(e)})
         except M.NotFound as e:
-            self._json(404, {"error": str(e)})
+            self._json(404, {"code": "not_found", "error": str(e)})
         except M.NotAuthorised as e:
-            self._json(403, {"error": str(e)})
+            self._json(403, {"code": "not_allowed", "error": str(e)})
         except S.CapExceeded as e:
-            self._json(409, {"error": str(e), "allowance_atoms": e.allowance_atoms,
+            self._json(409, {"code": "cap_exceeded", "error": str(e),
+                             "allowance_atoms": str(e.allowance_atoms),
                              "enforced_by": "levo"})
         except (M.PlatformError, S.SaleError, A.BadSignature, R.RailUnavailable,
                 ValueError) as e:
-            self._json(400, {"error": str(e)})
+            self._json(400, {"code": "refused", "error": str(e)})
         except KeyError as e:
             # A field the request should have carried and did not. The caller
             # is at fault and deserves to hear which field.
@@ -809,18 +812,20 @@ class Handler(BaseHTTPRequestHandler):
             # a server fault the caller was blamed for.
             _log_error("KeyError on %s %s: %s" % (method, path, e))
             _log_error(traceback.format_exc())
-            self._json(400, {"error": "malformed request: %s" % _describe(e)})
+            self._json(400, {"code": "malformed", 
+                             "error": "malformed request: %s" % _describe(e)})
         except TypeError as e:
             _log_error("malformed request on %s %s: %s" % (method, path, e))
             _log_error(traceback.format_exc())
-            self._json(400, {"error": "malformed request"})
+            self._json(400, {"code": "malformed", "error": "malformed request"})
         except RPC.RPCError as e:
-            self._json(502, {"error": "the Sequentia node is unreachable or "
+            self._json(502, {"code": "node_unavailable",
+                             "error": "the Sequentia node is unreachable or "
                                       "refused the query: %s" % e})
         except Exception:
             _log_error("unhandled error on %s %s" % (method, path))
             _log_error(traceback.format_exc())
-            self._json(500, {"error": "internal error"})
+            self._json(500, {"code": "internal", "error": "internal error"})
 
     def _api(self, method, path, query):
         app = self.app
@@ -1180,10 +1185,11 @@ class Handler(BaseHTTPRequestHandler):
         if allowed and method not in allowed:
             # The path exists; the verb does not belong to it. Answering 404
             # tells a client its URL is wrong when only its method was.
-            return self._json(405, {"error": "%s is not allowed here; this path "
+            return self._json(405, {"code": "method_not_allowed",
+                                    "error": "%s is not allowed here; this path "
                                              "takes %s" % (method, ", ".join(allowed))},
                               headers={"Allow": ", ".join(allowed + ["OPTIONS"])})
-        return self._json(404, {"error": "no such endpoint"})
+        return self._json(404, {"code": "not_found", "error": "no such endpoint"})
 
     # --- the SPA ------------------------------------------------------------
 
@@ -1194,17 +1200,18 @@ class Handler(BaseHTTPRequestHandler):
         try:
             target.relative_to(root.resolve())
         except ValueError:
-            return self._json(403, {"error": "forbidden"})
+            return self._json(403, {"code": "not_allowed", "error": "forbidden"})
         if not target.is_file():
             if rel.startswith("assets/") or rel.startswith("fonts/") \
                     or (target.suffix and target.suffix != ".html"):
                 # A file that is not there is not the app: a stale bundle
                 # asking for an old hashed asset should hear 404 and reload,
                 # not receive HTML as a script.
-                return self._json(404, {"error": "no such file"})
+                return self._json(404, {"code": "not_found", "error": "no such file"})
             target = root / "index.html"      # history-API fallback
         if not target.is_file():
-            return self._json(404, {"error": "the Levo web app is not built; "
+            return self._json(404, {"code": "not_found",
+                                    "error": "the Levo web app is not built; "
                                              "run npm run build in web/"})
         body = target.read_bytes()
         ctype = {

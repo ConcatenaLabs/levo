@@ -909,6 +909,17 @@ def run(d):
     code, r, h = _req(d.base, "DELETE", "/api/health")
     ok.eq(code, 405, "a verb a path does not take is 405, not 404")
     ok.ok("GET" in (h.get("Allow") or ""), "with the verbs it does take", h.get("Allow"))
+    # Every refusal carries a slug beside its sentence, so a client branches on
+    # a value rather than on prose that may be reworded.
+    for path, method, want_code, want_slug in (
+        ("/api/projects/no-such-sale", "GET", 404, "not_found"),
+        ("/api/me", "GET", 401, "sign_in_required"),
+        ("/api/health", "DELETE", 405, "method_not_allowed"),
+        ("/api/projects", "POST", 401, "sign_in_required"),
+    ):
+        c, body, _ = _req(d.base, method, path, {} if method == "POST" else None)
+        ok.eq(c, want_code, "%s %s answers %s" % (method, path, want_code))
+        ok.eq((body or {}).get("code"), want_slug, "with the code %r" % want_slug)
     code, r, _ = _req(d.base, "GET", "/api/no-such-thing")
     ok.eq(code, 404, "while a path that does not exist is still 404")
     # PUT went through a hand-written reply that named every verb for every
