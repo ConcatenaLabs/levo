@@ -37,5 +37,10 @@ python3 -c 'import json,sys; json.load(open(sys.argv[1]))' "$part" 2>/dev/null |
 }
 mv "$part" "$DEST/levo-state-$(date -u +%Y%m%dT%H%M%SZ).json"
 
-# Drop all but the newest $KEEP copies.
-ls -1t "$DEST"/levo-state-*.json 2>/dev/null | tail -n +$((KEEP + 1)) | xargs -r rm -f
+# Drop all but the newest $KEEP copies -- newest by the date in the NAME.
+# `cp -p` gives every copy the state file's own mtime, so copies of a state
+# that has not changed all carry the same one, and "newest by mtime" is then
+# whichever the directory listed first. Their contents are identical, so no
+# copy that mattered was ever lost that way; but a prune that could not say
+# which file it was keeping is not one to reason about at three in the morning.
+ls -1 "$DEST"/levo-state-*.json 2>/dev/null | sort -r | tail -n +$((KEEP + 1)) | xargs -r rm -f
