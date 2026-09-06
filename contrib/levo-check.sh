@@ -12,8 +12,9 @@
 #
 # Settings: LEVO_HEALTH_URL (default http://127.0.0.1:$LEVOD_PORT/api/health,
 # port 8099 when LEVOD_PORT is not set), LEVO_MAX_WATCHER_AGE in seconds
-# (default 300: the watcher polls every 60), LEVO_CHECK_STATE (where the
-# timer's last verdict is kept; see below).
+# (default 300: the watcher polls every 60), LEVO_CHECK_RETRY_AFTER in seconds
+# (default 3: the pause before a refused connection is tried once more),
+# LEVO_CHECK_STATE (where the timer's last verdict is kept; see below).
 #
 # Exit 0 when everything checks out, 1 with a line naming each thing that does
 # not. levo-check.timer runs it every five minutes.
@@ -24,7 +25,8 @@ case "${1:-}" in
         echo
         echo "Reads levod's /api/health and exits 0 when levod is doing its job, 1 with a"
         echo "line per fault. Settings: LEVO_HEALTH_URL, LEVO_MAX_WATCHER_AGE,"
-        echo "LEVO_CHECK_STATE. Only the timer's runs record a verdict and page anyone."
+        echo "LEVO_CHECK_RETRY_AFTER, LEVO_CHECK_STATE. Only the timer's runs record a"
+        echo "verdict and page anyone."
         exit 0 ;;
     ?*) echo "levo-check.sh takes no arguments; settings are environment variables" >&2; exit 2 ;;
 esac
@@ -56,9 +58,17 @@ bad() { echo "  FAIL  $1"; fails=$((fails + 1)); FAILS_SO_FAR="$FAILS_SO_FAR
   FAIL  $1"; }
 
 # The body is what is read: a 503 carries the same document as a 200, with
-# the field that is wrong set to say so.
+# the field that is wrong set to say so. A connection nobody answers is
+# asked once more after a pause: a deploy restarts levod in about two
+# seconds, and a check that lands inside them would page a person for a
+# levod that was back before they read it.
 body=$(curl -sS --max-time 10 "$URL" 2>&1)
 rc=$?
+if [ "$rc" -eq 7 ]; then
+    sleep "${LEVO_CHECK_RETRY_AFTER:-3}"
+    body=$(curl -sS --max-time 10 "$URL" 2>&1)
+    rc=$?
+fi
 if [ "$rc" -ne 0 ]; then
     bad "levod ($URL) did not answer: $body"
 else
