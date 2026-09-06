@@ -738,7 +738,18 @@ def _send_explicit(address, atoms_, asset, fee_asset):
         txid = node("sendtoaddress", address=address, amount=_units(atoms_),
                     assetlabel=asset, fee_asset_label=fee_asset)
         return txid, node("gettransaction", txid)["hex"]
-    signed = node("signrawtransactionwithwallet", funded["hex"])
+    hexed = funded["hex"]
+    # A wallet that holds some of the asset confidentially may fund the send
+    # from a blinded output. The outputs asked for stay explicit, but a blinded
+    # input's factors have to land somewhere, so the wallet adds a zero-value
+    # output carrying a nonce and expects the transaction to be blinded before
+    # it is signed; unblinded, the node refuses it with "output has nonce, but
+    # is not blinded". Blinding touches only that output: the sale output and
+    # the change keep their stated amounts, which is what the covenant reads.
+    decoded = node("decoderawtransaction", hexed)
+    if any(o.get("commitmentnonce") for o in decoded.get("vout") or []):
+        hexed = node("blindrawtransaction", hexed)
+    signed = node("signrawtransactionwithwallet", hexed)
     if not signed.get("complete"):
         raise Fail("your wallet could not sign the funding transaction: %s"
                    % signed.get("errors"))

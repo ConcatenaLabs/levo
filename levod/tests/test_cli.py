@@ -164,6 +164,15 @@ def run(ok, rig, levod, env):
     ok.ok("listed cli-sale" in out, "create lists the project", out[:160])
 
     # --- locking sends the exact allocation, in one output -----------------
+    #
+    # The wallet holds the whole allocation confidentially first: an issuer
+    # who once received the token at a blinded address funds the lock from
+    # a blinded output, and the wallet then adds a zero-value output with a
+    # nonce that has to be blinded before the node will take the
+    # transaction. The sale output itself must still state its amount.
+    hidden = w("getnewaddress", "", "blech32")
+    w("sendtoaddress", address=hidden, amount=100_000, assetlabel=token, fee_asset_label="bitcoin")
+    rig.mine()
     out = levo("lock", "cli-sale")
     ok.ok("locked at" in out, "lock funds the sale and confirms it", out[-160:])
     rig.mine()
@@ -192,9 +201,13 @@ def run(ok, rig, levod, env):
     ok.ok("committed" in out and "not committed" in out,
           "and says which terms the address is made of")
 
-    ok.ok(all(not u.get("amountcommitment") for u in w("listunspent", 0)),
-          "locking left every output in the wallet explicit, which is what a "
-          "covenant can read")
+    # The lock's own transaction: every output that pays anywhere states its
+    # amount, which is what a covenant can read. The one output the wallet
+    # blinded to balance its blinded input pays nowhere and holds nothing.
+    lock_tx = w("decoderawtransaction", w("gettransaction", detail["sale"]["funding"]["txid"])["hex"])
+    paying = [o for o in lock_tx["vout"] if (o.get("scriptPubKey") or {}).get("address")]
+    ok.ok(paying and all("value" in o for o in paying),
+          "the lock states every amount it pays, which is what a covenant can read")
 
     # --- a purchase, end to end --------------------------------------------
     out = levo("buy", "cli-sale", "--tokens", "100", "--dry-run")
