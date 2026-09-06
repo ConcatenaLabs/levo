@@ -1437,7 +1437,7 @@ class Unsupported(Exception):
 def _check_pubkey(pk):
     if len(pk) != 66 or not pk.startswith(("02", "03")) \
             or any(c not in "0123456789abcdef" for c in pk):
-        raise ValueError("staker_pubkey must be a 33-byte compressed key in hex")
+        raise ValueError("the staking key must be a 33-byte compressed public key in hex")
 
 
 # systemd reads a <N> prefix on a line as its syslog priority, so an operator's
