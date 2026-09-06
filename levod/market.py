@@ -897,6 +897,29 @@ class Platform:
         self.on_stale()
         return p
 
+    def adopt_lock(self, slug, txid, vout):
+        """Confirm the lock the watcher found resting at a draft's address.
+
+        Called by the watcher, under no lock of its own. The output has to be
+        read from the node first, as an issuer's own confirmation is, so the
+        same checks apply: the published amount, the token, an explicit value.
+        A sale that is no longer waiting for a lock is left alone.
+        """
+        p = self.project(slug)
+        if p.sale is None or p.sale.status not in (S.DRAFT, S.GHOST):
+            return False
+        if self.rpc is None:
+            return False
+        out = self.rpc.txout(txid, vout)
+        if out is None:
+            return False
+        dating = self._read_funding_date(out)
+        with self.lock:
+            self._confirm_lock(p.issuer_account, slug, txid, vout, out, dating)
+        self.save()
+        self.on_stale()
+        return True
+
     def _confirm_lock(self, account, slug, txid, vout, out, dating):
         p = self._project(slug)
         if p.issuer_account != account:

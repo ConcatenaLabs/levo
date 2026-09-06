@@ -134,6 +134,12 @@ mislead but cannot rob.
   buyer who never confirms. Do not "fix" the cap by reserving allowance at plan
   time: every build spends the one resting outpoint, so parallel builds are
   self-limiting, and a reservation would refuse a legitimate retry.
+- **A draft's lock is found by the watcher.** Confirming a lock is the issuer's
+  call, and the watcher makes it for them when they do not: on scanning rounds
+  it walks the address of every sale still waiting, and a confirmed output
+  holding exactly the published amount opens the sale through the same checks
+  the issuer's own confirmation runs. Anything else at the address is left
+  alone and reported.
 - **A page left open has to stay true.** Anything that shows chain-derived
   state -- the sale page, the board, the account lists -- reads again on a
   timer and when its tab comes back into view (`useReread` in

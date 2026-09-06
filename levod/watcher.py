@@ -164,16 +164,33 @@ class Watcher:
         # over a thousand of them asked a thousand times. The memo lives for
         # one poll, so a reorg between polls is still seen.
         self._blocks = {}
+        # A sale waiting for its lock: an issuer who sent the tokens and never
+        # confirmed the send -- a confirmation that gave up, a wallet that
+        # broadcast and closed -- would otherwise leave a draft for ever with
+        # its allocation already at the address. On the rounds that scan
+        # anyway, the address of every such sale is scanned too, and a lock
+        # holding exactly the published amount is confirmed as the issuer's
+        # own confirmation would confirm it. Before the early return below:
+        # a platform holding nothing but drafts still has locks to find.
+        lock_errors = []
+        # The first poll after a start as well: a levod restarted while an
+        # issuer's lock was landing should not make them wait ten polls.
+        if self._round == 1 or (self._round % STRAY_SCAN_EVERY) == 0:
+            try:
+                self._find_locks()
+            except Exception as e:
+                lock_errors.append("locks: %s" % e)
         sales = self._sales()
         if not sales:
             self.last_run = time.time()
-            self.last_error = None
+            self.last_error = "; ".join(lock_errors) or None
             return {"checked": 0, "changed": [], "scanned": False}
 
         chain = self._chain_state()
         errors = []
         changed = []
         dirty = False
+        errors = list(lock_errors)
         pending = []
 
         # Purchases Levo built and has not yet seen. First, so that a buy the
@@ -230,6 +247,13 @@ class Watcher:
                 errors.append("scan: %s" % e)
                 found = None
 
+        # A sale waiting for its lock: an issuer who sent the tokens and never
+        # confirmed the send -- a confirmation that gave up, a wallet that
+        # broadcast and closed -- would otherwise leave a draft for ever with
+        # its allocation already at the address. On the rounds that scan
+        # anyway, the address of every such sale is scanned too, and a lock
+        # holding exactly the published amount is confirmed as the issuer's
+        # own confirmation would confirm it.
         if found is not None:
             for slug, p in pending:
                 was = _shape(p.sale)
@@ -396,6 +420,36 @@ class Watcher:
         height = int(info.get("blocks") or 0)
         return {"height": height, "mediantime": info.get("mediantime"),
                 "usable": not info.get("initialblockdownload")}
+
+    def _find_locks(self):
+        """Confirm the lock of every draft (or ghost) whose address holds
+        exactly the published amount of its token in the confirmed set."""
+        adopt = getattr(self.market, "adopt_lock", None)
+        if adopt is None:
+            return False
+        waiting = [(slug, p) for slug, p in self.market.projects.items()
+                   if p.sale and p.sale.status in (S.DRAFT, S.GHOST)]
+        if not waiting:
+            return False
+        found = self._scan(["raw(%s)" % p.sale.script_pubkey for _, p in waiting])
+        changed = False
+        for slug, p in waiting:
+            sale = p.sale
+            for u in found.get(sale.script_pubkey.lower()) or []:
+                if (u.get("asset") or "").lower() != sale.terms.token_asset:
+                    continue
+                if int(u.get("atoms") or 0) != int(sale.terms.total_atoms or 0):
+                    continue
+                try:
+                    if adopt(slug, u["txid"], u["vout"]):
+                        self.note("watcher: %s: found the lock at %s:%s; the sale is open"
+                                  % (slug, u["txid"][:16], u["vout"]))
+                        changed = True
+                except Exception as e:
+                    self.log("watcher: %s: a lock at %s:%s could not be confirmed: %s"
+                             % (slug, u.get("txid", "")[:16], u.get("vout"), e))
+                break
+        return changed
 
     def _scan(self, descriptors):
         """{scriptPubKey hex: [{txid, vout, atoms, asset, height}]} for the

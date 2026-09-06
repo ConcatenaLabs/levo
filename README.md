@@ -127,7 +127,8 @@ address the project's wallet hands out, taproot or version-0: the version is
 compiled into the leaf beside the program, so a wallet without taproot addresses
 can still run a sale. The project locks
 its tokens by sending them to the sale address, and Levo finds the lock on
-chain; after the close, `bin/levo reclaim` sweeps what did not sell.
+chain, whether the project confirms the send or the watcher finds it on its
+own; after the close, `bin/levo reclaim` sweeps what did not sell.
 
 ## Layout
 

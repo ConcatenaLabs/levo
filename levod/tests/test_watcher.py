@@ -71,6 +71,20 @@ class FakeMarket:
     def save(self):
         self.saved += 1
 
+    def adopt_lock(self, slug, txid, vout):
+        """What the platform does with a lock the watcher found at a draft's
+        address: read the output and confirm it as the issuer would."""
+        sale = self.projects[slug].sale
+        if sale.status not in (S.DRAFT, S.GHOST):
+            return False
+        out = self.rpc.txout(txid, vout) if getattr(self, "rpc", None) else None
+        if out is None:
+            return False
+        sale.confirm_lock(txid, vout, sale.script_pubkey, int(round(float(out["value"]) * 1e8)), GOLD)
+        sale.funding["seen_height"] = 100
+        self.saved += 1
+        return True
+
     def attribute_build(self, slug, build):
         """What the platform does with a build the watcher saw land: record
         it against the account it was built for, once the treasury credit is
@@ -387,6 +401,40 @@ def test_a_recorded_purchase_moves_the_sale_before_it_confirms(t):
     t.eq(s.funding["txid"], "ee" * 32, "to the purchase's remainder output")
     t.eq(s.locked_atoms, 250 * 10**8, "with what it now holds")
     t.eq(s.candidates, [], "and the hint is spent")
+
+
+def test_a_draft_whose_lock_is_on_chain_is_opened_by_the_watcher(t):
+    """An issuer who sent the tokens and never confirmed the send used to leave
+    a draft for ever. On a scanning round the watcher looks at every waiting
+    sale's address, and a lock holding exactly the published amount opens
+    the sale as the issuer's own confirmation would."""
+    terms = C.SaleTerms(GOLD, USDX, 1, 4, "11" * 32, 10 * 10**8, 2_000_000_000, "22" * 32, TOTAL)
+    s = S.Sale("t", terms, "issuer")
+    rpc = FakeRPC()
+    rpc.blocks[95] = "block-95"
+    rpc.unspents = [{"txid": "ab" * 32, "vout": 0, "scriptPubKey": s.script_pubkey,
+                     "amount": TOTAL / 1e8, "asset": GOLD, "height": 95}]
+    rpc.txouts[("ab" * 32, 0)] = {"value": TOTAL / 1e8, "asset": GOLD, "confirmations": 5,
+                                  "scriptPubKey": {"hex": s.script_pubkey}}
+    w = _watch_with_rpc(s, rpc)
+    t.eq(s.status, S.DRAFT, "a listing nobody confirmed is a draft")
+    w.poll()
+    t.eq(s.status, S.LIVE, "one scanning poll later it is open")
+    t.eq((s.funding or {}).get("txid"), "ab" * 32, "at the lock the scan found")
+
+
+def test_a_draft_with_a_short_lock_stays_a_draft(t):
+    """Only the published amount is a lock; anything else at the address is
+    the issuer's to sort out, as the page tells them."""
+    terms = C.SaleTerms(GOLD, USDX, 1, 4, "11" * 32, 10 * 10**8, 2_000_000_000, "22" * 32, TOTAL)
+    s = S.Sale("t", terms, "issuer")
+    rpc = FakeRPC()
+    rpc.unspents = [{"txid": "ab" * 32, "vout": 0, "scriptPubKey": s.script_pubkey,
+                     "amount": (TOTAL - 1) / 1e8, "asset": GOLD, "height": 95}]
+    rpc.txouts[("ab" * 32, 0)] = {"value": (TOTAL - 1) / 1e8, "asset": GOLD, "confirmations": 5,
+                                  "scriptPubKey": {"hex": s.script_pubkey}}
+    _watch_with_rpc(s, rpc).poll()
+    t.eq(s.status, S.DRAFT, "a lock short by one atom is not adopted")
 
 
 def test_a_recorded_full_buy_ends_the_sale_on_one_poll(t):
