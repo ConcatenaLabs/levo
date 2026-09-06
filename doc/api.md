@@ -154,7 +154,10 @@ for the sale's address; with one it can confirm a lock still in the mempool. A
 transaction levod's node has not seen is refused with a sentence saying so
 (`has not seen`), which for a few seconds after a broadcast includes a real
 one, since Levo's node is not the node it was sent to: ask again shortly. The
-tokens are at the address either way.
+tokens are at the address either way, and a lock nobody confirms is found by
+the watcher itself: on its scanning rounds it walks the address of every sale
+still waiting, and a confirmed output holding exactly the published amount
+opens the sale.
 
 **`POST /api/projects/<slug>/reclaim`** `{destination_address, fee_inputs,
 fee_atoms, fee_asset?, change_address?}` (session, the issuer, after the close)
