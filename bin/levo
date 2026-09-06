@@ -1031,7 +1031,13 @@ def _record(slug, txid, token_atoms, payment_atoms, tok, tries=5, decimals=8):
     last = None
     for attempt in range(tries):
         try:
-            api("POST", "/api/projects/%s/confirm" % slug, body, tok)
+            r = api("POST", "/api/projects/%s/confirm" % slug, body, tok)
+            if (r or {}).get("already_recorded"):
+                # Once is enough, and saying so is more useful than a second
+                # "recorded": nothing changed, and nothing needed to.
+                print("%s was already recorded against your allocation in %s; nothing changed"
+                      % (txid, slug))
+                return "already"
             return True
         except SystemExit as e:
             last = str(e)
@@ -1064,12 +1070,14 @@ def cmd_record(args):
         raise Fail("--tokens must be a number with at most %d decimal places" % decimals)
     payment_atoms = int(args.payment) if args.payment is not None else \
         -(-token_atoms * int(sale["terms"]["price_num"]) // int(sale["terms"]["price_den"]))
-    if not _record(args.slug, args.txid.lower(), token_atoms, payment_atoms, tok,
-                   decimals=int(decimals)):
+    done = _record(args.slug, args.txid.lower(), token_atoms, payment_atoms, tok,
+                   decimals=int(decimals))
+    if not done:
         # The purchase may well be real; this command exists to record one, and
         # it did not, so it says so in the way a script can act on.
         raise Fail("the purchase was not recorded")
-    print("recorded %s against your allocation in %s" % (args.txid, args.slug))
+    if done is True:
+        print("recorded %s against your allocation in %s" % (args.txid, args.slug))
 
 
 def cmd_rescue(args):
