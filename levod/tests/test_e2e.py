@@ -1014,6 +1014,7 @@ def run(d):
         ok.ok(b"429" in answer, "a third connection from the same address is refused",
               answer[:60])
         ok.ok(b"too many connections" in answer, "and says why", answer[:80])
+        ok.ok(b'"code": "rate_limited"' in answer, "with the documented code, though written by hand", answer[:120])
     finally:
         for conn in held:
             conn.close()
