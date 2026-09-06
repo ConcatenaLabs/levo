@@ -8,6 +8,7 @@ the design notes are in [doc/](doc/).
 ## Run the gate before you open a pull request
 
 ```sh
+npm --prefix web ci                 # once, and after the lockfile moves
 python3 levod/tests/run.py          # unit checks, and the guards that walk the sources
 python3 levod/tests/test_e2e.py     # the API end to end, over a stub node
 npm --prefix web test && npm --prefix web run build
