@@ -1,0 +1,52 @@
+# The gate, run where nobody has to remember to run it.
+#
+# Everything here needs no Sequentia node: the unit checks, the API drill over
+# a stub node, the app's own tests and build, and every page rendered in a
+# real browser. The suites that need a chain (test_node, test_cli, the browser
+# purchase) run on a machine that has one, and say so when they skip.
+name: gate
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - uses: actions/setup-node@v5
+        with:
+          # Vite's engine range; web/scripts/check-node.mjs refuses anything older.
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: unit checks
+        run: python3 levod/tests/run.py
+
+      - name: the API, end to end, over a stub node
+        run: python3 levod/tests/test_e2e.py
+
+      - name: the app's own tests
+        run: npm --prefix web ci && npm --prefix web test
+
+      - name: build the app
+        run: npm --prefix web run build
+
+      - name: every page, in a real browser
+        # The runner image ships google-chrome, which test_render looks for.
+        run: python3 levod/tests/test_render.py
+
+      - name: the suites that need a chain say they are skipping
+        run: |
+          python3 levod/tests/test_node.py
+          python3 levod/tests/test_cli.py
+          python3 levod/tests/test_browser.py
