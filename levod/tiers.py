@@ -122,7 +122,8 @@ def default_tiers(payment_decimals=8):
         Tier(2, "Backer", 5 * POS_MIN_STAKE_ATOMS, caps[2], False,
              "0.05% of the supply staked."),
         Tier(3, "Founder", 25 * POS_MIN_STAKE_ATOMS, caps[3], True,
-             "0.25% of the supply staked, and the only tier that may list a project."),
+             "0.25% of the supply staked, and shown beside every project you list: "
+             "the one thing on its page you did not write."),
     ]
 
 
