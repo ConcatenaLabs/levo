@@ -22,6 +22,7 @@ An error is `{"error": "<a sentence>"}` with a status:
 | 429 | too many requests from this address; `Retry-After` says how long to wait |
 | 502 | the Sequentia node could not be reached or refused the query |
 | 503 | levod is busy, or unhealthy; `Retry-After` where it makes sense |
+| 502 with code `unavailable` | not levod but the proxy in front of it: levod itself is not answering, as during a restart. Try again in a minute |
 
 Every path outside `/api/` is the app. A route the app has, and the page of a
 sale that exists, answer 200 with the app shell; any other path answers 404
