@@ -347,6 +347,25 @@ def main():
                     failed.append("the heading breaks onto a line %spx wide at 300px" % runt)
                 else:
                     passed += 1
+                # The header keeps the page's gutter when its links wrap onto
+                # their own row: a padding shorthand once zeroed it, and the
+                # wordmark sat on the screen's edge above a margined page.
+                edge = page.eval(
+                    "(function(){const b=document.querySelector('.nav .brand');"
+                    "const l=document.querySelector('.nav-links');"
+                    "const h=document.querySelector('.hero h1');"
+                    "if(!b||!l||!h) return 'missing';"
+                    "const x=h.getBoundingClientRect().left;"
+                    "return JSON.stringify([Math.round(b.getBoundingClientRect().left-x),"
+                    " Math.round(l.getBoundingClientRect().left-x)])})()")
+                if edge == "missing":
+                    failed.append("the header or the hero heading was not found at 300px")
+                else:
+                    off = [abs(v) for v in json.loads(edge)]
+                    if max(off) > 1:
+                        failed.append("at 300px the header sits %spx off the page's gutter" % off)
+                    else:
+                        passed += 1
                 # A listing's own words, in a row whose width a lister does
                 # not control: eighty characters with no spaces in them is a
                 # name levod accepts, and it pushed the whole board sideways.
