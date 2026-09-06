@@ -996,7 +996,7 @@ class Handler(BaseHTTPRequestHandler):
             })
 
         if method == "GET" and parts == ["rails"]:
-            return self._json(200, {"rails": app.rails.available()})
+            return self._json(200, {"rails": app.rails.available()}, cache="public, max-age=30")
 
         if method == "GET" and parts == ["watcher"]:
             w = app.watcher

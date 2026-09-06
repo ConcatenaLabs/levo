@@ -1357,6 +1357,37 @@ def run(d):
     ok.eq(code, 200, "an empty list is an answer about nothing")
     ok.eq(r.get("outputs"), [], "and says so")
 
+    # --- every refusal carries a documented code ---------------------------
+    #
+    # doc/api.md: a refusal is {code, error}, code from a fixed list a client
+    # may branch on. Every write route and the reads that can refuse, each
+    # given a body or query it must refuse.
+    ok.section("codes")
+    documented = {"sign_in_required", "not_allowed", "not_found", "method_not_allowed", "refused",
+                  "cap_exceeded", "malformed", "rate_limited", "node_unavailable", "busy", "internal"}
+    refusals = [("POST", "/api/auth/verify", {"message": "x", "signature": "x"}, None),
+                ("POST", "/api/stake/link", {}, buyer_tok), ("POST", "/api/stake/unlink", {"staker_pubkey": "zz"}, buyer_tok),
+                ("POST", "/api/outputs/check", {"outputs": "x"}, buyer_tok), ("POST", "/api/projects", {"project": {}, "terms": {}}, buyer_tok),
+                ("PATCH", "/api/projects/nope", {}, buyer_tok), ("DELETE", "/api/projects/nope", None, buyer_tok),
+                ("POST", "/api/projects/nope/lock", {}, buyer_tok), ("POST", "/api/projects/nope/buy", {}, buyer_tok),
+                ("POST", "/api/projects/nope/transaction", {}, buyer_tok), ("POST", "/api/projects/nope/reclaim", {}, buyer_tok),
+                ("POST", "/api/projects/nope/flag", {}, buyer_tok), ("POST", "/api/projects/nope/confirm", {}, buyer_tok),
+                ("GET", "/api/projects/nope", None, None), ("GET", "/api/nope", None, None), ("PUT", "/api/health", None, None),
+                ("GET", "/api/me", None, None), ("POST", "/api/projects", {"project": {}, "terms": {}}, None),
+                ("GET", "/api/projects?status=weird", None, None), ("GET", "/api/projects?limit=abc", None, None)]
+    wrong = []
+    for m_, path, body, t in refusals:
+        code, r = req(m_, path, body, token=t)
+        if code < 400:
+            wrong.append("%s %s answered %d" % (m_, path, code))
+        elif not isinstance(r, dict) or not r.get("code") or not str(r.get("error", "")).strip():
+            wrong.append("%s %s -> %d without code and error" % (m_, path, code))
+        elif r["code"] not in documented:
+            wrong.append("%s %s -> code %r is not documented" % (m_, path, r["code"]))
+    ok.eq(wrong, [], "%d refusals, each with a documented code and a sentence" % len(refusals))
+    code, r, h = _req(d.base, "GET", "/api/rails")
+    ok.ok("max-age=30" in (h.get("Cache-Control") or ""), "rails may be held for half a minute, as the document says")
+
     # --- the statement a wallet is asked to sign ---------------------------
     ok.section("login")
     code, ch = req("POST", "/api/auth/challenge")
