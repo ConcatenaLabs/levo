@@ -1452,6 +1452,15 @@ def _at_least_one(text):
     return n
 
 
+def _amount(text):
+    """A token amount as typed: a positive decimal, "1,000.5" allowed, "10,5"
+    and "abc" refused here rather than after the node has been looked up.
+    How many decimals the token allows is the sale's to say, later."""
+    if U.parse(text, decimals=18) in (None, 0):
+        raise argparse.ArgumentTypeError("%r is not an amount of tokens: write it like 40, or 0.5" % text)
+    return text
+
+
 def _zero_or_more(text):
     try:
         n = int(text)
@@ -1547,7 +1556,7 @@ def main():
 
     b = sub.add_parser("buy", help="buy, end to end")
     b.add_argument("slug", help=SLUG)
-    b.add_argument("--tokens", required=True,
+    b.add_argument("--tokens", required=True, type=_amount,
                    help="how many tokens, in the token's own units (40, or 0.5)")
     # The rails a levod offers are its own (`GET /api/rails`); naming one here
     # as a default would hardcode a ticker this file elsewhere refuses to
@@ -1578,7 +1587,7 @@ def main():
     rd = sub.add_parser("record", help="tell Levo about a purchase it has not recorded")
     rd.add_argument("slug", help=SLUG)
     rd.add_argument("--txid", required=True, help="the purchase transaction")
-    rd.add_argument("--tokens", required=True,
+    rd.add_argument("--tokens", required=True, type=_amount,
                     help="how many tokens it bought, in the token's own units")
     rd.add_argument("--payment", type=int,
                     help="what it paid, in atoms (default: the covenant's price)")
