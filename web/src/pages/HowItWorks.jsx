@@ -186,6 +186,24 @@ export default function HowItWorks() {
         {' '}does that on your own node.
       </p>
 
+      <h2 className="section-h">What Levo keeps</h2>
+      <p>
+        Your account is a public key. Levo keeps that key, the listings you make
+        and the purchases it records for you &mdash; the allocation ledger &mdash;
+        in a file on the operator&rsquo;s server, with copies on the same machine.
+        Your session is a token in this browser&rsquo;s local storage, good for
+        twelve hours; there are no cookies. A listing you are drafting stays in
+        this tab&rsquo;s session storage until you submit it or close the tab.
+      </p>
+      <p>
+        The server&rsquo;s log keeps the address a request came from with the path
+        it asked for and the answer&rsquo;s status, as any web server does, and the
+        address counts against the rate limits. Nothing on these pages is loaded
+        from anywhere else: no analytics, no third-party scripts, and the fonts
+        are served by the app itself. What you buy is on the chain, which is
+        public, whether or not Levo records it.
+      </p>
+
       <h2 className="section-h">The levo command</h2>
       <p>
         <span className="mono">levo</span> is a command-line client for everything
