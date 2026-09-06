@@ -138,7 +138,11 @@ def api(method, path, body=None, token=None):
         try:
             raise Fail(json.loads(e.read())["error"])
         except (ValueError, KeyError):
-            raise Fail("HTTP %s from %s" % (e.code, path))
+            # No JSON and no sentence: what a proxy says when levod itself is
+            # not answering, or a page where a levod was expected.
+            raise Fail("%s answered HTTP %s for %s with no explanation; if Levo "
+                       "is restarting, try again in a minute, and otherwise check "
+                       "that LEVO_URL points at a levod" % (LEVO_URL, e.code, path))
     except urllib.error.URLError as e:
         raise Fail("cannot reach levod at %s: %s" % (LEVO_URL, e))
 

@@ -431,6 +431,31 @@ def run(ok, rig, levod, env):
           "a listing file that is not there is said so, before signing in", out[-120:])
     code, out = cold("rescue", "--terms", "/nonexistent/sale.json")
     ok.ok(code != 0 and "there is no file at" in out, "and so is a terms file", out[-120:])
+    # A proxy in front of a stopped levod answers with a page, not JSON: the
+    # command says so and what to do, rather than "HTTP 502 from /api/...".
+    import http.server
+    import threading
+
+    class Down(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):
+            body = b"<h1>Levo is restarting.</h1>"
+            self.send_response(502)
+            self.send_header("Content-Type", "text/html")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *a):
+            pass
+    srv = http.server.HTTPServer(("127.0.0.1", 0), Down)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    try:
+        code, out = cold("sales", LEVO_URL="http://127.0.0.1:%d" % srv.server_address[1])
+        ok.ok(code != 0 and "HTTP 502" in out and "restarting" in out and "LEVO_URL" in out
+              and "Traceback" not in out,
+              "a proxy page in place of levod is a sentence with the next step", out[-240:])
+    finally:
+        srv.shutdown()
 
 
 def main():
