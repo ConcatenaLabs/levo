@@ -50,7 +50,8 @@ authorises no payment. Sign it exactly as issued.
 
 **`POST /api/auth/verify`** `{message, signature, address?}` → `{token, account,
 …}`. `signature` is a base64 recoverable signature over the message, as
-`sequentia-cli signmessage` and every wallet's sign-message produces. `address`
+`sequentia-cli signmessage` produces and as a wallet's sign-message does where
+it follows that form. `address`
 is optional and checked when given: a signature over slightly different bytes
 recovers to a key nobody holds, and naming the address turns that into an error
 rather than a phantom account.
