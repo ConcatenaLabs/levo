@@ -255,7 +255,7 @@ def _witness_program(v, version):
     try:
         raw = bytes.fromhex(text)
     except ValueError:
-        raise ValueError("treasury_prog must be hex")
+        raise ValueError("the treasury must be given as an address, or as its witness program in hex")
     if len(raw) not in lengths:
         raise ValueError(
             "a version-%d treasury witness program is %s bytes, not %d"
@@ -385,8 +385,8 @@ class SaleTerms:
             # nLockTime is 32 bits. A larger operand compiles into the reclaim
             # leaf and can never be satisfied: the tokens could be sold but
             # never taken back.
-            raise ValueError("close_locktime must be a block height or a unix "
-                             "time no larger than 4294967295")
+            raise ValueError("the close must be a block height or a unix time, no "
+                             "larger than 4294967295")
         if self.total_atoms is not None:
             if self.total_atoms < self.min_lot:
                 raise ValueError("the amount for sale must be at least the minimum purchase, "

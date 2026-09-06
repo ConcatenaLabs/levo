@@ -111,8 +111,8 @@ def _txid_or_none(value):
     if not text:
         return None
     if not TXID_RE.match(text):
-        raise PlatformError("issuance_txid must be the 64-hex id of the "
-                            "transaction that issued the token, or empty")
+        raise PlatformError("the issuance transaction must be the 64-hex id of the "
+                            "transaction that issued the token, or left empty")
     return text
 
 
