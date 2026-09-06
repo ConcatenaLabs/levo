@@ -5,7 +5,7 @@ import { useStore } from '../lib/store'
 import { signStakerMessage, supportsStakerSigning, getStakerPublicKey, hasProvider,
          friendly } from '../lib/wallet'
 import { amount, capitalise, compact, positive, shortHex, timeLabel } from '../lib/format'
-import { Copy, Hex, Notice, usePageTitle } from '../components/ui'
+import { Copy, Hex, Notice, usePageTitle, useReread } from '../components/ui'
 import SignIn from '../components/SignIn'
 import Beam from '../components/Beam'
 import { Status } from './Projects'
@@ -140,11 +140,11 @@ function MyProjects() {
   const [projects, setProjects] = useState(null)
   const [error, setError] = useState(null)
   const [total, setTotal] = useState(0)
-  useEffect(() => {
-    api.myProjects({ limit: 25 })
-      .then((r) => { setProjects(r.projects); setTotal(r.total) })
-      .catch((e) => setError(e.message))
-  }, [])
+  const loadProjects = () => api.myProjects({ limit: 25 })
+    .then((r) => { setProjects(r.projects); setTotal(r.total) })
+  useEffect(() => { loadProjects().catch((e) => setError(e.message)) }, [])
+  // A listing locked or reclaimed from its own page shows here without a reload.
+  useReread(loadProjects, 30000)
   if (error) return <Notice kind="bad">{error}</Notice>
   if (!projects) return <p className="dim small">Loading…</p>
   if (!projects.length) return <p className="dim small">You have not listed a project. <Link to="/launch">Launch one.</Link></p>
@@ -186,11 +186,12 @@ function MyPositions() {
   const [positions, setPositions] = useState(null)
   const [error, setError] = useState(null)
   const [total, setTotal] = useState(0)
-  useEffect(() => {
-    api.myPositions({ limit: 25 })
-      .then((r) => { setPositions(r.positions); setTotal(r.total) })
-      .catch((e) => setError(e.message))
-  }, [])
+  const loadPositions = () => api.myPositions({ limit: 25 })
+    .then((r) => { setPositions(r.positions); setTotal(r.total) })
+  useEffect(() => { loadPositions().catch((e) => setError(e.message)) }, [])
+  // A purchase the watcher records, or one made in another tab, shows here
+  // without a reload.
+  useReread(loadPositions, 30000)
   if (error) return <Notice kind="bad">{error}</Notice>
   if (!positions) return <p className="dim small">Loading…</p>
   if (!positions.length) return <p className="dim small">No purchases through Levo yet. <Link to="/projects">See the sales.</Link></p>
