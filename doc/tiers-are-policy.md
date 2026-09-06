@@ -43,10 +43,11 @@ transaction, whether or not they have ever seen Levo.
 So a tier cap is an allocation policy Levo applies to every purchase it plans.
 It is real in the sense that Levo refuses to plan a purchase beyond it and keeps
 a cumulative ledger per account per sale, one that only grows and only by named
-transactions. A purchase Levo built is entered in that ledger the moment its
-treasury credit is seen on chain, whether or not the buyer comes back to say
-so: Levo knows the transaction's id before anything is signed, so a buyer
-cannot keep their commitment at zero by staying quiet. It is not real in the
+transactions. A purchase Levo built is entered in that ledger the moment
+Levo's node sees its treasury credit, in the mempool or in a block, whether or
+not the buyer comes back to say so: Levo knows the transaction's id before
+anything is signed, so a buyer cannot keep their commitment at zero by staying
+quiet. It is not real in the
 sense that consensus would stop somebody who ignored Levo entirely, and a
 purchase built outside Levo is counted against a cap only if somebody records
 it.
