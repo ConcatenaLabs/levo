@@ -225,7 +225,7 @@ bin/levo buy helios-grid --tokens 40                 # picks unblinded inputs, b
 | `LEVO_TRACE` | Set to `1` to print the full traceback when a command fails, instead of the one-line sentence. |
 
 `levo --help` lists every command: `sales`, `show`, `verify`, `whoami`,
-`positions`, `link`, `keygen`, `create`, `lock`, `buy`, `record`, `reclaim`, `terms`,
+`positions`, `buyers`, `link`, `keygen`, `create`, `lock`, `buy`, `record`, `reclaim`, `terms`,
 `rescue`, `withdraw`, and `flag` for an operator. `levo --version` names the
 commit the checkout is at, which is the one fact a report about a levo needs,
 since Levo has no version number. `record` exists for a
