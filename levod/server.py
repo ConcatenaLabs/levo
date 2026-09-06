@@ -1418,9 +1418,13 @@ class Handler(BaseHTTPRequestHandler):
                  '  <link rel="self" href="%s/feed.xml" />' % esc(origin),
                  "  <id>%s/feed.xml</id>" % esc(origin),
                  "  <updated>%s</updated>" % rfc3339(latest)]
+        # The words the board uses for a sale's state, not the wire's.
+        said = {"live": "open", "partial": "open", "draft": "not funded", "ghost": "not funded",
+                "closed": "reclaimable", "sold_out": "sold out", "reclaimed": "reclaimed"}
         for slug, p in listings:
             sale = getattr(p, "sale", None)
-            status = str(getattr(sale, "status", "") or "draft").replace("_", " ")
+            raw = str(getattr(sale, "status", "") or "draft")
+            status = said.get(raw, raw.replace("_", " "))
             url = "%s/p/%s" % (origin, slug)
             lines += ["  <entry>",
                       "    <title>%s (%s) \u00b7 %s</title>" % (esc(p.name), esc(p.ticker), esc(status)),
