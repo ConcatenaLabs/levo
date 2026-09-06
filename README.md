@@ -333,7 +333,10 @@ by hand inside a standard-library handler is the kind of code that goes wrong
 quietly.
 
 One route covers both the API (`/levo/api/...`) and the app, because levod
-serves them from one origin. Uptime checks should watch `/levo/api/health`,
+serves them from one origin. It also answers `robots.txt` and a `sitemap.xml`
+that names every public sale page, built from the same listings the board
+shows, so a sale can be found without running the app; both need
+`LEVOD_ORIGIN` to write absolute addresses. Uptime checks should watch `/levo/api/health`,
 which answers 503 when the node is unreachable, when the watcher has stalled,
 or when it runs but every poll is failing -- a watcher that reconciles nothing
 leaves sold-out sales showing as open.

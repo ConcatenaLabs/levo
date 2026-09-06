@@ -847,6 +847,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._api(method, path, query)
             if method != "GET":
                 return self._method_not_allowed()
+            if path in ("/sitemap.xml", "/robots.txt"):
+                return self._site_files(path)
             return self._static(path)
         except Unsupported as e:
             # A 429 without a Retry-After tells a client to back off and gives
@@ -1325,6 +1327,41 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(304, b"", ctype, cache=cache, headers={"ETag": etag})
         self._send(200, body, ctype, cache=cache, headers={"ETag": etag})
 
+
+    def _site_files(self, path):
+        """What a crawler asks for before it asks for anything else.
+
+        The board is the site's list of sales, but a crawler does not run the
+        app to read it; a sitemap names every public sale page directly, and
+        robots.txt says where the sitemap is. Both are built from the same
+        listings the board shows, so a listing an operator has taken off the
+        board is in neither. Everything is allowed: there is nothing on this
+        site a crawler should not read, and a page it is steered away from is
+        a sale nobody finds.
+        """
+        origin = self.origin() or ""
+        if path == "/robots.txt":
+            body = "User-agent: *\nAllow: /\n"
+            if origin:
+                body += "Sitemap: %s/sitemap.xml\n" % origin
+            return self._send(200, body.encode("utf-8"), "text/plain; charset=utf-8",
+                              cache="no-cache")
+        market = self.app.market
+        with market.lock:
+            listings = [(slug, p) for slug, p in market.projects.items()
+                        if not getattr(p, "hidden", False)]
+        lines = ['<?xml version="1.0" encoding="UTF-8"?>',
+                 '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">']
+        for rel in ("/", "/projects", "/how-it-works"):
+            lines.append("  <url><loc>%s</loc></url>" % html.escape(origin + rel, quote=True))
+        for slug, p in sorted(listings, key=lambda kv: -(getattr(kv[1], "created_at", 0) or 0)):
+            when = getattr(p, "flagged_at", None) or getattr(p, "created_at", None)
+            stamp = ("<lastmod>%s</lastmod>" % time.strftime("%Y-%m-%d", time.gmtime(when))) if when else ""
+            lines.append("  <url><loc>%s</loc>%s</url>"
+                         % (html.escape("%s/p/%s" % (origin, slug), quote=True), stamp))
+        lines.append("</urlset>")
+        return self._send(200, ("\n".join(lines) + "\n").encode("utf-8"),
+                          "application/xml; charset=utf-8", cache="no-cache")
 
     def _sale_head(self, path, body):
         """The app shell with this sale's name and one-liner in its head, or
