@@ -206,9 +206,9 @@ bin/levo buy helios-grid --tokens 40                 # picks unblinded inputs, b
 `levo --help` lists every command: `sales`, `show`, `verify`, `whoami`,
 `positions`, `link`, `keygen`, `create`, `lock`, `buy`, `record`, `reclaim`, `terms`,
 `rescue`, `withdraw`, and `flag` for an operator. `record` exists for a purchase built
-somewhere other than Levo: one Levo built is recorded by Levo itself once the
-treasury credit is on chain, since it knows the transaction's id before anything
-is signed. Levo reads its own node, which is not the node a purchase was
+somewhere other than Levo: one Levo built is recorded by Levo itself as soon as
+its node sees the treasury credit, in the mempool or in a block, since it knows
+the transaction's id before anything is signed. Levo reads its own node, which is not the node a purchase was
 broadcast to, so for a few seconds after a broadcast it has not heard of the
 transaction, and a record that did not go through then can be made whenever. Fees are
 never defaulted to the policy asset: `lock`, `buy` and `reclaim` pay them in the
