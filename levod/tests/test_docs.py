@@ -303,3 +303,20 @@ def test_the_units_pass_systemd_verify(t):
         text = (ROOT / p).read_text()
         unit_section = text.split("[Service]", 1)[0]
         t.ok("OnFailure=levo-alert@%n.service" in unit_section, "%s names the alert under [Unit]" % p)
+
+
+def test_the_cli_and_the_board_say_a_sale_state_in_the_same_words(t):
+    """The API says `partial`; the board said "open" and the CLI said
+    "partial", so the same sale read differently in the two places a person
+    looks. Both tables live in source; this keeps them one table."""
+    import ast
+    web = (ROOT / "web" / "src" / "pages" / "Projects.jsx").read_text()
+    m = re.search(r"export const STATUS_LABEL = \{(.*?)\}", web, re.S)
+    t.ok(m, "the board's STATUS_LABEL is where it was")
+    board = dict(re.findall(r"(\w+):\s*'([^']*)'", m.group(1)))
+    cli = (ROOT / "bin" / "levo").read_text()
+    m2 = re.search(r"STATUS_WORDS = (\{.*?\})\n", cli, re.S)
+    t.ok(m2, "the CLI's STATUS_WORDS is where it was")
+    words = ast.literal_eval(m2.group(1))
+    t.eq(words, board, "the CLI and the board map every sale status to the same word")
+    t.ok("partial" in words and "ghost" in words and "closed" in words, "and every status the API can say is in it")
