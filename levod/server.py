@@ -1289,11 +1289,17 @@ class Handler(BaseHTTPRequestHandler):
         allowed = _methods_for(parts)
         if allowed and method not in allowed:
             # The path exists; the verb does not belong to it. Answering 404
-            # tells a client its URL is wrong when only its method was.
+            # tells a client its URL is wrong when only its method was. The
+            # list is the one OPTIONS gives for the same URL, HEAD included
+            # where GET is: a POST to a read-only route was told "GET,
+            # OPTIONS" while HEAD worked, and a PUT to it was told otherwise.
+            verbs = list(allowed)
+            if "GET" in verbs and "HEAD" not in verbs:
+                verbs.append("HEAD")
             return self._json(405, {"code": "method_not_allowed",
                                     "error": "%s is not allowed here; this path "
                                              "takes %s" % (method, ", ".join(allowed))},
-                              headers={"Allow": ", ".join(allowed + ["OPTIONS"])})
+                              headers={"Allow": ", ".join(verbs + ["OPTIONS"])})
         return self._json(404, {"code": "not_found",
                                 "error": "nothing answers at this path; the routes "
                                          "levod serves are listed in doc/api.md"})
