@@ -43,8 +43,12 @@ def get(url):
 
 
 def main():
-    if len(sys.argv) < 2:
+    if len(sys.argv) != 2 or sys.argv[1] in ("-h", "--help"):
         print(__doc__)
+        return 0 if len(sys.argv) == 2 else 2
+    if not re.match(r"https?://", sys.argv[1]):
+        sys.stderr.write("smoke.py takes one argument, the address of a running Levo, "
+                         "such as https://sequentiatestnet.com/levo\n")
         return 2
     base = sys.argv[1].rstrip("/")
     passed, failed = 0, []
