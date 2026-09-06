@@ -68,13 +68,15 @@ export default function HowItWorks() {
         the person who owns it.
       </p>
       <p>
-        Stake is made on a node, not here. {' '}
+        Stake is made in a wallet that stakes, or on a node, and not here. A
+        wallet&rsquo;s staking screen bonds coins to a staking key it holds; on a
+        node,{' '}
         <span className="mono">sequentia-cli registerstake &lt;staking pubkey&gt; &lt;amount&gt;</span>{' '}
-        bonds coins to a staking key and locks them for the chain&rsquo;s
-        unbonding delay;{' '}
+        does the same, and{' '}
         <span className="mono">sequentia-cli getstakerinfo true true</span>{' '}
-        lists the keys a node holds and what each has bonded. Sign in with one
-        of those keys and the tier it earns is on the first screen.
+        lists the keys a node holds and what each has bonded. Either way the
+        coins are locked for the chain&rsquo;s unbonding delay. Sign in with the
+        staking key and the tier it earns is on the first screen.
       </p>
       {tiers && (
         <table className="terms" style={{ marginTop: '1.25rem' }}>
