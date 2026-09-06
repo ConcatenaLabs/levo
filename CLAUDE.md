@@ -24,16 +24,23 @@ ecosystem.
 | `web/` | Vite + React + plain CSS. No component library and no Tailwind: the visual identity is the point. |
 
 ```sh
-python3 levod/tests/run.py        # unit checks
-python3 levod/tests/test_e2e.py   # the API end to end, against a stub node
-python3 levod/tests/test_node.py  # against a real sequentiad; skipped without one
+python3 levod/tests/run.py          # unit checks, and the guards that walk the sources
+python3 levod/tests/test_e2e.py     # the API end to end, against a stub node
+python3 levod/tests/test_render.py  # every page in a real browser; skipped without a chromium
 npm --prefix web test && npm --prefix web run build
-python3 levod/demo.py             # the whole platform, no chain needed
+python3 levod/tests/test_node.py    # against a real sequentiad; skipped without one
+python3 levod/tests/test_cli.py     # bin/levo against a real sequentiad; skipped without one
+python3 levod/tests/test_browser.py # a purchase in a browser with a wallet; skipped without both
+python3 levod/demo.py               # the whole platform, no chain needed
 ```
 
-There is no CI. Those commands are the whole gate. `test_node.py` is the only
-one that proves anything about consensus; run it whenever `covenant.py`,
-`tx.py`, `pset.py` or `watcher.py` change.
+The first four run on every push and pull request (`.github/workflows/gate.yml`);
+merge only on a green run. The three that need a chain run on a machine that
+has one, and `test_node.py` is the only suite that proves anything about
+consensus: run it whenever `covenant.py`, `tx.py`, `pset.py` or `watcher.py`
+change. The web suite carries guards that walk the sources -- unused imports,
+free identifiers, markup in prose, decisions made on raw atom strings -- so a
+white screen or a truthy `"0"` fails a test rather than a reader.
 
 ## The custody line
 
@@ -109,6 +116,30 @@ mislead but cannot rob.
   those tests are the only thing standing between a subtle bug and a wrong
   address.
 
+- **An atom count crosses the wire as a decimal string, and `"0"` is truthy.**
+  In the app every decision about an amount goes through `big()` or
+  `positive()` (`web/src/lib/format.js`); `atoms ? a : b` takes the wrong
+  branch on exactly the value it was written for, and `atoms > 0` is right
+  only by a coercion that stops being exact past 2**53. A test walks the
+  sources for both shapes, across line breaks; mark geometry that legitimately
+  holds a double with `// geometry` on the line.
+- **Levo records the purchases it builds.** A segwit id excludes the witness,
+  so `build_buy` knows the transaction's id before the buyer signs; the sale
+  remembers it in `builds`, and the watcher records it against the account
+  when the treasury credit appears. That is what makes the cap a cap for a
+  buyer who never confirms. Do not "fix" the cap by reserving allowance at plan
+  time: every build spends the one resting outpoint, so parallel builds are
+  self-limiting, and a reservation would refuse a legitimate retry.
+- **A page left open has to stay true.** Anything that shows chain-derived
+  state -- the sale page, the board, the account lists -- reads again on a
+  timer and when its tab comes back into view (`useReread` in
+  `web/src/components/ui.jsx`), and the sale page once more at a time close.
+  A page that read once went on offering the buy panel after the close.
+- **The board is cached on the store's version.** `GET /api/projects` answers
+  from one rendering per (state version, height, query) for a few seconds.
+  Every mutation goes through `save()`, which is what moves the version; a
+  write that skipped it would serve the board stale.
+
 ## Secrets
 
 The repository is public. Never commit keys, seeds, `wallet.dat`, RPC
@@ -120,9 +151,17 @@ supplied through the environment on the server, never through the repo.
 - **Commit author:**
   `GracedEternalKingCabbageMan <151803062+GracedEternalKingCabbageMan@users.noreply.github.com>`
 - **Always open a pull request, then merge it yourself immediately.** The PR
-  records the change and its reasoning; nobody is waiting to review it.
+  records the change and its reasoning; nobody is waiting to review it. Wait
+  for the gate to go green first. One change at a time in one checkout: a
+  second ship chain running concurrently switched the working tree under the
+  first between its push and its `gh pr create`.
 - Deployment is pull-only: the server pulls from GitHub and builds there. Never
-  edit source on the server and never copy binaries onto it.
+  edit source on the server and never copy binaries onto it. Deploy with
+  `contrib/deploy.sh` and nothing else: a one-liner that pipes the build
+  through `tail` loses its exit status, and a build that fails leaves the old
+  bundle serving with every health check green. The script installs the units,
+  builds under a Node in Vite's range, restarts, and asks levod what it is
+  serving.
 
 <!-- BEGIN SHARED AGENT CONVENTIONS: identical in every Sequentia repo. Change it in all of them together. -->
 ## Working with git and GitHub here
