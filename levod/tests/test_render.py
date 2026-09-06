@@ -50,6 +50,52 @@ ROUTES = ["/", "/projects", "/how-it-works", "/launch", "/account",
 MIN_INK = 0.02
 
 
+# The audit a screen reader or a colour-blind reader would run on a page: a
+# language on the document, one h1, alt text on every image, a label on every
+# control, a name on every button and link, and text that clears the contrast
+# ratio its size needs (4.5, or 3 for large text). Text over a gradient or an
+# image is skipped, since its background cannot be read off the style. It
+# returns the faults as a JSON list, empty when the page passes.
+A11Y_JS = r'''(() => {
+  const out = [];
+  if (!document.documentElement.lang) out.push('html has no lang');
+  const h1 = document.querySelectorAll('h1').length; if (h1 !== 1) out.push('h1 count ' + h1);
+  document.querySelectorAll('img').forEach(i => { if (!i.hasAttribute('alt')) out.push('img without alt: ' + (i.getAttribute('src')||'').slice(-40)); });
+  document.querySelectorAll('input:not([type=hidden]),select,textarea').forEach(el => {
+    const id = el.id; const lab = id && document.querySelector('label[for="' + CSS.escape(id) + '"]');
+    const wrapped = el.closest('label'); const aria = el.getAttribute('aria-label') || el.getAttribute('aria-labelledby');
+    if (!lab && !wrapped && !aria) out.push('control without label: ' + (el.name||el.id||el.placeholder||el.outerHTML.slice(0,60)));
+  });
+  document.querySelectorAll('button,a[href],[role=button]').forEach(el => {
+    const name = (el.innerText||'').trim() || el.getAttribute('aria-label') || el.getAttribute('title') || (el.querySelector('img')&&el.querySelector('img').alt) || (el.querySelector('svg')&&el.querySelector('svg').getAttribute('aria-label'));
+    if (!name) out.push('no accessible name: ' + el.outerHTML.slice(0,80));
+  });
+  const lum = (r,g,b)=>{const f=c=>{c/=255;return c<=0.03928?c/12.92:Math.pow((c+0.055)/1.055,2.4)};return 0.2126*f(r)+0.7152*f(g)+0.0722*f(b)};
+  const parse = s => { const m = (s||'').match(/rgba?\(([\d.]+),\s*([\d.]+),\s*([\d.]+)(?:,\s*([\d.]+))?\)/); return m ? [+m[1],+m[2],+m[3], m[4]===undefined?1:+m[4]] : null; };
+  const bgOf = el => { let e = el; while (e) { const cs = getComputedStyle(e); if (cs.backgroundImage && cs.backgroundImage !== 'none') return null; const c = parse(cs.backgroundColor); if (c && c[3] > 0.99) return c; e = e.parentElement; } return parse(getComputedStyle(document.documentElement).backgroundColor) || [255,255,255,1]; };
+  const seen = new Set(); const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT); let n;
+  while ((n = walker.nextNode())) {
+    const t = n.textContent.trim(); if (!t) continue; const el = n.parentElement; if (!el || seen.has(el)) continue; seen.add(el);
+    const cs = getComputedStyle(el); if (cs.visibility==='hidden'||cs.display==='none') continue;
+    const r = el.getBoundingClientRect(); if (!r.width || !r.height) continue;
+    const fg = parse(cs.color); if (!fg) continue; const bg = bgOf(el); if (!bg) continue;
+    const L1 = lum(fg[0],fg[1],fg[2]), L2 = lum(bg[0],bg[1],bg[2]); const ratio = (Math.max(L1,L2)+0.05)/(Math.min(L1,L2)+0.05);
+    const size = parseFloat(cs.fontSize); const bold = parseInt(cs.fontWeight) >= 700;
+    const large = size >= 24 || (size >= 18.66 && bold); const need = large ? 3 : 4.5;
+    if (ratio < need) out.push('contrast ' + ratio.toFixed(2) + ' < ' + need + ' on "' + t.slice(0,30) + '" ' + cs.color + ' on rgb(' + bg.slice(0,3) + ') ' + size + 'px ' + el.tagName + '.' + el.className);
+  }
+  return JSON.stringify(out);
+})()'''
+
+# Four faults planted on a page the audit passes, to prove the audit bites.
+PLANT_JS = """(() => {
+  const i = document.createElement('img'); i.src = 'x.png'; document.body.appendChild(i);
+  const b = document.createElement('button'); document.body.appendChild(b);
+  const p = document.createElement('p'); p.textContent = 'faint text'; p.style.color = '#999';
+  p.style.background = '#fff'; document.body.appendChild(p);
+  const t = document.createElement('input'); document.body.appendChild(t); return 1; })()"""
+
+
 def find_chromium():
     for c in CHROMIUM_CANDIDATES:
         if c and os.path.isfile(c) and os.access(c, os.X_OK):
@@ -289,6 +335,47 @@ def main():
             else:
                 failed.append("a sale page left open did not pick up an edit within 40s (shows %r)" % shown)
             call("PATCH", "/api/projects/helios-grid", {"summary": before}, token=tok)
+        finally:
+            page.stop()
+
+        # --- every page can be read by everyone -----------------------------
+        #
+        # Signed out and signed in, since the forms -- the listing, the buy
+        # panel, the account -- only exist for a signed-in reader. The audit
+        # is the suite's own, so its four planted faults are checked first.
+        page = cdp.Page(chromium)
+        try:
+            page.go(demo.base + "/how-it-works", settle=1.0)
+            page.eval(PLANT_JS)
+            planted = _json.loads(page.eval(A11Y_JS))
+            if len(planted) == 4:
+                passed += 1
+            else:
+                failed.append("the accessibility audit missed a planted fault: %r" % planted)
+            ch = call("POST", "/api/auth/challenge")
+            tok = call("POST", "/api/auth/verify", {"message": ch["message"],
+                                                   "signature": SH.sign_recoverable(sec, ch["message"])})["token"]
+            pages = ROUTES + [p for p in ("/p/helios-grid", "/p/meridian-salt") if p not in ROUTES]
+            for signed_in in (False, True):
+                if signed_in:
+                    page.go(demo.base + "/", settle=0.5)
+                    page.eval("localStorage.setItem('levo.session', %s)" % _json.dumps(tok))
+                for path in pages:
+                    page.go(demo.base + path, settle=1.5)
+                    if path == "/account":
+                        # The second pass must be the signed-in one, or it
+                        # audits the sign-in pane twice and the account never.
+                        if ("Your positions" in page.text()) == signed_in:
+                            passed += 1
+                        else:
+                            failed.append("the account page did not follow the session (signed in: %s)" % signed_in)
+                    found = _json.loads(page.eval(A11Y_JS))
+                    if found:
+                        failed.append("%s (%s) fails the accessibility audit: %s"
+                                      % (path, "signed in" if signed_in else "signed out", found[:3]))
+                    else:
+                        passed += 1
+            page.eval("localStorage.removeItem('levo.session')")
         finally:
             page.stop()
 

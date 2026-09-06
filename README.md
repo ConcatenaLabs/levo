@@ -269,6 +269,11 @@ leave the bundle building and the routes answering and still ship a white
 screen. It then drives a 300-pixel viewport over the debugging protocol and
 fails on the two things a screenshot cannot see: a heading that breaks onto a
 line with nothing on it, and a panel still plotted where its labels cannot fit.
+Last it runs the audit a screen reader or a colour-blind reader would, on every
+page signed out and signed in: a language on the document, one heading at the
+top, alt text on every image, a label on every control, a name on every button
+and link, and text that clears the contrast its size needs. Four faults are
+planted on a page first, to prove the audit bites.
 
 The CLI test starts a node and a levod and drives `bin/levo` as a person would:
 sign in, list, lock, verify, price, buy, and reclaim after the close. The CLI
