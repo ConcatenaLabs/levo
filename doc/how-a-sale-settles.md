@@ -194,7 +194,13 @@ buy, and the sale is sold out the moment it is seen rather than a block later.
 In the steady state none of that costs a scan: every sale is where it was, its
 own outpoint answers, and the UTXO set is walked only for a sale whose outpoint
 has moved -- and, every tenth poll, to notice assets resting at a sale address
-that the covenant does not sell.
+that the covenant does not sell. On those same rounds, and on the first poll
+after a start, the watcher also looks at the address of every sale still
+waiting for its lock. A confirmed output there holding exactly the published
+amount of the token is the lock, and the sale opens as it would have had the
+project confirmed the send itself: an issuer whose confirmation gave up, or
+whose wallet broadcast and closed, does not leave a draft for ever with its
+allocation already at the address.
 
 The watcher also carries the allocation ledger's one dependency on it. Levo
 knows the id of every purchase it builds before the buyer signs -- a segwit id
