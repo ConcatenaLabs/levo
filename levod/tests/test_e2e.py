@@ -1336,7 +1336,7 @@ def run(d):
     # refused, by checks that asked for an int where an atom count beside
     # them took either.
     ok.section("wire in")
-    t5 = {k: (str(v) if isinstance(v, int) else v) for k, v in dict(terms, min_lot=terms["min_lot"] + 11, reclaim_xonly="55" * 32).items()}
+    t5 = {k: (str(v) if isinstance(v, int) else v) for k, v in dict(terms, min_lot=terms["min_lot"] + 11).items()}
     code, r = req("POST", "/api/projects", {"project": dict(meta, slug="strings", decimals="8"), "terms": t5}, token=issuer_tok)
     ok.eq(code, 201, "a listing with every number as a string, decimals included")
     sspk = r["lock"]["script_pubkey"]
