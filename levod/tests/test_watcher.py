@@ -1315,3 +1315,25 @@ def test_builds_survive_a_save_and_are_bounded(t):
          "the same transaction noted twice is one build, the newer one")
     s.mark_ghost()
     t.eq(s.builds, [], "a ghost has nothing to attribute: its outpoint is gone")
+
+
+def test_a_hint_that_pointed_where_the_sale_now_rests_is_dropped(t):
+    """The live deployment carried its resting outpoint as a candidate for days:
+    the hint had been followed, and nothing removed it."""
+    s = _sale()
+    rpc = FakeRPC()
+    rpc.txouts[("ab" * 32, 0)] = {"value": TOTAL / 1e8, "confirmations": 6,
+                                  "scriptPubKey": {"hex": s.script_pubkey}}
+    rpc.blocks[100] = "block-100"
+    w = _watch(s, rpc)
+    w.poll()
+    s.expect_remainder_at("f9" * 32, 1)
+    del rpc.txouts[("ab" * 32, 0)]
+    rpc.txouts[("f9" * 32, 1)] = {"value": (TOTAL - 40 * 10**8) / 1e8,
+                                  "scriptPubKey": {"hex": s.script_pubkey}}
+    rpc.txs["f9" * 32] = {"vin": [{"txid": "ab" * 32, "vout": 0}], "vout": []}
+    w.poll()
+    t.eq(s.funding["txid"], "f9" * 32, "the sale moved to the hinted remainder")
+    t.eq(s.candidates, [], "and the hint that pointed there is gone")
+    w.poll()
+    t.eq(s.candidates, [], "and stays gone")

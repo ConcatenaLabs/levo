@@ -862,6 +862,11 @@ class Watcher:
         keep.pop("unverifiable", None)      # it is right here; nothing is unverified
         keep.update({"txid": txid, "vout": int(vout), "atoms": atoms})
         sale.funding = keep
+        # A hint that pointed here has done its work. Left in place it is one
+        # more gettxout the next time the sale moves, and a state file that
+        # says the watcher is still looking for where the sale already is.
+        sale.candidates = [c for c in sale.candidates
+                           if not (c.get("txid") == txid and int(c.get("vout", -1)) == int(vout))]
         sale.locked_atoms = atoms
         total = sale.terms.total_atoms or atoms
         sale.sold_atoms = max(0, total - atoms)
