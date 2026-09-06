@@ -304,6 +304,19 @@ export default function HowItWorks() {
           elsewhere is entered when somebody records it. The chain, not the
           ledger, is the authority on what a sale holds.
         </dd>
+
+          <dt>Open, not funded, reclaimable, reclaimed, sold out</dt>
+          <dd>
+            The states a sale is shown in, on the board and by the <span className="mono">levo</span> command.
+            <b>Open</b> means the tokens are locked and anyone with a tier may buy.
+            <b>Not funded</b> means the project has not sent its tokens to the sale
+            address yet, or a Bitcoin reorg undid the funding. <b>Reclaimable</b> means
+            the sale has passed its close, so the project may take back whatever did
+            not sell &mdash; until it does, the sale can still be bought from.
+            <b>Reclaimed</b> and <b>sold out</b> are the two ends: nothing rests at the
+            address any more. The API says the same in its own words, listed in
+            doc/api.md.
+          </dd>
       </dl>
 
       <div className="btn-row" style={{ marginTop: '2.5rem' }}>
