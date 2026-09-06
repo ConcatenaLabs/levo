@@ -125,10 +125,12 @@ Where the deployment reads an asset registry (`LEVOD_REGISTRY_URL`, published in
 `/api/config`), the token is looked up there when the listing is made. A listing
 whose ticker or decimals contradict a registered contract is refused, because a
 wallet reading the registry would show something else; an asset with no entry is
-listed as it is, and the sale page says which of the two it is. `terms`: `token_asset`, `price_num`, `price_den`, `min_lot`,
-`total_atoms`, `close_locktime`, `reclaim_xonly`, and the treasury as either
-`treasury_address` or `treasury_prog` (+ `treasury_ver`). The price is stored
-in lowest terms, so the response is what the address was derived from.
+listed as it is, and the sale page says which of the two it is.
+
+`terms`: `token_asset`, `price_num`, `price_den`, `min_lot`, `total_atoms`,
+`close_locktime`, `reclaim_xonly`, and the treasury as either `treasury_address`
+or `treasury_prog` (+ `treasury_ver`). The price is stored in lowest terms, so
+the response is what the address was derived from.
 
 A listing whose terms derive an address another listing already has is refused:
 two sales sharing one covenant could not be told apart on chain, and a buy from
@@ -198,13 +200,13 @@ signing, and refuses to offer a signature for a transaction it cannot read.
 
 A purchase built here is recorded by levod itself as soon as its node sees the
 treasury credit, in the mempool or in a block, against the account it was built
-for: the transaction id is known
-before anything is signed, since a segwit id excludes the witness and levod
-assembles every input and output, and the watcher looks for that id. The
-response carries it as `txid`. A buyer who broadcasts and says nothing more is
-therefore recorded all the same, which is what makes the cap a cap for
-purchases levod plans. `confirm` remains for purchases built elsewhere, and is
-harmless for one already recorded, answering `already_recorded`.
+for: the transaction id is known before anything is signed, since a segwit id
+excludes the witness and levod assembles every input and output, and the
+watcher looks for that id. The response carries it as `txid`. A buyer who
+broadcasts and says nothing more is therefore recorded all the same, which is
+what makes the cap a cap for purchases levod plans. `confirm` remains for
+purchases built elsewhere, and is harmless for one already recorded, answering
+`already_recorded`.
 
 **`POST /api/projects/<slug>/confirm`** `{txid, token_atoms, payment_atoms}`
 (session) records the purchase against the caller's cap. This writes Levo's
