@@ -50,6 +50,15 @@ def main():
               "add each to MODULES in run.py, or to STANDALONE if it runs on its own"
               % ", ".join(unlisted))
         return 1
+    # And the gate that runs on every push names every standalone suite, so a
+    # suite added here is not one CI quietly never runs.
+    gate = here.parent.parent / ".github" / "workflows" / "gate.yml"
+    if gate.is_file():
+        text = gate.read_text()
+        missing = sorted(name for name in STANDALONE if name + ".py" not in text)
+        if missing:
+            print("the CI gate (.github/workflows/gate.yml) does not run: %s" % ", ".join(missing))
+            return 1
     t = T()
     for name in MODULES:
         mod = importlib.import_module(name)
