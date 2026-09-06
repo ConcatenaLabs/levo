@@ -260,3 +260,8 @@ def test_the_entry_points_answer_help_and_refuse_arguments(t):
                        capture_output=True, text=True, timeout=30)
     t.eq(r.returncode, 2, "and it refuses an argument")
     t.eq(vectors.read_bytes(), before, "with the frozen vectors untouched either way")
+    # The two shell scripts in contrib answer too, and run nothing for it.
+    for script in ("contrib/deploy.sh", "contrib/levo-backup.sh"):
+        r = subprocess.run(["bash", str(ROOT / script), "--help"], capture_output=True, text=True, timeout=30)
+        t.eq(r.returncode, 0, "%s --help exits 0" % script)
+        t.ok(r.stdout.startswith("Usage:"), "and prints its usage", r.stdout[:80])
