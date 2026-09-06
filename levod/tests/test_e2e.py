@@ -1348,6 +1348,15 @@ def run(d):
     code, r = req("POST", "/api/projects/strings/lock", {"txid": "a5" * 32, "vout": "-1"}, token=issuer_tok)
     ok.eq(code, 400, "and a string that is not an index is still refused")
 
+    # --- a body that is not the documented shape is refused ----------------
+    ok.section("shape")
+    code, r = req("POST", "/api/outputs/check", {"outputs": "x"}, token=buyer_tok)
+    ok.eq(code, 400, "outputs that are not a list are refused, not read as none")
+    ok.ok("list" in r.get("error", ""), "saying what shape is wanted", r.get("error"))
+    code, r = req("POST", "/api/outputs/check", {"outputs": []}, token=buyer_tok)
+    ok.eq(code, 200, "an empty list is an answer about nothing")
+    ok.eq(r.get("outputs"), [], "and says so")
+
     # --- the statement a wallet is asked to sign ---------------------------
     ok.section("login")
     code, ch = req("POST", "/api/auth/challenge")

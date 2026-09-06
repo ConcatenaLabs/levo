@@ -1763,10 +1763,15 @@ class Platform:
         address form -- which is how a buyer ends up being told their ordinary
         funds are confidential.
         """
+        # A body that is not the documented list is refused rather than read
+        # as an empty one: a string here answered 200 with nothing checked,
+        # which a client would take as "none of my outputs can be spent".
+        if not isinstance(inputs, list):
+            raise PlatformError("outputs must be a list of {txid, vout}")
         out = []
-        for i in (inputs if isinstance(inputs, list) else [])[:MAX_INPUTS]:
+        for i in inputs[:MAX_INPUTS]:
             if not isinstance(i, dict) or not i.get("txid") or i.get("vout") is None:
-                raise PlatformError("each input needs a txid and a vout")
+                raise PlatformError("each output needs a txid and a vout")
             txid = str(i["txid"]).lower()
             try:
                 vout = int(i["vout"])
