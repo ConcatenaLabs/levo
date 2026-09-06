@@ -4,7 +4,7 @@ import { api } from '../lib/api'
 import { useStore } from '../lib/store'
 import { amount, capitalise, closeIn, closeLabel, compact, positive, priceLabel, prose, shortHex, timeLabel, treasurySpk } from '../lib/format'
 import { addressOf } from '../lib/bech32'
-import { Copy, Hex, Notice, usePageTitle } from '../components/ui'
+import { Copy, Hex, Notice, usePageTitle, useReread } from '../components/ui'
 import SignIn from '../components/SignIn'
 import Beam from '../components/Beam'
 import BuyFlow from '../components/BuyFlow'
@@ -435,30 +435,19 @@ export default function ProjectDetail() {
     return () => { alive = false }
   }, [slug])
 
-  // A page left open is a page that has to stay true. A sale that closed
-  // while this was on screen went on offering the buy panel; an edit made in
-  // another tab never appeared; the countdown never moved. So the sale is
-  // read again every half minute, again whenever the tab comes back into
-  // view, and once more the moment a time close passes, so the panel changes
-  // at the close rather than up to thirty seconds after it. A read that
-  // fails is not an error to show: the page keeps what it has.
+  // A page left open is a page that has to stay true: the sale is read again
+  // every half minute and whenever the tab comes back into view, and once
+  // more the moment a time close passes, so the panel changes at the close
+  // rather than up to thirty seconds after it.
+  const again = () => api.project(slug).then(setProject)
+  useReread(project ? again : null, 30000, [slug])
   useEffect(() => {
-    if (!project) return undefined
-    const again = () => api.project(slug).then(setProject).catch(() => {})
-    const every = setInterval(again, 30000)
-    const onVisible = () => { if (document.visibilityState === 'visible') again() }
-    document.addEventListener('visibilitychange', onVisible)
-    let atClose = null
-    const close = project.sale && Number(project.sale.terms.close_locktime)
-    if (close && close >= 500000000) {
-      const ms = close * 1000 - Date.now() + 1500
-      if (ms > 0 && ms < 2 ** 31 - 1) atClose = setTimeout(again, ms)
-    }
-    return () => {
-      clearInterval(every)
-      document.removeEventListener('visibilitychange', onVisible)
-      if (atClose) clearTimeout(atClose)
-    }
+    const close = project && project.sale && Number(project.sale.terms.close_locktime)
+    if (!close || close < 500000000) return undefined
+    const ms = close * 1000 - Date.now() + 1500
+    if (ms <= 0 || ms >= 2 ** 31 - 1) return undefined
+    const t = setTimeout(() => again().catch(() => {}), ms)
+    return () => clearTimeout(t)
   }, [slug, project && project.sale && project.sale.terms.close_locktime])
 
   // The countdown has to be current: a sale that closes at a block would

@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import { api } from '../lib/api'
 import { useStore } from '../lib/store'
-import { Notice, usePageTitle } from '../components/ui'
+import { Notice, usePageTitle, useReread } from '../components/ui'
 import { closeIn, closeLabel, compact, positive, priceLabel, shortHex } from '../lib/format'
 
 // What a state is CALLED, which is not always what levod calls it. "Closed"
@@ -95,12 +95,7 @@ export default function Projects() {
   useEffect(() => { load() }, [status, sort, q, page])
   // The board stays current on its own too: a sale that sold out or closed
   // while the board was open kept reading as open until somebody reloaded.
-  useEffect(() => {
-    const every = setInterval(load, 60000)
-    const onVisible = () => { if (document.visibilityState === 'visible') load() }
-    document.addEventListener('visibilitychange', onVisible)
-    return () => { clearInterval(every); document.removeEventListener('visibilitychange', onVisible) }
-  }, [status, sort, q, page])
+  useReread(load, 60000, [status, sort, q, page])
   // Typing filters as you stop typing, rather than on every keystroke.
   useEffect(() => {
     if (typed.trim() === q) return undefined
