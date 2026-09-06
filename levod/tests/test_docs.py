@@ -366,6 +366,7 @@ def test_a_token_amount_is_checked_before_the_node_is_looked_up(t):
     """`levo buy x --tokens abc` used to answer that sequentia-cli was not
     found: the amount was parsed after the node, so a typo got the wrong
     sentence. It is refused at the parser, with no node and no levod."""
+    import os
     import subprocess
     for cmd, bad in (("buy", "abc"), ("buy", "0"), ("buy", "10,5"), ("record", "-3")):
         r = subprocess.run([sys.executable, str(ROOT / "bin" / "levo"), cmd, "some-sale", "--tokens", bad]
