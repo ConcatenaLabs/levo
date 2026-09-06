@@ -279,3 +279,27 @@ def test_the_entry_points_answer_help_and_refuse_arguments(t):
         r = subprocess.run(["bash", str(ROOT / script), "--help"], capture_output=True, text=True, timeout=30)
         t.eq(r.returncode, 0, "%s --help exits 0" % script)
         t.ok(r.stdout.startswith("Usage:"), "and prints its usage", r.stdout[:80])
+
+
+def test_the_units_pass_systemd_verify(t):
+    """OnFailure= sat under [Service] once, where systemd does not know it: the
+    unit loaded, the journal said "Unknown key name 'OnFailure' ... ignoring",
+    and nothing paged anyone. systemd's own verifier says so before a deploy
+    does; where it is not installed the check says it skipped."""
+    import shutil
+    import subprocess
+    analyze = shutil.which("systemd-analyze")
+    if not analyze:
+        t.ok(True, "no systemd-analyze here; the unit check did not run")
+        return
+    units = sorted(str(p) for p in (ROOT / "contrib").glob("*.service")) + \
+            sorted(str(p) for p in (ROOT / "contrib").glob("*.timer"))
+    t.ok(len(units) >= 6, "the units are where the deploy script looks", units)
+    r = subprocess.run([analyze, "verify", "--man=no"] + units, capture_output=True, text=True, timeout=60)
+    noise = [l for l in (r.stdout + r.stderr).splitlines()
+             if l.strip() and "Unknown key" in l or "ignoring" in l.lower() or "Failed to" in l]
+    t.eq(noise, [], "systemd-analyze verify has nothing to say about the units")
+    for p in ("contrib/levod.service", "contrib/levo-backup.service"):
+        text = (ROOT / p).read_text()
+        unit_section = text.split("[Service]", 1)[0]
+        t.ok("OnFailure=levo-alert@%n.service" in unit_section, "%s names the alert under [Unit]" % p)
