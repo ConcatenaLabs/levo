@@ -300,9 +300,29 @@ def run(d):
         code, r = req("POST", "/api/auth/verify", raw=raw)
         ok.eq(code, 400, "%s is a 400, not a 500" % what)
         ok.ok("internal" not in r.get("error", ""), "%s: the error names the problem" % what)
-    code, r = req("POST", "/api/auth/verify", raw=b"{}", headers={"Content-Length": "abc"})
+    # These two are refused from the headers alone, and the refusal closes
+    # the connection. urllib writes a chunked body in a second send, after
+    # the headers, and lost a race with that close on a CI runner about one
+    # run in ten: EPIPE on the write instead of the 411 it was owed. Sent in
+    # one write, there is nothing to race.
+    def _one_write(hdrs, raw):
+        import http.client
+        c = http.client.HTTPConnection("127.0.0.1", int(d.base.rsplit(":", 1)[1]), timeout=10)
+        c.putrequest("POST", "/api/auth/verify", skip_accept_encoding=True)
+        for k, v in hdrs.items():
+            c.putheader(k, v)
+        c.putheader("Content-Type", "application/json")
+        c.endheaders(raw)
+        resp = c.getresponse()
+        text = resp.read()
+        c.close()
+        try:
+            return resp.status, (json.loads(text) if text else {})
+        except ValueError:
+            return resp.status, {}
+    code, r = _one_write({"Content-Length": "abc"}, b"{}")
     ok.ok(code in (400, 411), "a bad Content-Length is refused")
-    code, r = req("POST", "/api/auth/verify", raw=b"{}", headers={"Transfer-Encoding": "chunked"})
+    code, r = _one_write({"Transfer-Encoding": "chunked"}, b"2\r\n{}\r\n0\r\n\r\n")
     ok.eq(code, 411, "a chunked body is refused with 411")
     ok.eq((r or {}).get("code"), "malformed", "and the code malformed, since the body was never read")
     # One connection, many requests -- and behind Caddy the connection is
