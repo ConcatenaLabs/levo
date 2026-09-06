@@ -233,7 +233,9 @@ npm --prefix web run build        # the frontend gate
 
 Everything in that list that needs no Sequentia node also runs on every push
 and pull request, in `.github/workflows/gate.yml`, every page in a real
-browser included. The suites that need a chain say so and skip there.
+browser included. The suites that need a chain say so and skip there. How a
+change gets in, and the lines not to cross, are in
+[CONTRIBUTING.md](CONTRIBUTING.md).
 
 Schnorr signing is checked against the BIP340 vectors, the taproot tweak
 against BIP341's, the transaction serialisation against a txid a live node
