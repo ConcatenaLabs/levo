@@ -118,6 +118,11 @@ def test_the_readme_lists_every_levo_command(t):
     have = set(re.findall(r'sub\.add_parser\("([a-z]+)"', cli))
     t.eq(sorted(listed - have), [], "the README lists no command levo lacks")
     t.eq(sorted(have - listed), [], "and every command levo has is listed")
+    # The usage block at the top of the script is what `levo` with no
+    # arguments and `levo --help` open with, and it is typed by hand.
+    usage = set(re.findall(r"^    levo ([a-z]+)", cli.split('"""')[1], re.M))
+    t.eq(sorted(usage - have), [], "the usage block names no command levo lacks")
+    t.eq(sorted(have - usage), [], "and every command levo has is in the usage block")
 
 
 # --- limits: the numbers the document states are the constants ---------------
