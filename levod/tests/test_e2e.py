@@ -166,9 +166,10 @@ class Checker:
 
 class Drill:
     def __init__(self):
-        self.state = HERE / "_e2e-state.json"
-        if self.state.exists():
-            self.state.unlink()
+        # A file of its own, so two drills -- this one and a load test seeded
+        # from the same harness, say -- do not refuse each other over one
+        # fixed path in the tests directory.
+        self.state = Path(tempfile.mkdtemp(prefix="levo-e2e-")) / "state.json"
         self.webroot = Path(tempfile.mkdtemp(prefix="levo-e2e-web-"))
         os.environ["LEVOD_STATE"] = str(self.state)
         os.environ["LEVOD_SECRET"] = "test-secret-not-used-in-production"
@@ -1280,6 +1281,15 @@ def run(d):
     code, b4, h4 = _req(d.base, "GET", "/api/projects?status=all&limit=50", token=issuer_tok)
     ok.eq(h4.get("X-Board-Cache"), "miss", "a different reader kind (the session's own view) is its own entry")
     req("PATCH", "/api/projects/helios", {"summary": "Solar microgrids, tokenised."}, token=issuer_tok)
+
+    # --- the board finds a sale by its asset id ---------------------------
+    ok.section("search by id")
+    code, r = req("GET", "/api/projects?status=all&q=" + TOKEN)
+    ok.ok(any(p["slug"] == "helios" for p in r["projects"]), "the full asset id finds the sale")
+    code, r = req("GET", "/api/projects?status=all&q=" + TOKEN[:16].upper())
+    ok.ok(any(p["slug"] == "helios" for p in r["projects"]), "so does a prefix of it, in either case")
+    code, r = req("GET", "/api/projects?status=all&q=" + "f" * 32)
+    ok.eq([p["slug"] for p in r["projects"]], [], "and an id nobody sells finds nothing")
 
     # --- the statement a wallet is asked to sign ---------------------------
     ok.section("login")

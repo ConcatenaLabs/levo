@@ -131,7 +131,7 @@ export default function Projects() {
         </div>
         <div className="board-controls">
           <label className="visually-hidden" htmlFor="q">Search sales</label>
-          <input id="q" type="search" value={typed} placeholder="Search by name or ticker"
+          <input id="q" type="search" value={typed} placeholder="Search by name, ticker or asset id"
                  onChange={(e) => setTyped(e.target.value)} />
           <label className="visually-hidden" htmlFor="sort">Order</label>
           <select id="sort" value={sort} onChange={(e) => move({ sort: e.target.value })}>
