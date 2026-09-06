@@ -1,0 +1,16 @@
+[Unit]
+Description=Levo alert for %i
+Documentation=https://github.com/ConcatenaLabs/levo
+
+# Runs when a Levo unit names it in OnFailure=. One line to a person, through
+# contrib/levo-alert.sh; the topic it goes to lives in the environment file
+# named here, on this box and nowhere else.
+[Service]
+Type=oneshot
+User=root
+Environment=LEVO_ALERT_ENV=/etc/sequentia/levo-alert.env
+ExecStart=/root/sequentia/levo/contrib/levo-alert.sh "%i failed; journalctl -u %i says why"
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=read-only

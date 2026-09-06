@@ -275,7 +275,7 @@ def test_the_entry_points_answer_help_and_refuse_arguments(t):
     t.eq(r.returncode, 2, "and it refuses a word that is not an address")
     t.ok("one argument" in r.stderr, "with a sentence", r.stderr[:200])
     # The two shell scripts in contrib answer too, and run nothing for it.
-    for script in ("contrib/deploy.sh", "contrib/levo-backup.sh"):
+    for script in ("contrib/deploy.sh", "contrib/levo-backup.sh", "contrib/levo-alert.sh", "contrib/levo-check.sh"):
         r = subprocess.run(["bash", str(ROOT / script), "--help"], capture_output=True, text=True, timeout=30)
         t.eq(r.returncode, 0, "%s --help exits 0" % script)
         t.ok(r.stdout.startswith("Usage:"), "and prints its usage", r.stdout[:80])
