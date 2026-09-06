@@ -11,6 +11,7 @@ of the drill still runs.
 
 import json
 import os
+import re
 import sys
 import tempfile
 import threading
@@ -1223,6 +1224,7 @@ def run(d):
              '<meta property="og:type" content="website" />'
              '<meta property="og:title" content="Levo" />'
              '<meta property="og:description" content="generic" />'
+             '<meta property="og:image" content="/og.png" />'
              '</head><body><noscript>Levo is built in the browser.</noscript>'
              '<div id="root"></div></body></html>')
     (d.webroot / "index.html").write_text(shell, encoding="utf-8")
@@ -1237,6 +1239,12 @@ def run(d):
           "and its one-liner, escaped, as the description", text[:400])
     ok.ok('property="og:title" content="Helios Grid (HLX) \u00b7 Levo"' in text, "and in the social card")
     ok.ok("og:url" in text and "/p/helios" in text.split("og:url", 1)[1][:120], "with the page's own address")
+    ok.ok(re.search(r'og:image" content="http[^"]*/og\.png"', text),
+          "and the card's image as a full address, which is what a previewer needs", text[:600])
+    code, home, _ = _req(d.base, "GET", "/")
+    htext = home.get("raw", "") if isinstance(home, dict) else str(home)
+    ok.ok(re.search(r'og:image" content="http[^"]*/og\.png"', htext),
+          "the home page's card too", htext[:600])
     etag_sale = h.get("ETag")
     code, generic, h2 = _req(d.base, "GET", "/p/nope-not-here")
     gtext = generic.get("raw", "") if isinstance(generic, dict) else str(generic)

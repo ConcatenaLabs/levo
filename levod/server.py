@@ -1327,8 +1327,10 @@ class Handler(BaseHTTPRequestHandler):
         # already publishes, escaped, and for nothing else.
         stamp = b""
         if target.name == "index.html":
-            filled = self._sale_head(path, body)
-            if filled is not None:
+            filled = self._sale_head(path, self._absolute_card(body))
+            if filled is None:
+                filled = self._absolute_card(body)
+            if filled != body:
                 body, stamp = filled, hashlib.sha1(filled).digest()[:6]
         ctype = {
             ".html": "text/html; charset=utf-8",
@@ -1390,6 +1392,24 @@ class Handler(BaseHTTPRequestHandler):
         lines.append("</urlset>")
         return self._send(200, ("\n".join(lines) + "\n").encode("utf-8"),
                           "application/xml; charset=utf-8", cache="no-cache")
+
+    def _absolute_card(self, body):
+        """The social card's image with an absolute address. The bundle writes
+        it relative to the app's base, which a browser resolves and a link
+        previewer does not: Open Graph wants a full URL, and a card whose image
+        is "/levo/og.png" is a card with no image. Unchanged when this Levo
+        does not know where it is reached."""
+        origin = self.origin()
+        if not origin or b'og:image" content="/' not in body:
+            return body
+        text = body.decode("utf-8", "replace")
+        text = re.sub(r'(<meta property="og:image" content=")/[^"]*/([^"/]+)(")',
+                      lambda mm: mm.group(1) + html.escape(origin, quote=True) + "/" + mm.group(2) + mm.group(3),
+                      text, count=1)
+        text = re.sub(r'(<meta property="og:image" content=")/([^"/]+)(")',
+                      lambda mm: mm.group(1) + html.escape(origin, quote=True) + "/" + mm.group(2) + mm.group(3),
+                      text, count=1)
+        return text.encode("utf-8")
 
     def _sale_head(self, path, body):
         """The app shell with this sale's name and one-liner in its head, or
