@@ -41,8 +41,8 @@ export default function HowItWorks() {
         <span className="mono">levo buy</span> does the lot.
       </p>
       <p>
-        <strong>To list:</strong> a tier that may list; an issued asset, registered so
-        wallets show its name; the whole allocation in a wallet you can send from; an
+        <strong>To list:</strong> a tier that may list; an issued asset, registered if
+        you want wallets to show its name; the whole allocation in a wallet you can send from; an
         address for the treasury, which is where buyers' payments land; and a
         reclaim key you can sign with outside a browser wallet, because reclaiming
         means signing a bare hash rather than a transaction a wallet would recognise.
@@ -71,7 +71,7 @@ export default function HowItWorks() {
         the person who owns it.
       </p>
       <p>
-        Stake is made in a wallet that stakes, or on a node, and not here. A
+        Stake is made in a wallet that stakes or on a node, not here. A
         wallet&rsquo;s staking screen bonds coins to a staking key it holds; on a
         node,{' '}
         <span className="mono">sequentia-cli registerstake &lt;staking pubkey&gt; &lt;amount&gt;</span>{' '}
@@ -194,8 +194,8 @@ export default function HowItWorks() {
         wallet signs, on your machine.
         {source ? <> It lives in <a href={source} target="_blank" rel="noopener noreferrer">
           the Levo repository</a> at <span className="mono">bin/levo</span>.</> : null}
-        {' '}Point it at this site by setting{' '}
-        <span className="mono">LEVO_URL</span>, and it needs Python 3 and{' '}
+        {' '}Point it at this site with{' '}
+        <span className="mono">LEVO_URL</span>. It needs Python 3 and{' '}
         <span className="mono">sequentia-cli</span> on your path.
       </p>
 
@@ -281,7 +281,7 @@ export default function HowItWorks() {
         <dd>
           Levo's own record of which account made which purchase, and the one
           thing the per-buyer caps are measured against. A purchase Levo built
-          is entered in it when the payment is seen on chain; one built
+          is entered in it as soon as Levo's node sees the payment; one built
           elsewhere is entered when somebody records it. The chain, not the
           ledger, is the authority on what a sale holds.
         </dd>
