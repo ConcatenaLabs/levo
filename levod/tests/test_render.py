@@ -30,6 +30,8 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parent.parent
 
+import cdp  # noqa: E402
+
 CHROMIUM_CANDIDATES = [
     os.environ.get("LEVO_CHROMIUM"),
     "/usr/bin/chromium", "/usr/bin/chromium-browser", "/usr/bin/google-chrome",
@@ -223,6 +225,45 @@ def main():
                 failed.append("%s logged %s" % (path, complaints[:2]))
             else:
                 passed += 1
+        # --- a page left open stays true -----------------------------------
+        #
+        # The sale page used to read its sale once. A sale that closed while
+        # the page was on screen went on offering the buy panel, and an edit
+        # made elsewhere never appeared. It reads again every half minute now,
+        # so an edit made through the API shows up on a page that was opened
+        # before it, without a reload.
+        import json as _json
+        import urllib.request as _url
+        import signhelper as SH
+        page = cdp.Page(chromium)
+        try:
+            page.go(demo.base + "/p/helios-grid", settle=1.5)
+            before = page.eval("(function(){const e=document.querySelector('.hero-lede'); return e? e.innerText:''})()")
+            def call(method, path, body=None, token=None):
+                req = _url.Request(demo.base + path, data=_json.dumps(body).encode() if body is not None else None,
+                                   method=method, headers={"Content-Type": "application/json",
+                                                           **({"Authorization": "Bearer " + token} if token else {})})
+                with _url.urlopen(req, timeout=10) as r:
+                    return _json.loads(r.read())
+            sec = 0x51ee0000000000000000000000000000000000000000000000000000000000a1   # the demo's issuer
+            ch = call("POST", "/api/auth/challenge")
+            tok = call("POST", "/api/auth/verify", {"message": ch["message"],
+                                                   "signature": SH.sign_recoverable(sec, ch["message"])})["token"]
+            call("PATCH", "/api/projects/helios-grid", {"summary": "Edited while the page was open."}, token=tok)
+            shown = None
+            for _ in range(40):
+                time.sleep(1)
+                shown = page.eval("(function(){const e=document.querySelector('.hero-lede'); return e? e.innerText:''})()")
+                if shown == "Edited while the page was open.":
+                    break
+            if shown == "Edited while the page was open." and before != shown:
+                passed += 1
+            else:
+                failed.append("a sale page left open did not pick up an edit within 40s (shows %r)" % shown)
+            call("PATCH", "/api/projects/helios-grid", {"summary": before}, token=tok)
+        finally:
+            page.stop()
+
         # --- and the same pages on a phone ---------------------------------
         #
         # A screenshot says a page painted; it does not say the words on it can
@@ -230,7 +271,6 @@ def main():
         # overprinted into one word at 320px, and the display face put the full
         # stop of the heading on a line of its own.
         try:
-            import cdp
             page = cdp.Page(chromium)
             try:
                 # 300, not 320: a phone at 320 with a visible scrollbar lays

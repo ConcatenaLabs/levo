@@ -93,6 +93,14 @@ export default function Projects() {
       .catch((e) => setError(e.message))
   }
   useEffect(() => { load() }, [status, sort, q, page])
+  // The board stays current on its own too: a sale that sold out or closed
+  // while the board was open kept reading as open until somebody reloaded.
+  useEffect(() => {
+    const every = setInterval(load, 60000)
+    const onVisible = () => { if (document.visibilityState === 'visible') load() }
+    document.addEventListener('visibilitychange', onVisible)
+    return () => { clearInterval(every); document.removeEventListener('visibilitychange', onVisible) }
+  }, [status, sort, q, page])
   // Typing filters as you stop typing, rather than on every keystroke.
   useEffect(() => {
     if (typed.trim() === q) return undefined

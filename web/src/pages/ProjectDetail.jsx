@@ -435,6 +435,32 @@ export default function ProjectDetail() {
     return () => { alive = false }
   }, [slug])
 
+  // A page left open is a page that has to stay true. A sale that closed
+  // while this was on screen went on offering the buy panel; an edit made in
+  // another tab never appeared; the countdown never moved. So the sale is
+  // read again every half minute, again whenever the tab comes back into
+  // view, and once more the moment a time close passes, so the panel changes
+  // at the close rather than up to thirty seconds after it. A read that
+  // fails is not an error to show: the page keeps what it has.
+  useEffect(() => {
+    if (!project) return undefined
+    const again = () => api.project(slug).then(setProject).catch(() => {})
+    const every = setInterval(again, 30000)
+    const onVisible = () => { if (document.visibilityState === 'visible') again() }
+    document.addEventListener('visibilitychange', onVisible)
+    let atClose = null
+    const close = project.sale && Number(project.sale.terms.close_locktime)
+    if (close && close >= 500000000) {
+      const ms = close * 1000 - Date.now() + 1500
+      if (ms > 0 && ms < 2 ** 31 - 1) atClose = setTimeout(again, ms)
+    }
+    return () => {
+      clearInterval(every)
+      document.removeEventListener('visibilitychange', onVisible)
+      if (atClose) clearTimeout(atClose)
+    }
+  }, [slug, project && project.sale && project.sale.terms.close_locktime])
+
   // The countdown has to be current: a sale that closes at a block would
   // otherwise go on claiming the same number of blocks left all afternoon. The
   // store keeps the height fresh for the whole app.
