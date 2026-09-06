@@ -227,6 +227,10 @@ npm --prefix web test             # the formatters, the parsers, and the guards 
 npm --prefix web run build        # the frontend gate
 ```
 
+Everything in that list that needs no Sequentia node also runs on every push
+and pull request, in `.github/workflows/gate.yml`, every page in a real
+browser included. The suites that need a chain say so and skip there.
+
 Schnorr signing is checked against the BIP340 vectors, the taproot tweak
 against BIP341's, the transaction serialisation against a txid a live node
 computed, the address encoder against an address a live node printed, and the
