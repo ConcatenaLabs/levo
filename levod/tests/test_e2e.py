@@ -293,6 +293,40 @@ def run(d):
     code, r = req("POST", "/api/auth/verify", raw=b"{}", headers={"Transfer-Encoding": "chunked"})
     ok.eq(code, 411, "a chunked body is refused with 411")
     ok.eq((r or {}).get("code"), "malformed", "and the code malformed, since the body was never read")
+    # One connection, many requests -- and behind Caddy the connection is
+    # shared between visitors, so a body a handler leaves unread became the
+    # NEXT request's first bytes: `{}` + `POST /api/health` parsed as the
+    # method `{}POST` and was answered 501, to whoever sent it.
+    import http.client
+    port = int(d.base.rsplit(":", 1)[1])
+    c = http.client.HTTPConnection("127.0.0.1", port, timeout=10)
+    started = time.monotonic()
+    for method, path, raw in (("POST", "/api/auth/challenge", b"{}"),
+                              ("POST", "/api/auth/challenge", b'{"why": "an empty POST is rarely empty"}'),
+                              ("POST", "/api/auth/verify", b"{"),
+                              ("GET", "/api/health", b"{}")):
+        c.request(method, path, body=raw, headers={"Content-Type": "application/json"})
+        c.getresponse().read()
+        c.request("GET", "/api/health")
+        r2 = c.getresponse()
+        r2.read()
+        ok.eq(r2.status, 200, "the request after an unread body on the same connection is answered (%s %s)" % (method, path))
+    ok.ok(time.monotonic() - started < 5, "without waiting on a body that was already read")
+    c.close()
+    for hdrs, raw, what in (({"Transfer-Encoding": "chunked"}, b"2\r\n{}\r\n0\r\n\r\n", "a chunked body"),
+                            ({"Content-Length": "abc"}, b"{}", "a mislabelled body")):
+        c = http.client.HTTPConnection("127.0.0.1", port, timeout=10)
+        c.putrequest("POST", "/api/auth/verify", skip_accept_encoding=True)
+        for k, v in hdrs.items():
+            c.putheader(k, v)
+        c.putheader("Content-Type", "application/json")
+        c.endheaders(raw)
+        r3 = c.getresponse()
+        r3.read()
+        ok.ok(r3.status in (400, 411), "%s is refused" % what)
+        ok.eq((r3.getheader("Connection") or "").lower(), "close",
+              "and %s, which stays on the socket, closes the connection with the refusal" % what)
+        c.close()
     code, r, h = _req(d.base, "GET", "/api/health")
     ok.eq(h.get("X-Content-Type-Options"), "nosniff", "security headers are sent")
     ok.eq(h.get("Server"), "levod", "the Server header names no interpreter version")
