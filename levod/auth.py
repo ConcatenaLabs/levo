@@ -424,6 +424,24 @@ class Sessions:
         mac = hmac.new(self.secret.encode(), b.encode(), hashlib.sha256).hexdigest()[:32]
         return "%s.%s" % (b, mac)
 
+    def expired(self, token):
+        """Whether this is a token this server issued whose time has run out.
+        A forged or garbled token is not expired, it is nothing; the two are
+        told apart so a person whose session ran out hears that, and a person
+        holding junk hears the same thing as no token at all."""
+        if not token or "." not in token:
+            return False
+        b, mac = token.rsplit(".", 1)
+        want = hmac.new(self.secret.encode(), b.encode(), hashlib.sha256).hexdigest()[:32]
+        if not hmac.compare_digest(mac, want):
+            return False
+        try:
+            pad = "=" * (-len(b) % 4)
+            body = json.loads(base64.urlsafe_b64decode(b + pad))
+            return int(body.get("exp", 0)) < self._now()
+        except Exception:
+            return False
+
     def verify(self, token):
         """Return the account pubkey for a valid token, else None."""
         if not token or "." not in token:

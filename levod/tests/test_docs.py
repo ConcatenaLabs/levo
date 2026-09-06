@@ -349,3 +349,14 @@ def test_the_cli_help_names_every_setting_the_readme_does(t):
     in_help = set(re.findall(r"^\s+([A-Z_]+)\s{2,}", block, re.M))
     t.eq(in_help, in_readme, "levo --help and the README name the same settings")
     t.ok("LEVO_TRACE" in in_help, "and LEVO_TRACE is one of them")
+
+
+def test_the_documented_session_lifetime_is_the_constant(t):
+    """doc/api.md and the README say a session is good for twelve hours; the
+    number lives in levod/auth.py. Change one and this names the other."""
+    import auth
+    hours = auth.SESSION_TTL // 3600
+    words = {12: "twelve", 24: "twenty-four", 6: "six", 8: "eight", 48: "forty-eight"}
+    t.ok(hours in words, "the lifetime is a number this guard can spell: %r hours" % hours)
+    for doc in ("doc/api.md", "README.md"):
+        t.ok("%s hours" % words.get(hours, "?") in (ROOT / doc).read_text(), "%s says %s hours" % (doc, words.get(hours)))

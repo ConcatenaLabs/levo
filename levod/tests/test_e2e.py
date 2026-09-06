@@ -280,6 +280,15 @@ def run(d):
     ok.ok("GET" in (h.get("Allow") or ""), "with an Allow header")
     code, r = req("PUT", "/api/health")
     ok.eq(code, 405, "an unsupported method is 405")
+    # A session that has run out is told so; junk and nothing hear the same.
+    import auth as _A
+    stale = _A.Sessions(secret=d.app.sessions.secret, ttl=-1).issue("02" + "ab" * 32)
+    code, r = req("GET", "/api/me", token=stale)
+    ok.eq(code, 401, "an expired session is refused")
+    ok.ok("run out" in r.get("error", ""), "and told that it ran out", r)
+    code, r = req("GET", "/api/me", token="junk.junk")
+    ok.eq(code, 401, "junk is refused too")
+    ok.ok("sign in with your wallet" in r.get("error", ""), "and hears what no token hears", r)
     code, r = req("GET", "/api/nope")
     ok.eq(code, 404, "an unknown endpoint is 404")
     code, r = req("GET", "/api")

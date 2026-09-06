@@ -864,6 +864,10 @@ class Handler(BaseHTTPRequestHandler):
     def _require_account(self):
         acct = self._account()
         if not acct:
+            h = self.headers.get("Authorization") or ""
+            token = h[7:].strip() if h.lower().startswith("bearer ") else None
+            if token and self.app.sessions.expired(token):
+                raise Unauthorised("your session has run out; sign in again")
             raise Unauthorised("sign in with your wallet first")
         return acct
 

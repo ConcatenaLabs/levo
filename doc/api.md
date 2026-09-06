@@ -63,6 +63,13 @@ is optional and checked when given: a signature over slightly different bytes
 recovers to a key nobody holds, and naming the address turns that into an error
 rather than a phantom account.
 
+A token is good for twelve hours from the sign-in, then a new challenge earns
+a new one; a route that needs a session answers 401 with "your session has run
+out; sign in again" to a token that was good and no longer is, and "sign in
+with your wallet first" to none or to junk. The token is stateless: nothing on
+the server lists it, so signing out is the client forgetting it, and a token
+that leaks is good until it expires or the server's secret changes.
+
 Send the token as `Authorization: Bearer <token>` on every route below that
 says it needs a session.
 
