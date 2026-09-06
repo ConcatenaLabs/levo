@@ -324,6 +324,10 @@ p { margin: 0 0 1rem; }
    against the edge of the screen. */
 .hero { padding-block: clamp(3.5rem, 9vw, 7rem) 3rem; }
 .hero h1 { max-width: 15ch; }
+/* Prose that sits outside a column keeps a readable measure on a wide screen:
+   a sentence that runs the whole wrap is a hundred and fifty characters long
+   on a monitor, and nobody's eye finds the next line. */
+.measure { max-width: 72ch; }
 .hero-lede {
   max-width: 52ch; margin-top: 1.5rem; font-size: clamp(1.02rem, 1.6vw, 1.18rem);
   color: var(--ink-dim);

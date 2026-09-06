@@ -45,16 +45,23 @@ test('no decision is made on a raw atom field', () => {
   for (const path of sources('src')) {
     if (path.endsWith(join('lib', 'format.js'))) continue   // where big() lives
     const source = readFileSync(path, 'utf8')
-    source.split('\n').forEach((line, i) => {
-      // A line that already routes through big()/positive() is the fix, and
-      // geometry may hold a Number as long as a comment says it is geometry.
-      if (/\b(?:big|positive)\s*\(/.test(line)) return
-      if (/\/\/\s*geometry\b/.test(line)) return
-      for (const [why, re] of WRONG) {
-        re.lastIndex = 0
-        if (re.test(line)) bad.push(`${path}:${i + 1} ${why}: ${line.trim()}`)
+    // Matched against the whole file, not line by line: a ternary whose `?`
+    // sits on the next line is the same decision, and hid from a per-line
+    // check for a week. The line reported is the one the field is on.
+    for (const [why, re] of WRONG) {
+      re.lastIndex = 0
+      let m
+      while ((m = re.exec(source))) {
+        const at = source.slice(0, m.index).split('\n').length
+        const lines = source.split('\n')
+        const window = lines.slice(at - 1, at + 1).join('\n')
+        // A decision that already routes through big()/positive() is the fix,
+        // and geometry may hold a Number as long as a comment says so.
+        if (/\b(?:big|positive)\s*\(/.test(window)) continue
+        if (/\/\/\s*geometry\b/.test(window)) continue
+        bad.push(`${path}:${at} ${why}: ${lines[at - 1].trim()}`)
       }
-    })
+    }
   }
   assert.deepEqual(bad, [], 'atom fields decided on raw:\n' + bad.join('\n'))
 })
