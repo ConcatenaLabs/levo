@@ -160,11 +160,11 @@ export default function SignIn({ onDone, label = 'Sign in with your wallet' }) {
           challenge with any wallet that signs a message the way{' '}
           <span className="mono">sequentia-cli signmessage</span> does, and paste
           the result{(links && (links.Wallet || links.wallet))
-            ? <>: <a href={links.Wallet || links.wallet} target="_blank" rel="noopener noreferrer">the web wallet</a>&rsquo;s Sign tab does, with your staking key</>
-            : ''}
-          {(links && (links.Extension || links.extension))
-            ? <>, or <a href={links.Extension || links.extension} target="_blank" rel="noopener noreferrer">get the browser extension</a>, which signs in here in one click</>
+            ? <>: <a href={links.Wallet || links.wallet} target="_blank" rel="noopener noreferrer">the web wallet</a>&rsquo;s Sign tab signs it with your staking key</>
             : ''}.
+          {(links && (links.Extension || links.extension))
+            ? <> Or <a href={links.Extension || links.extension} target="_blank" rel="noopener noreferrer">get the browser extension</a>, which signs in here in one click.</>
+            : ''}
         </p>
       )}
     </div>
