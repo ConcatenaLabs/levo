@@ -23,6 +23,13 @@ An error is `{"error": "<a sentence>"}` with a status:
 | 502 | the Sequentia node could not be reached or refused the query |
 | 503 | levod is busy, or unhealthy; `Retry-After` where it makes sense |
 
+Every path outside `/api/` is the app. A route the app has, and the page of a
+sale that exists, answer 200 with the app shell; any other path answers 404
+with the same shell, so the app draws its own "nothing here" page while a
+crawler or a monitor reads a status it can act on. A file the bundle would
+ask for that is not there -- an old hashed asset -- is a 404 in JSON, so a
+stale page reloads rather than runs HTML as a script.
+
 Every refusal carries `{"code", "error"}`: `error` is a sentence for a person,
 and `code` is a short slug for a program, so a client branches on a value
 rather than on prose that may be reworded. The codes are `sign_in_required`,

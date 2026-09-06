@@ -320,3 +320,15 @@ def test_the_cli_and_the_board_say_a_sale_state_in_the_same_words(t):
     words = ast.literal_eval(m2.group(1))
     t.eq(words, board, "the CLI and the board map every sale status to the same word")
     t.ok("partial" in words and "ghost" in words and "closed" in words, "and every status the API can say is in it")
+
+
+def test_the_server_knows_every_route_the_app_draws(t):
+    """A path the app has no route for is served with a 404, so the server
+    keeps a list of the routes the app has. The router in web/src/App.jsx is
+    the other copy; this keeps them one list."""
+    app = (ROOT / "web" / "src" / "App.jsx").read_text()
+    routes = set(re.findall(r'<Route path="([^"]+)"', app))
+    t.ok("*" in routes and "/p/:slug" in routes, "the router has a catch-all and the sale page", routes)
+    plain = {r for r in routes if r not in ("*", "/p/:slug")}
+    t.eq(plain, set(SV.APP_ROUTES), "APP_ROUTES in levod/server.py is the router's list of pages")
+    t.ok(set(SV.ROUTE_HEADS) <= plain, "and every route with its own head is one of them")
