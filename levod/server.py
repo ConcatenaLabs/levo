@@ -1415,6 +1415,9 @@ class Handler(BaseHTTPRequestHandler):
         for tag in ('<meta name="description" content="', '<meta property="og:description" content="'):
             text = re.sub("(" + re.escape(tag) + r')[^"]*(")',
                           lambda mm: mm.group(1) + blurb + mm.group(2), text, count=1)
+        # The noscript body too: a reader with scripts off, or a text-only
+        # client, still learns which sale this is and what it is for.
+        text = re.sub(r"(<noscript>\s*)", lambda mm: mm.group(1) + "%s: %s " % (title, blurb), text, count=1)
         origin = self.origin()
         if origin and "og:url" not in text:
             text = text.replace('<meta property="og:type" content="website" />',

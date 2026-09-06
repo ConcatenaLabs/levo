@@ -1219,7 +1219,8 @@ def run(d):
              '<meta property="og:type" content="website" />'
              '<meta property="og:title" content="Levo" />'
              '<meta property="og:description" content="generic" />'
-             '</head><body><div id="root"></div></body></html>')
+             '</head><body><noscript>Levo is built in the browser.</noscript>'
+             '<div id="root"></div></body></html>')
     (d.webroot / "index.html").write_text(shell, encoding="utf-8")
     code, r = req("PATCH", "/api/projects/helios",
                   {"summary": 'Solar <b>microgrids</b> & "tokens"'}, token=issuer_tok)
