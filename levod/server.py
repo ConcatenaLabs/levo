@@ -811,9 +811,13 @@ class Handler(BaseHTTPRequestHandler):
         allowed = _methods_for(parts[1:]) if parts[:1] == ["api"] else None
         if allowed is None:
             allowed = ["GET"] if not path.startswith("/api/") else []
+        # HEAD only where GET is: a route that takes POST alone does not take
+        # HEAD, and saying it did contradicted the 405 the same URL gave.
+        verbs = list(allowed)
+        if "GET" in verbs and "HEAD" not in verbs:
+            verbs.append("HEAD")
         self.send_response(204)
-        self.send_header("Allow", ", ".join(allowed + ["HEAD", "OPTIONS"])
-                         if allowed else "OPTIONS")
+        self.send_header("Allow", ", ".join(verbs + ["OPTIONS"]) if verbs else "OPTIONS")
         self.send_header("Content-Length", "0")
         self.end_headers()
 
