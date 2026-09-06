@@ -118,3 +118,19 @@ def test_the_readme_lists_every_levo_command(t):
     have = set(re.findall(r'sub\.add_parser\("([a-z]+)"', cli))
     t.eq(sorted(listed - have), [], "the README lists no command levo lacks")
     t.eq(sorted(have - listed), [], "and every command levo has is listed")
+
+
+# --- limits: the numbers the document states are the constants ---------------
+
+def test_the_documented_limits_are_the_constants(t):
+    """A cap a client can hit is stated in doc/api.md, and the number there
+    has to be the one the code enforces."""
+    import market as M
+    doc = DOC.read_text(encoding="utf-8")
+    m = re.search(r"\*\*Limits a client can meet\.\*\*(.*?)\n\n", doc, re.S)
+    t.ok(m, "the document states its limits")
+    text = " ".join(m.group(1).split())          # the paragraph wraps; the numbers do not
+    t.ok("at most %d of the buyer's inputs" % M.MAX_INPUTS in text, "inputs per purchase")
+    t.ok("at most %d purchases per account per sale" % M.MAX_PURCHASES_PER_ACCOUNT in text,
+         "ledger entries per account per sale")
+    t.ok("at most %d links" % M.MAX_LINKS in text, "links per listing")

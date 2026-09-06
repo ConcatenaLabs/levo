@@ -235,6 +235,13 @@ it is how a build that failed after a successful pull is told apart from one
 that ran. It is absent where there is no source tree to compare against, which
 is any packaged copy of the app.
 
+**Limits a client can meet.** A purchase spends at most 32 of the buyer's
+inputs; consolidate first if a wallet holds more. The ledger keeps at most 64
+purchases per account per sale, and refuses to record a 65th, which is
+bookkeeping only: the purchase itself is on chain. A listing carries at most 8
+links, each label up to 24 characters and each address up to 200. Each is
+refused with a sentence that says so.
+
 **`GET /api/watcher`** → what the watcher is doing, and any sale whose funding
 it cannot place in the chain.
 
