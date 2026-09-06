@@ -88,11 +88,14 @@ mislead but cannot rob.
   address can be bought at the sale's price, so the watcher reports stray assets
   and the lock instructions say to send nothing but the token. A leaf that
   checks the input's asset moves every sale address: a vectors migration.
-- **A sale ends only after a new block says so.** The watcher counts silent
-  polls AND requires the chain to have moved, because a remainder in the mempool
-  is invisible to the confirmed-set scan; a recorded purchase names the outpoint
-  the remainder rests at so it is seen at once. GHOST and SOLD_OUT are final;
-  CLOSED-and-empty becomes RECLAIMED only on the reclaim's own output.
+- **A sale ends only after a new block says so, or on positive evidence.** The
+  watcher counts silent polls AND requires the chain to have moved, because a
+  remainder in the mempool is invisible to the confirmed-set scan; a recorded
+  purchase names the outpoint the remainder rests at so it is seen at once, and
+  a recorded purchase the node has, spending the resting outpoint with an
+  output 1 that was never a remainder, is a full buy and ends the sale on the
+  poll that sees it. GHOST and SOLD_OUT are final; CLOSED-and-empty becomes
+  RECLAIMED only on the reclaim's own output.
 - **The ledger only grows, and only by named transactions.** `record_purchase`
   needs a txid, positive amounts, and never records less than the covenant's
   price for the tokens named. A repeat of the same txid is answered, not added.

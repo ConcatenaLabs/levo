@@ -186,7 +186,10 @@ not, so the instant a buy is broadcast the scan still lists the outpoint it
 spent -- believing the scan would park the sale on an outpoint that is already
 gone. It ends a sale only after two silent polls with a new block between them,
 because a remainder in the mempool is invisible to the confirmed-set scan until
-a block carries it.
+a block carries it. The one exception is positive evidence of the same thing: a
+purchase recorded through Levo whose transaction the node has, which spends the
+outpoint the sale rests at and whose output 1 was never a remainder, is a full
+buy, and the sale is sold out the moment it is seen rather than a block later.
 
 In the steady state none of that costs a scan: every sale is where it was, its
 own outpoint answers, and the UTXO set is walked only for a sale whose outpoint
