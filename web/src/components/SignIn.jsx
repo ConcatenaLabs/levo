@@ -3,6 +3,7 @@ import { api, setToken } from '../lib/api'
 import { hasProvider, signMessage, signStakerMessage, supportsStakerSigning, connect,
          noStakingKey, friendly } from '../lib/wallet'
 import { useStore } from '../lib/store'
+import { capitalise } from '../lib/format'
 import { Copy, Notice } from './ui'
 
 // The whole login. Ask the backend for a challenge, have the wallet sign it,
