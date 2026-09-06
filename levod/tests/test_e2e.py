@@ -1283,6 +1283,13 @@ def run(d):
     ok.eq(h3.get("X-Board-Cache"), "miss", "and the next board is rendered afresh")
     ok.ok(any(p["summary"] == "Edited under a cached board." for p in b3["projects"]),
           "showing the write, not the cache")
+    ok.ok(next(p for p in b3["projects"] if p["slug"] == "helios").get("updated_at"),
+          "and the project says when it was last edited")
+    code, smap, h = _req(d.base, "GET", "/sitemap.xml")
+    stext = smap.get("raw", "") if isinstance(smap, dict) else str(smap)
+    today = time.strftime("%Y-%m-%d", time.gmtime())
+    ok.ok("/p/helios</loc><lastmod>%s</lastmod>" % today in stext,
+          "and the sitemap dates the page by that edit", stext[:400])
     code, b4, h4 = _req(d.base, "GET", "/api/projects?status=all&limit=50", token=issuer_tok)
     ok.eq(h4.get("X-Board-Cache"), "miss", "a different reader kind (the session's own view) is its own entry")
     req("PATCH", "/api/projects/helios", {"summary": "Solar microgrids, tokenised."}, token=issuer_tok)
