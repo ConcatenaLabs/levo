@@ -215,7 +215,7 @@ function EditPanel({ project, onSaved }) {
         <label htmlFor="el">Links</label>
         <textarea id="el" className="mono" rows={3} value={form.links} onChange={(e) => setForm({ ...form, links: e.target.value })}
                   placeholder={'Website https://…\nRegistry entry https://…'} />
-        <div className="hint">One per line: a label, a space, then an http(s) URL.</div>
+        <div className="hint">One per line: a label of up to 24 characters, a space, then an http(s) URL. Up to eight.</div>
       </div>
       {error && <Notice kind="bad" style={{ marginBottom: '1rem' }}>{error}</Notice>}
       <div className="btn-row">
