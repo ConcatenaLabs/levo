@@ -55,6 +55,12 @@ MAX_BODY = 256 * 1024
 # that runs no JavaScript: the title the app sets on the page, and its first
 # words. A sale's page says the sale's name and one-liner instead, and the
 # home page keeps the description the bundle carries.
+# The routes the app draws. A path that is none of these, and is not the page
+# of a sale that exists, is the app's own "nothing here" page -- served with
+# the status that says so, not 200. web/src/App.jsx is the other copy of this
+# list; a guard keeps them one.
+APP_ROUTES = ("/", "/projects", "/sales", "/how-it-works", "/launch", "/account")
+
 ROUTE_HEADS = {
     "/projects": ("Sales",
                   "The sales on Levo: open ones anyone with a tier may buy from, ones the "
@@ -1396,15 +1402,37 @@ class Handler(BaseHTTPRequestHandler):
 
     # --- the SPA ------------------------------------------------------------
 
+    def _app_route(self, path):
+        """Whether the app has a page at this path: one of its routes, or the
+        page of a sale that exists. Off the board still exists: an operator
+        opens a hidden listing's page to see what was hidden."""
+        clean = path.rstrip("/") or "/"
+        if clean in APP_ROUTES:
+            return True
+        m = re.match(r"^/p/([a-z0-9][a-z0-9-]{1,38}[a-z0-9])$", clean)
+        if not m:
+            return False
+        try:
+            self.app.market.project(m.group(1))
+        except Exception:
+            return False
+        return True
+
     def _static(self, path):
         root = self.app.webroot
         rel = path.lstrip("/") or "index.html"
-        target = (root / rel).resolve()
         try:
+            target = (root / rel).resolve()
             target.relative_to(root.resolve())
+            is_file = target.is_file()
         except ValueError:
             return self._json(403, {"code": "not_allowed", "error": "forbidden"})
-        if not target.is_file():
+        except OSError:
+            # A path the filesystem cannot even name -- longer than a name may
+            # be, say -- is nothing served here, not an internal error.
+            return self._json(404, {"code": "not_found", "error": "nothing is served at this path"})
+        code = 200
+        if not is_file:
             if rel.startswith("assets/") or rel.startswith("fonts/") \
                     or (target.suffix and target.suffix != ".html"):
                 # A file that is not there is not the app: a stale bundle
@@ -1413,6 +1441,12 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(404, {"code": "not_found",
                                         "error": "nothing is served at this path"})
             target = root / "index.html"      # history-API fallback
+            # The app draws its own "nothing here" page for a path it has no
+            # route for and for a sale it cannot find. The status has to say
+            # so as well: a crawler or an uptime check that reads 200 has
+            # been told the page exists, and indexes or trusts it.
+            if not self._app_route(path):
+                code = 404
         if not target.is_file():
             return self._json(404, {"code": "not_found",
                                     "error": "the Levo web app is not built; "
@@ -1451,9 +1485,9 @@ class Handler(BaseHTTPRequestHandler):
         # what changes when a build replaces it.
         st = target.stat()
         etag = '"%x-%x%s"' % (st.st_mtime_ns, st.st_size, ("-" + stamp.hex()) if stamp else "")
-        if self.headers.get("If-None-Match") == etag:
+        if code == 200 and self.headers.get("If-None-Match") == etag:
             return self._send(304, b"", ctype, cache=cache, headers={"ETag": etag})
-        self._send(200, body, ctype, cache=cache, headers={"ETag": etag})
+        self._send(code, body, ctype, cache=cache, headers={"ETag": etag})
 
 
     def _site_files(self, path):

@@ -383,8 +383,13 @@ def run(d):
     ok.eq(code, 200, "the app is served")
     ok.ok(h.get("Content-Type", "").startswith("text/html"), "as html")
     ok.ok("frame-ancestors" in (h.get("Content-Security-Policy") or ""), "with a CSP")
-    code, _, h = _req(d.base, "GET", "/p/anything")
-    ok.eq(code, 200, "deep links fall back to the app")
+    code, pg, h = _req(d.base, "GET", "/how-it-works")
+    ok.eq(code, 200, "deep links to a route the app has fall back to the app")
+    ok.ok(h.get("Content-Type", "").startswith("text/html"), "as html")
+    code, pg, h = _req(d.base, "GET", "/p/anything")
+    ptext = pg.get("raw", "") if isinstance(pg, dict) else str(pg)
+    ok.eq(code, 404, "a deep link to no sale is the app too, with the status that says so")
+    ok.ok(h.get("Content-Type", "").startswith("text/html") and "<title>" in ptext, "and still the shell, so the app draws its own page")
     code, _, h = _req(d.base, "GET", "/assets/app.js")
     ok.ok("immutable" in (h.get("Cache-Control") or ""), "hashed assets are cached")
     code, r = req("GET", "/../levod/store.py")
@@ -1341,6 +1346,15 @@ def run(d):
     code, generic, h2 = _req(d.base, "GET", "/p/nope-not-here")
     gtext = generic.get("raw", "") if isinstance(generic, dict) else str(generic)
     ok.ok("<title>Levo</title>" in gtext, "a page for no sale keeps the generic head")
+    ok.eq(code, 404, "and answers 404: the app draws its own not-found page, and the status says so")
+    for route, want in (("/nothing-here-at-all", 404), ("/p/helios", 200), ("/p/helios/", 200), ("/sales", 200),
+                        ("/how-it-works/", 200), ("/" + "a" * 3000, 404), ("/projects", 200)):
+        code, pg, h = _req(d.base, "GET", route)
+        ptext = pg.get("raw", "") if isinstance(pg, dict) else str(pg)
+        ok.eq(code, want, "%s answers %d" % (route[:30], want))
+        ok.ok("<title>" in ptext or want != 200, "with the app shell", ptext[:80])
+    code, _, _ = _req(d.base, "GET", "/nothing-here-at-all", headers={"If-None-Match": h.get("ETag") or "x"})
+    ok.ok(code != 304, "a not-found page is never answered 304 as if it were the page it is not")
     for route, title, words in (("/projects", "Sales", "The sales on Levo"),
                                 ("/how-it-works", "How it works", "not a custodian"),
                                 ("/launch", "Launch a project", "staked Sequence"),
