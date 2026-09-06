@@ -405,8 +405,12 @@ def plain(text):
 
 
 def cmd_sales(args):
+    # Hidden listings are shown to operators and to nobody else, so asking for
+    # them means signing in; any other list goes out with whatever session is
+    # already here, which for an operator adds the hidden rows to "all".
+    tok = sign_in() if args.status == "hidden" else _session().get("token")
     r = api("GET", "/api/projects?status=%s&limit=%d&offset=%d"
-            % (args.status, args.limit, args.offset))
+            % (args.status, args.limit, args.offset), token=tok)
     if not r["projects"]:
         print("nothing is listed" if args.status == "all"
               else "nothing is listed with status %s" % args.status)
@@ -1292,28 +1296,101 @@ def main():
     ap = argparse.ArgumentParser(prog="levo", description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest="cmd", required=True)
+    # In the order the summary above lists them, so that `levo --help` and
+    # `levo <command> --help` tell the same story; and every argument says what
+    # it is, because a flag with no sentence beside it is a guess about units.
+    SLUG = "the sale, by the name in its page's address"
+    DRY = "build and check the transaction, then print it instead of broadcasting"
 
-    sl = sub.add_parser("sales")
+    sl = sub.add_parser("sales", help="list what is listed")
+    sl.add_argument("--status", default="all",
+                    choices=["all", "open", "draft", "finished", "hidden"],
+                    help="which sales to list: open, draft (listed, not yet funded), "
+                         "finished, or hidden (operators only); default: all")
+    sl.add_argument("--limit", type=int, default=50, help="how many to show")
+    sl.add_argument("--offset", type=int, default=0, help="where to start")
     sl.set_defaults(fn=cmd_sales)
-    sh = sub.add_parser("show"); sh.add_argument("slug"); sh.set_defaults(fn=cmd_show)
-    vf = sub.add_parser("verify"); vf.add_argument("slug"); vf.set_defaults(fn=cmd_verify)
-    sub.add_parser("whoami").set_defaults(fn=cmd_whoami)
-    sub.add_parser("keygen").set_defaults(fn=cmd_keygen)
 
-    ln = sub.add_parser("link")
+    sh = sub.add_parser("show", help="the terms, and the address to check")
+    sh.add_argument("slug", help=SLUG)
+    sh.set_defaults(fn=cmd_show)
+
+    vf = sub.add_parser("verify", help="rebuild the sale address and compare it "
+                                       "with the funded output on your node")
+    vf.add_argument("slug", help=SLUG)
+    vf.set_defaults(fn=cmd_verify)
+
+    sub.add_parser("whoami", help="the account you are signed in as").set_defaults(fn=cmd_whoami)
+
+    ln = sub.add_parser("link", help="prove a staking key for your account")
     ln.add_argument("--pubkey", help="the 33-byte staking key, hex")
     ln.add_argument("--address", help="a legacy address of that key in your wallet, to sign with")
     ln.add_argument("--wif", help="or the key's WIF, to sign with signmessagewithprivkey")
     ln.set_defaults(fn=cmd_link)
 
-    sl.add_argument("--status", default="all",
-                    choices=["all", "open", "draft", "finished"],
-                    help="which sales to list (default: all)")
-    sl.add_argument("--limit", type=int, default=50, help="how many to show")
-    sl.add_argument("--offset", type=int, default=0, help="where to start")
+    sub.add_parser("keygen", help="a reclaim key pair for a new listing").set_defaults(fn=cmd_keygen)
+
+    cr = sub.add_parser("create", help="list a project from a JSON file")
+    cr.add_argument("file", nargs="?", help="a JSON file holding {project, terms}")
+    cr.add_argument("--example", action="store_true",
+                    help="print a listing file to start from, and what each field means")
+    cr.set_defaults(fn=cmd_create)
+
+    lk = sub.add_parser("lock", help="fund a sale you are listing")
+    lk.add_argument("slug", help=SLUG)
+    lk.add_argument("--atoms", type=int,
+                    help="lock this many token atoms (default: the whole amount for sale)")
+    lk.add_argument("--asset-label", help="label or hex id the node knows the token by "
+                                          "(default: the sale's token id)")
+    lk.add_argument("--fee-asset", help="asset to pay the fee in (default: the sale's payment asset)")
+    lk.add_argument("--txid", help="confirm an output you already sent instead of sending")
+    lk.add_argument("--vout", type=int, default=0, help="that output's index (default: 0)")
+    lk.add_argument("--hrp", default="tb",
+                    help="the chain's address prefix, used only when this Levo "
+                         "publishes no address of its own")
+    lk.set_defaults(fn=cmd_lock)
+
+    b = sub.add_parser("buy", help="buy, end to end")
+    b.add_argument("slug", help=SLUG)
+    b.add_argument("--tokens", required=True,
+                   help="how many tokens, in the token's own units (40, or 0.5)")
+    # The rails a levod offers are its own (`GET /api/rails`); naming one here
+    # as a default would hardcode a ticker this file elsewhere refuses to
+    # assume. Empty means "the one that settles in the covenant".
+    b.add_argument("--rail", default="",
+                   help="a rail this Levo offers (default: pay in the sale's "
+                        "own payment asset)")
+    b.add_argument("--fee", type=int, help="fee in atoms of the fee asset (default: levod's suggestion)")
+    b.add_argument("--fee-asset", help="asset to pay the fee in (default: the sale's payment asset)")
+    b.add_argument("--to", help="the address the tokens go to (default: a new wallet address)")
+    b.add_argument("--change", help="where the change goes (default: the same address)")
+    b.add_argument("--dry-run", action="store_true", help=DRY)
+    b.set_defaults(fn=cmd_buy)
+
+    rc = sub.add_parser("reclaim", help="sweep what did not sell, after close")
+    rc.add_argument("slug", help=SLUG)
+    rc.add_argument("--to", help="where the tokens go (default: a new wallet address)")
+    rc.add_argument("--fee", type=int, help="fee in atoms of the fee asset (default: levod's suggestion)")
+    rc.add_argument("--fee-asset", help="asset to pay the fee in (default: the sale's payment asset)")
+    rc.add_argument("--reclaim-key", help="32-byte hex; signs the covenant here")
+    rc.add_argument("--dry-run", action="store_true", help=DRY)
+    rc.set_defaults(fn=cmd_reclaim)
+
+    wd = sub.add_parser("withdraw", help="remove an unfunded listing of yours")
+    wd.add_argument("slug", help=SLUG)
+    wd.set_defaults(fn=cmd_withdraw)
+
+    rd = sub.add_parser("record", help="tell Levo about a purchase it has not recorded")
+    rd.add_argument("slug", help=SLUG)
+    rd.add_argument("--txid", required=True, help="the purchase transaction")
+    rd.add_argument("--tokens", required=True,
+                    help="how many tokens it bought, in the token's own units")
+    rd.add_argument("--payment", type=int,
+                    help="what it paid, in atoms (default: the covenant's price)")
+    rd.set_defaults(fn=cmd_record)
 
     tm = sub.add_parser("terms", help="write out what rebuilds a sale without Levo")
-    tm.add_argument("slug")
+    tm.add_argument("slug", help=SLUG)
     tm.add_argument("--out", help="write to this file instead of standard output")
     tm.set_defaults(fn=cmd_terms)
 
@@ -1324,71 +1401,21 @@ def main():
     rs.add_argument("--fee", type=int, default=1000, help="fee in atoms of the fee asset")
     rs.add_argument("--fee-asset", help="asset to pay the fee in")
     rs.add_argument("--hrp", default="",
-                    help="the chain's address prefix (default: the one the "
-                         "terms file's own sale address was written with)")
+                    help="the chain's address prefix (default: the one the terms "
+                         "file's own sale address was written with)")
     rs.add_argument("--locktime", type=int, help="override the reclaim's locktime")
     rs.add_argument("--outpoint", help="sweep this txid:vout at the sale address, "
-                                       "whatever asset it holds (default: the "
-                                       "largest output of the sale's own token)")
-    rs.add_argument("--dry-run", action="store_true")
+                                       "whatever asset it holds (default: the largest "
+                                       "output of the sale's own token)")
+    rs.add_argument("--dry-run", action="store_true", help=DRY)
     rs.set_defaults(fn=cmd_rescue)
 
-    rd = sub.add_parser("record", help="tell Levo about a purchase it has not recorded")
-    rd.add_argument("slug")
-    rd.add_argument("--txid", required=True, help="the purchase transaction")
-    rd.add_argument("--tokens", required=True, help="how many tokens it bought")
-    rd.add_argument("--payment", type=int,
-                    help="what it paid, in atoms (default: the covenant's price)")
-    rd.set_defaults(fn=cmd_record)
-
     fg = sub.add_parser("flag", help="operator: hide a listing or put a notice on it")
-    fg.add_argument("slug")
+    fg.add_argument("slug", help=SLUG)
     fg.add_argument("--hide", action="store_true", help="take it off the board")
     fg.add_argument("--show", action="store_true", help="put it back")
     fg.add_argument("--notice", help="a line shown at the top of its page")
     fg.set_defaults(fn=cmd_flag)
-
-    cr = sub.add_parser("create")
-    cr.add_argument("file", nargs="?", help="a JSON file holding {project, terms}")
-    cr.add_argument("--example", action="store_true",
-                    help="print a listing file to start from, and what each field means")
-    cr.set_defaults(fn=cmd_create)
-
-    lk = sub.add_parser("lock")
-    lk.add_argument("slug"); lk.add_argument("--atoms", type=int)
-    lk.add_argument("--asset-label", help="label or hex id the node knows the token by "
-                                          "(default: the sale's token id)")
-    lk.add_argument("--fee-asset", help="asset to pay the fee in (default: the sale's payment asset)")
-    lk.add_argument("--txid", help="confirm an output you already sent instead of sending")
-    lk.add_argument("--vout", type=int, default=0)
-    lk.add_argument("--hrp", default="tb",
-                    help="the chain's address prefix, used only when this Levo "
-                         "publishes no address of its own")
-    lk.set_defaults(fn=cmd_lock)
-
-    b = sub.add_parser("buy")
-    b.add_argument("slug"); b.add_argument("--tokens", required=True)
-    # The rails a levod offers are its own (`GET /api/rails`); naming one here
-    # as a default would hardcode a ticker this file elsewhere refuses to
-    # assume. Empty means "the one that settles in the covenant".
-    b.add_argument("--rail", default="",
-                   help="a rail this Levo offers (default: pay in the sale's "
-                        "own payment asset)")
-    b.add_argument("--fee", type=int, help="fee in atoms of the fee asset (default: levod's suggestion)")
-    b.add_argument("--fee-asset", help="asset to pay the fee in (default: the sale's payment asset)")
-    b.add_argument("--to"); b.add_argument("--change")
-    b.add_argument("--dry-run", action="store_true")
-    b.set_defaults(fn=cmd_buy)
-
-    rc = sub.add_parser("reclaim")
-    rc.add_argument("slug"); rc.add_argument("--to")
-    rc.add_argument("--fee", type=int, help="fee in atoms of the fee asset (default: levod's suggestion)")
-    rc.add_argument("--fee-asset", help="asset to pay the fee in (default: the sale's payment asset)")
-    rc.add_argument("--reclaim-key", help="32-byte hex; signs the covenant here")
-    rc.add_argument("--dry-run", action="store_true")
-    rc.set_defaults(fn=cmd_reclaim)
-
-    wd = sub.add_parser("withdraw"); wd.add_argument("slug"); wd.set_defaults(fn=cmd_withdraw)
 
     args = ap.parse_args()
     try:
