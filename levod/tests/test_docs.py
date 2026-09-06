@@ -265,6 +265,15 @@ def test_the_entry_points_answer_help_and_refuse_arguments(t):
                        capture_output=True, text=True, timeout=30)
     t.eq(r.returncode, 0, "run.py --help exits 0")
     t.ok("unit test" in r.stdout and "STANDALONE" in r.stdout, "and says what it runs", r.stdout[:120])
+    # The smoke test used to take --help for the address of a Levo and dial it.
+    r = subprocess.run([sys.executable, str(ROOT / "tools" / "smoke.py"), "--help"],
+                       capture_output=True, text=True, timeout=30)
+    t.eq(r.returncode, 0, "smoke.py --help exits 0")
+    t.ok("Smoke-test a running Levo" in r.stdout, "and says what it is", r.stdout[:120])
+    r = subprocess.run([sys.executable, str(ROOT / "tools" / "smoke.py"), "not-an-address"],
+                       capture_output=True, text=True, timeout=30)
+    t.eq(r.returncode, 2, "and it refuses a word that is not an address")
+    t.ok("one argument" in r.stderr, "with a sentence", r.stderr[:200])
     # The two shell scripts in contrib answer too, and run nothing for it.
     for script in ("contrib/deploy.sh", "contrib/levo-backup.sh"):
         r = subprocess.run(["bash", str(ROOT / script), "--help"], capture_output=True, text=True, timeout=30)
