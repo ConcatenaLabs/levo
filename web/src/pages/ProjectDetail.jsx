@@ -622,13 +622,17 @@ export default function ProjectDetail() {
         </div>
 
         <div className="sticky">
+          {/* The project's own next step comes first, and alone. On a closed
+              sale with tokens left, "not open, see the open sales" is a
+              visitor's panel: the project's action is the reclaim, and being
+              told to go elsewhere before being told that read as if there
+              was nothing to do here. */}
           {issuer && needsLock ? (
             <LockPanel project={project} onLocked={load} />
+          ) : issuer && sale && sale.status === 'closed' && positive(sale.locked_atoms) ? (
+            <Reclaim project={project} />
           ) : (
             <BuyPanel project={project} onBought={load} />
-          )}
-          {issuer && sale && (sale.status === 'closed') && positive(sale.locked_atoms) && (
-            <Reclaim project={project} />
           )}
           {sale && positive(sale.terms.total_atoms) && (
             <div className="card" style={{ marginTop: '1rem' }}>

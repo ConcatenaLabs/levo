@@ -4,7 +4,7 @@ import { api } from '../lib/api'
 import { useStore } from '../lib/store'
 import { signStakerMessage, supportsStakerSigning, getStakerPublicKey, hasProvider,
          friendly } from '../lib/wallet'
-import { amount, capitalise, compact, shortHex, timeLabel } from '../lib/format'
+import { amount, capitalise, compact, positive, shortHex, timeLabel } from '../lib/format'
 import { Copy, Hex, Notice, usePageTitle } from '../components/ui'
 import SignIn from '../components/SignIn'
 import Beam from '../components/Beam'
@@ -159,6 +159,12 @@ function MyProjects() {
           {p.sale && (p.sale.status === 'draft' || p.sale.status === 'ghost') && (
             <p className="small dim" style={{ margin: '.5rem 0 0' }}>
               {p.sale.status === 'ghost' ? 'The chain does not have the funding you locked: it never reached a block, or a reorg took the block that held it. ' : ''}Lock the tokens on the sale's page to open it.
+            </p>
+          )}
+          {p.sale && p.sale.status === 'closed' && positive(p.sale.locked_atoms) && (
+            <p className="small dim" style={{ margin: '.5rem 0 0' }}>
+              The close has passed and {amount(p.sale.locked_atoms, p.decimals ?? 8)} {p.ticker} did not sell.
+              Reclaim them on the sale's page; until you do, the sale can still be bought from.
             </p>
           )}
           {p.sale && p.sale.strays && p.sale.strays.length > 0 && (
