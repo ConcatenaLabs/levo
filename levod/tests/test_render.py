@@ -375,6 +375,18 @@ def main():
                     "const x=h.getBoundingClientRect().left;"
                     "return JSON.stringify([Math.round(b.getBoundingClientRect().left-x),"
                     " Math.round(l.getBoundingClientRect().left-x)])})()")
+                # Every link in the header stays on one line: the row wraps
+                # whole links, never the words inside one.
+                broken = page.eval(
+                    "(function(){const out=[];"
+                    "for(const a of document.querySelectorAll('.nav-links a')){"
+                    "const r=document.createRange(); r.selectNodeContents(a);"
+                    "const lines=new Set(Array.from(r.getClientRects()).filter(b=>b.width>0).map(b=>Math.round(b.top)));"
+                    "if(lines.size>1) out.push(a.innerText.trim())} return JSON.stringify(out)})()")
+                if json.loads(broken or "[]"):
+                    failed.append("a header link breaks across lines at 300px: %s" % broken)
+                else:
+                    passed += 1
                 if edge == "missing":
                     failed.append("the header or the hero heading was not found at 300px")
                 else:
