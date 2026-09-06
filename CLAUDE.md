@@ -135,6 +135,12 @@ mislead but cannot rob.
   timer and when its tab comes back into view (`useReread` in
   `web/src/components/ui.jsx`), and the sale page once more at a time close.
   A page that read once went on offering the buy panel after the close.
+- **The documents are held to the code by guards in `levod/tests/test_docs.py`.**
+  API routes, settings and their defaults, error codes, the CLI's commands and
+  its usage block, the limits paragraph and deploy.sh's fallback port are each
+  compared with the source both ways. Adding a route, a setting, a code, a
+  command or a cap without its line in the document fails the gate, which is
+  the point: the document is part of the change.
 - **The board is cached on the store's version.** `GET /api/projects` answers
   from one rendering per (state version, height, query) for a few seconds.
   Every mutation goes through `save()`, which is what moves the version; a
@@ -163,7 +169,9 @@ supplied through the environment on the server, never through the repo.
   through `tail` loses its exit status, and a build that fails leaves the old
   bundle serving with every health check green. The script installs the units,
   builds under a Node in Vite's range, restarts, and asks levod what it is
-  serving.
+  serving at the host and port the unit's environment file names. A change to
+  the script itself takes effect in the same run: it hands over to the fetched
+  copy once.
 
 <!-- BEGIN SHARED AGENT CONVENTIONS: identical in every Sequentia repo. Change it in all of them together. -->
 ## Working with git and GitHub here
