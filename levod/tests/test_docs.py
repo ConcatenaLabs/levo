@@ -134,3 +134,19 @@ def test_the_documented_limits_are_the_constants(t):
     t.ok("at most %d purchases per account per sale" % M.MAX_PURCHASES_PER_ACCOUNT in text,
          "ledger entries per account per sale")
     t.ok("at most %d links" % M.MAX_LINKS in text, "links per listing")
+
+
+def test_deploy_asks_where_levod_listens_by_default(t):
+    """deploy.sh's fallback health URL is levod's own default host and port.
+
+    The script reads the unit's environment file first; this pins the
+    fallback for a box where the unit is not installed yet, so a typo in the
+    port cannot make every deployment end with "did not answer".
+    """
+    script = (ROOT / "contrib" / "deploy.sh").read_text()
+    server = (ROOT / "levod" / "server.py").read_text()
+    port = re.search(r'_setting\("LEVOD_PORT", (\d+)', server).group(1)
+    host = re.search(r'"LEVOD_HOST", "([^"]+)"', server).group(1)
+    t.eq(re.search(r"^  port=(\d+)$", script, re.M).group(1), port, "fallback port")
+    t.eq(re.search(r"^  host=(\S+)$", script, re.M).group(1), host, "fallback host")
+    t.ok("EnvironmentFiles" in script, "reads the unit's environment file")
