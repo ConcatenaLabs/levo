@@ -154,8 +154,10 @@ npm --prefix web install && npm --prefix web run build   # build the app once
 python3 levod/demo.py                                    # then open http://127.0.0.1:8099
 ```
 
-The app builds with **Node 20.19 or later, or 22.12 or later** (Vite's engine
-range). On an older Node the native bundler binding is skipped as an unmet
+levod runs on **Python 3.8 or later** and needs nothing outside the standard
+library: every file parses under the 3.8 grammar, and the one stdlib piece
+with a floor, `ThreadingHTTPServer`, arrived in 3.7. The app builds with
+**Node 20.19 or later, or 22.12 or later** (Vite's engine range). On an older Node the native bundler binding is skipped as an unmet
 engine and the build fails on a missing module rather than on the version,
 which is a confusing way to find out.
 
