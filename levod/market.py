@@ -17,6 +17,7 @@ which promises survive Levo going away.
 import os
 import unicodedata
 import re
+import sys
 import threading
 import time
 from urllib.parse import urlparse
@@ -28,6 +29,12 @@ import rpc as RPCMOD
 import sale as S
 import tx as TX
 import units as U
+
+
+def _log_error(message):
+    """One line per line, with the syslog priority systemd reads."""
+    for line in str(message).rstrip().splitlines() or [""]:
+        sys.stderr.write("<3>levod %s\n" % line)
 
 
 class PlatformError(ValueError):
@@ -555,7 +562,19 @@ class Platform:
             self.store.write_error = "the state could not be serialised: %s" % e
             self.store.dirty = True
             raise
-        self.store.write(payload, version=version)
+        # A disk that will not take the write is not a fault in the request
+        # that asked for it. The change is already in memory and the store has
+        # recorded the failure -- `write_error` and `dirty` carry it to health,
+        # and the watcher tries again every poll -- so the request completes
+        # and says what is true. Raising here turned an edit, a lock or a
+        # recorded purchase into a 500 on a read-only disk, with the change
+        # made and the caller told it was not.
+        try:
+            self.store.write(payload, version=version)
+        except OSError as e:
+            _log_error("the state file could not be written: %s" % e)
+            return False
+        return True
 
     def _snapshot(self):
         with self.lock:

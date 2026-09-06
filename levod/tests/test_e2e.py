@@ -1399,6 +1399,31 @@ def run(d):
     ok.ok("tier" in r.get("error", "") and "USDX" in r.get("error", ""),
           "and a sentence naming the tier and the figures", r.get("error"))
 
+    # --- a disk that will not take the write --------------------------------
+    #
+    # The change is in memory, the store has recorded the failure, health says
+    # so, and the watcher retries. The request that carried the write must
+    # therefore complete, not turn into a 500 with the change already made.
+    ok.section("read-only disk")
+    import stat as _stat
+    state_dir = d.state.parent
+    os.chmod(state_dir, _stat.S_IRUSR | _stat.S_IXUSR)
+    try:
+        code, r = req("PATCH", "/api/projects/helios", {"summary": "Edited on a read-only disk."}, token=issuer_tok)
+        ok.eq(code, 200, "an edit completes although the disk will not take the write")
+        code, h = req("GET", "/api/health")
+        ok.eq(h["state_file"]["writable"], False, "and health says the file cannot be written")
+        ok.ok(h["state_file"]["last_error"], "with the reason", h["state_file"].get("last_error"))
+        ok.eq(h["ok"], False, "so the uptime check goes red")
+        code, p = req("GET", "/api/projects/helios")
+        ok.eq(p["summary"], "Edited on a read-only disk.", "the change is served from memory meanwhile")
+    finally:
+        os.chmod(state_dir, _stat.S_IRWXU)
+    code, r = req("PATCH", "/api/projects/helios", {"summary": "Solar microgrids, tokenised."}, token=issuer_tok)
+    ok.eq(code, 200, "the next write, with the disk back, saves")
+    code, h = req("GET", "/api/health")
+    ok.eq(h["state_file"]["writable"], True, "and health is clean again")
+
     # --- the statement a wallet is asked to sign ---------------------------
     ok.section("login")
     code, ch = req("POST", "/api/auth/challenge")

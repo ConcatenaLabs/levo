@@ -264,6 +264,42 @@ def main():
         finally:
             page.stop()
 
+        # --- a levod that cannot write its record says so on the page -------
+        #
+        # The state directory goes read-only, a write is made through the API so
+        # the save fails, and the app -- which reads health on load -- has to
+        # show the banner. Then the directory is put back so the demo can end.
+        import os as _os
+        import stat as _stat
+        state_dir = Path(demo.state).parent
+        _os.chmod(state_dir, _stat.S_IRUSR | _stat.S_IXUSR)
+        page = cdp.Page(chromium)
+        try:
+            ch = call("POST", "/api/auth/challenge")
+            tok = call("POST", "/api/auth/verify", {"message": ch["message"],
+                                                   "signature": SH.sign_recoverable(sec, ch["message"])})["token"]
+            call("PATCH", "/api/projects/helios-grid", {"summary": "Written while the disk was read-only."}, token=tok)
+            # Health answers 503 while the file cannot be written, which is
+            # the point; urllib treats that as an error to raise, so read it.
+            try:
+                h = call("GET", "/api/health")
+            except urllib.error.HTTPError as e:
+                h = _json.loads(e.read().decode("utf-8", "replace"))
+            if h.get("state_file", {}).get("writable") is False:
+                passed += 1
+            else:
+                failed.append("health did not report an unwritable state file: %r" % h.get("state_file"))
+            page.go(demo.base + "/", settle=1.5)
+            text = page.eval("document.body.innerText")
+            if "cannot write its own record" in text:
+                passed += 1
+            else:
+                failed.append("the page did not say the record cannot be written")
+        finally:
+            page.stop()
+            _os.chmod(state_dir, _stat.S_IRWXU)
+            call("PATCH", "/api/projects/helios-grid", {"summary": before}, token=tok)
+
         # --- and the same pages on a phone ---------------------------------
         #
         # A screenshot says a page painted; it does not say the words on it can
