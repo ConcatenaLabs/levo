@@ -49,6 +49,27 @@ import tiers as T         # noqa: E402
 import watcher as W       # noqa: E402
 
 MAX_BODY = 256 * 1024
+
+# What each of the app's own routes says of itself in its head, for a reader
+# that runs no JavaScript: the title the app sets on the page, and its first
+# words. A sale's page says the sale's name and one-liner instead, and the
+# home page keeps the description the bundle carries.
+ROUTE_HEADS = {
+    "/projects": ("Sales",
+                  "The sales on Levo: open ones anyone with a tier may buy from, ones the "
+                  "project has not funded yet, and ones past their close that can still be "
+                  "bought from until the project takes back what did not sell."),
+    "/how-it-works": ("How it works",
+                      "Levo is two things: a set of allocation rules, and a place to find sales "
+                      "that use them. It is not a custodian. This page draws the line plainly."),
+    "/launch": ("Launch a project",
+                "Listing a sale needs staked Sequence: the more you have committed to the "
+                "chain, the more Levo lets you do here. Sign in with your wallet and the next "
+                "screen says exactly where you stand."),
+    "/account": ("Account",
+                 "Sign in with your wallet to see your tier, your positions, and the sales "
+                 "you run."),
+}
 # The whole of one request -- its line, its headers and its body -- against one
 # wall clock. A socket timeout re-arms on every read, so on its own it bounds
 # nothing: a client that sends a byte every few seconds holds a handler slot
@@ -1393,15 +1414,14 @@ class Handler(BaseHTTPRequestHandler):
                                     "error": "the Levo web app is not built; "
                                              "run npm run build in web/"})
         body = target.read_bytes()
-        # A sale's own page carries the sale's own name in its head. The app
-        # renders everything else, but a crawler making a preview card for a
-        # link -- a messenger, a social feed -- runs no JavaScript and reads
-        # only the head, and every sale shared anywhere was a card that said
-        # "Levo". The head is filled in for /p/<slug> from what the board
-        # already publishes, escaped, and for nothing else.
+        # Each page carries its own name in its head: a sale's page the
+        # sale's, from what the board already publishes, escaped; the app's
+        # own routes their own first words. The app renders everything else,
+        # but a crawler making a preview card for a link -- a messenger, a
+        # social feed -- runs no JavaScript and reads only the head.
         stamp = b""
         if target.name == "index.html":
-            filled = self._sale_head(path, self._absolute_card(body))
+            filled = self._page_head(path, self._absolute_card(body))
             if filled is None:
                 filled = self._absolute_card(body)
             if filled != body:
@@ -1526,25 +1546,40 @@ class Handler(BaseHTTPRequestHandler):
                       text, count=1)
         return text.encode("utf-8")
 
-    def _sale_head(self, path, body):
-        """The app shell with this sale's name and one-liner in its head, or
-        None when the path is not a sale's page or the sale is not public."""
+    def _page_head(self, path, body):
+        """The app shell with the page's own title and description in its
+        head: a sale's name and one-liner on the sale's page, and the page's
+        own first words on the routes the app has. None for a path that is
+        neither, or for a sale that is off the board, which keeps the
+        generic head like any other page.
+
+        A crawler making a preview card for a link runs no JavaScript and
+        reads only the head, so without this every page shared anywhere was a
+        card that said "Levo"."""
         m = re.match(r"^/p/([a-z0-9][a-z0-9-]{1,38}[a-z0-9])/?$", path)
-        if not m:
+        clean = path.rstrip("/") or "/"
+        if m:
+            try:
+                project = self.app.market.project(m.group(1))
+            except Exception:
+                return None
+            if getattr(project, "hidden", False):
+                return None
+            name = html.escape(str(project.name or "").strip(), quote=True)
+            ticker = html.escape(str(project.ticker or "").strip(), quote=True)
+            summary = html.escape(str(project.summary or "").strip(), quote=True)
+            if not name:
+                return None
+            title = "%s%s \u00b7 Levo" % (name, (" (" + ticker + ")") if ticker else "")
+            blurb = summary or ("%s is a sale on Levo, a launchpad on Sequentia." % name)
+            own = "/p/" + m.group(1)
+        elif clean in ROUTE_HEADS:
+            name, blurb = ROUTE_HEADS[clean]
+            title = html.escape(name, quote=True) + " \u00b7 Levo"
+            blurb = html.escape(blurb, quote=True)
+            own = clean
+        else:
             return None
-        try:
-            project = self.app.market.project(m.group(1))
-        except Exception:
-            return None
-        if getattr(project, "hidden", False):
-            return None            # off the board: the generic card, like any other page
-        name = html.escape(str(project.name or "").strip(), quote=True)
-        ticker = html.escape(str(project.ticker or "").strip(), quote=True)
-        summary = html.escape(str(project.summary or "").strip(), quote=True)
-        if not name:
-            return None
-        title = "%s%s \u00b7 Levo" % (name, (" (" + ticker + ")") if ticker else "")
-        blurb = summary or ("%s is a sale on Levo, a launchpad on Sequentia." % name)
         text = body.decode("utf-8", "replace")
         text = re.sub(r"<title>[^<]*</title>", lambda _: "<title>%s</title>" % title, text, count=1)
         text = re.sub(r'(<meta property="og:title" content=")[^"]*(")',
@@ -1559,8 +1594,8 @@ class Handler(BaseHTTPRequestHandler):
         if origin and "og:url" not in text:
             text = text.replace('<meta property="og:type" content="website" />',
                                 '<meta property="og:type" content="website" />'
-                                '<meta property="og:url" content="%s/p/%s" />'
-                                % (html.escape(origin, quote=True), m.group(1)), 1)
+                                '<meta property="og:url" content="%s%s" />'
+                                % (html.escape(origin, quote=True), own), 1)
         return text.encode("utf-8")
 
 
