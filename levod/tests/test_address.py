@@ -53,6 +53,11 @@ def test_user_mistakes_get_a_reason(t):
     refuses("bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4", "begin tb1",
             "another chain's address is refused", hrp="tb")
     refuses("hello", "not a bech32", "a non-address is refused")
+    refuses("tsqb1qqdnyja20gdafrcnrd4jyp7zuf62ywuggvazutzylqs7fr0xyl2cjy78mrfvke8ffgg8eulg3ate62ntgvm3e6leyy39g7q8c9",
+            "confidential", "a full-length confidential address is named as one, not as 'not an address'")
+    refuses("mipcBbFg9gMiCh81Kj8tqqdgoZub1ZJRfn", "legacy",
+            "a legacy address is named as one, not as mixed case")
+    refuses("mipcBbFg9gMiCh81Kj8tqqdgoZub1ZJRfn", "tb1", "and told which witness prefix to ask for")
     refuses("", "no address", "an empty address is refused")
     refuses("tb1Qw508d6qejxtdg4y5r3zarvary0c5xw7kxpjzsx", "mixed", "mixed case is refused")
 
