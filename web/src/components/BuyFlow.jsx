@@ -264,8 +264,15 @@ export default function BuyFlow({ project, tier, onSettled }) {
         return { txid: txid.trim(), vout: Number(vout) }
       })
       const feeAtoms = toAtoms(funding.fee, payment.decimals)
-      if (feeAtoms === null || feeAtoms <= 0n) {
+      if (feeAtoms === null) {
         throw new Error('Enter the fee in ' + label + ', with at most ' + payment.decimals + ' decimal places.')
+      }
+      if (feeAtoms <= 0n) {
+        // Zero reads fine; it is just not a fee. The suggestion is right there
+        // in the hint, so the refusal points at it rather than at the format.
+        throw new Error('The fee must be more than zero' + (plan.fee && positive(plan.fee.suggested_atoms)
+          ? ': this node suggests ' + amount(plan.fee.suggested_atoms, payment.decimals) + ' ' + label + '.'
+          : '.'))
       }
       const b = await api.transaction(project.slug, {
         token_atoms: atomsArg(plan.token_atoms),
