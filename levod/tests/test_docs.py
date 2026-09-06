@@ -197,3 +197,35 @@ def test_every_python_file_parses_under_the_3_8_grammar(t):
         except SyntaxError as e:
             bad.append("%s:%s %s" % (f.relative_to(ROOT), e.lineno, e.msg))
     t.eq(bad, [], "every Python file parses under the 3.8 grammar")
+
+
+def test_levod_imports_the_standard_library_and_its_own_modules_only(t):
+    """The README says levod needs nothing outside the standard library. A
+    dependency creeping in would turn "python3 levod/server.py" into an
+    install step nobody was told about."""
+    own = {f.stem for f in (ROOT / "levod").glob("*.py")}
+    # The demo's stub node signs, which is what a wallet does and what the
+    # backend must never do, so the signer lives with the tests and the demo
+    # alone may reach for it. Every other module under levod/ verifies only.
+    test_only = {f.stem for f in (ROOT / "levod" / "tests").glob("*.py")}
+    stdlib = getattr(sys, "stdlib_module_names", None)
+    if stdlib is None:
+        t.ok(True, "this interpreter cannot name the standard library; skipped")
+        return
+    foreign, signing = [], []
+    for f in sorted((ROOT / "levod").glob("*.py")):
+        tree = ast.parse(f.read_text(encoding="utf-8"), filename=str(f))
+        for node in ast.walk(tree):
+            names = []
+            if isinstance(node, ast.Import):
+                names = [a.name for a in node.names]
+            elif isinstance(node, ast.ImportFrom) and node.level == 0 and node.module:
+                names = [node.module]
+            for name in names:
+                top = name.split(".")[0]
+                if top in test_only and f.name != "demo.py":
+                    signing.append("%s imports %s" % (f.name, name))
+                elif top not in stdlib and top not in own and top not in test_only:
+                    foreign.append("%s imports %s" % (f.name, name))
+    t.eq(sorted(set(foreign)), [], "levod imports only the standard library and itself")
+    t.eq(sorted(set(signing)), [], "and nothing but the demo reaches the test-only signer")
