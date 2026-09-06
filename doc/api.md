@@ -255,7 +255,11 @@ bookkeeping only: the purchase itself is on chain. A listing carries at most 8
 links, each label up to 24 characters and each address up to 200. A request
 body is at most 262144 bytes. Each is refused with a sentence that says so,
 and a body that could not be read at all -- too large, not JSON, not an object
--- carries the code `malformed` rather than `refused`.
+-- carries the code `malformed` rather than `refused`. A body the server
+refuses without reading -- chunked, oversize, or with a Content-Length that is
+not a number -- closes the connection with the refusal, and a body a route has
+no use for is read and discarded, so a connection shared through a proxy never
+carries one request's leftover bytes into the next.
 
 **`GET /api/watcher`** → what the watcher is doing, and any sale whose funding
 it cannot place in the chain.

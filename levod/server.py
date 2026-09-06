@@ -574,8 +574,11 @@ class Handler(BaseHTTPRequestHandler):
 
     def handle_one_request(self):
         # One keep-alive connection serves many requests through this same
-        # instance, so last request's body must not be this one's.
+        # instance, so last request's body must not be this one's, and last
+        # request's headers must not stand in for a request that never parsed.
         self._body_read = None
+        self._body_consumed = False
+        self.headers = None
         # Wait for a byte before taking a slot.
         #
         # A browser opens several connections and keeps them open; taking a
@@ -633,6 +636,7 @@ class Handler(BaseHTTPRequestHandler):
             plain, self.rfile = self.rfile, _Deadline(self.rfile, self.connection, deadline)
             try:
                 super().handle_one_request()
+                self._drain()
             except socket.timeout:
                 self.close_connection = True
             finally:
@@ -705,6 +709,11 @@ class Handler(BaseHTTPRequestHandler):
         if code != 304:
             self.send_header("Content-Length", str(len(body)))
         self.send_header("Cache-Control", cache)
+        # A refusal that leaves the request body on the socket says so, and
+        # the proxy opens a fresh connection for the next request rather than
+        # writing it after the bytes nobody read.
+        if self.close_connection:
+            self.send_header("Connection", "close")
         for name, value in (headers or {}).items():
             self.send_header(name, value)
         self.send_header("X-Content-Type-Options", "nosniff")
@@ -744,20 +753,28 @@ class Handler(BaseHTTPRequestHandler):
         return body
 
     def _read_body(self):
+        # A body that is refused unread stays on the socket, so the refusal
+        # closes the connection with it; see _drain for why that matters.
         if self.headers.get("Transfer-Encoding"):
+            self.close_connection = True
             raise Unsupported(411, "send the request body with a Content-Length")
         raw = self.headers.get("Content-Length") or "0"
         try:
             n = int(raw)
         except ValueError:
+            self.close_connection = True
             raise Malformed("Content-Length must be a number")
         if n < 0:
+            self.close_connection = True
             raise Malformed("Content-Length must be a number, 0 or more")
         if n > MAX_BODY:
+            self.close_connection = True
             raise Malformed("the request body is larger than %d bytes" % MAX_BODY)
         if not n:
+            self._body_consumed = True
             return {}
         data = self.rfile.read(n)
+        self._body_consumed = True
         try:
             body = json.loads(data.decode("utf-8"))
         except (UnicodeDecodeError, ValueError):
@@ -770,6 +787,42 @@ class Handler(BaseHTTPRequestHandler):
         if not isinstance(body, dict):
             raise Malformed("the request body must be a JSON object")
         return body
+
+    def _drain(self):
+        """Consume a body the handler never asked for.
+
+        The connection is keep-alive, and behind a reverse proxy it is shared:
+        Caddy pools its connections to levod, so the next request written on
+        this one is as likely another visitor's as this client's. A POST to
+        /api/auth/challenge carrying `{}` -- which is what most HTTP libraries
+        send for a POST with nothing to say -- left those two bytes unread,
+        and the next request on the connection parsed as the method `{}POST`
+        and was answered 501, to whoever happened to send it.
+
+        Runs after every request, inside the request's own deadline. A body
+        that cannot be consumed in bounded time -- chunked, oversize, or
+        mislabelled -- closes the connection instead, which costs the proxy
+        one reconnection and nobody else anything.
+        """
+        if self.close_connection or self._body_consumed or self.headers is None:
+            return
+        if self.headers.get("Transfer-Encoding"):
+            self.close_connection = True
+            return
+        try:
+            n = int(self.headers.get("Content-Length") or "0")
+        except ValueError:
+            self.close_connection = True
+            return
+        if n <= 0:
+            return
+        if n > MAX_BODY:
+            self.close_connection = True
+            return
+        try:
+            self.rfile.read(n)
+        except Exception:
+            self.close_connection = True
 
     def _account(self):
         """The logged-in account, or None."""
