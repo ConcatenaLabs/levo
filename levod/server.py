@@ -1620,9 +1620,16 @@ class Handler(BaseHTTPRequestHandler):
             title = html.escape(name, quote=True) + " \u00b7 Levo"
             blurb = html.escape(blurb, quote=True)
             own = clean
+        elif clean == "/":
+            # The home page keeps the title and description the bundle
+            # carries; only the card's own address is missing from it.
+            title = blurb = None
+            own = "/"
         else:
             return None
         text = body.decode("utf-8", "replace")
+        if title is None:
+            return self._with_own_url(text, own)
         text = re.sub(r"<title>[^<]*</title>", lambda _: "<title>%s</title>" % title, text, count=1)
         text = re.sub(r'(<meta property="og:title" content=")[^"]*(")',
                       lambda mm: mm.group(1) + title + mm.group(2), text, count=1)
@@ -1632,6 +1639,10 @@ class Handler(BaseHTTPRequestHandler):
         # The noscript body too: a reader with scripts off, or a text-only
         # client, still learns which sale this is and what it is for.
         text = re.sub(r"(<noscript>\s*)", lambda mm: mm.group(1) + "%s: %s " % (title, blurb), text, count=1)
+        return self._with_own_url(text, own)
+
+    def _with_own_url(self, text, own):
+        """The card's own address, where this Levo knows where it is reached."""
         origin = self.origin()
         if origin and "og:url" not in text:
             text = text.replace('<meta property="og:type" content="website" />',

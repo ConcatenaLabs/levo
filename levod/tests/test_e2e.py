@@ -1375,6 +1375,8 @@ def run(d):
     htext = home.get("raw", "") if isinstance(home, dict) else str(home)
     ok.ok(re.search(r'og:image" content="http[^"]*/og\.png"', htext),
           "the home page's card too", htext[:600])
+    ok.ok(re.search(r'og:url" content="http[^"]*/"', htext), "and the home page's card names its own address", htext[:600])
+    ok.ok("<title>Levo</title>" in htext, "with the title the bundle carries")
     etag_sale = h.get("ETag")
     code, generic, h2 = _req(d.base, "GET", "/p/nope-not-here")
     gtext = generic.get("raw", "") if isinstance(generic, dict) else str(generic)
