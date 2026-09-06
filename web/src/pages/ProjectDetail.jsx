@@ -496,6 +496,9 @@ export default function ProjectDetail() {
   const issuer = account && account === project.issuer_account
   const operator = !!(standing && standing.operator)
   const open = sale && (sale.status === 'live' || sale.status === 'partial')
+  // Funded once, holding nothing now: reclaimed, sold out, or a funding the
+  // chain no longer has. The outpoint the page names is history then.
+  const emptied = !!(sale && sale.funding && ['reclaimed', 'sold_out', 'ghost'].includes(sale.status))
   const needsLock = sale && (sale.status === 'draft' || sale.status === 'ghost')
   const closeLeft = sale && open ? closeIn(sale.terms.close_locktime, height) : ''
   const links = Object.entries(project.links || {})
@@ -565,9 +568,16 @@ export default function ProjectDetail() {
 
               {project.verify && (
                 <Notice kind="good" style={{ marginTop: '1.5rem' }}>
-                  <strong>{sale.funding ? (open ? 'Verify before you buy.' : 'Verify the lock.')
+                  <strong>{sale.funding ? (open ? 'Verify before you buy.' : emptied ? 'Verify what was locked.' : 'Verify the lock.')
                                           : 'Check the address before you send anything.'}</strong>{' '}
-                  {sale.funding
+                  {sale.funding && emptied
+                    ? <>Rebuild the sale address from the terms above and compare it with the
+                        address the funding output paid. Nothing rests at the address now:{' '}
+                        {sale.status === 'reclaimed' ? 'the project has taken back what did not sell'
+                          : sale.status === 'sold_out' ? 'every token was bought'
+                          : sale.status === 'ghost' ? 'the funding is gone from the chain'
+                          : 'the covenant has been spent'}.</>
+                    : sale.funding
                     ? <>Rebuild the sale address from the terms above and compare it with the
                         address the funding output pays. If they match, the tokens are locked
                         under exactly these terms.</>
@@ -583,15 +593,23 @@ export default function ProjectDetail() {
                       <tr><th>Internal key</th>
                           <td className="prose">{prose(project.verify.internal_key)}</td></tr>
                       {sale.funding && (
-                        <tr><th>{positive(sale.sold_atoms) ? 'Resting at' : 'Locked at'}</th>
+                        <tr><th>{emptied ? 'Last rested at' : positive(sale.sold_atoms) ? 'Resting at' : 'Locked at'}</th>
                             <td><Hex value={sale.funding.txid + ':' + sale.funding.vout} href={explorer('tx', sale.funding.txid)} label="outpoint" />
-                              {positive(sale.sold_atoms) && (
+                              {emptied ? (
+                                <div className="dim small prose">
+                                  spent since; nothing rests at the sale address now
+                                </div>
+                              ) : positive(sale.sold_atoms) && (
                                 <div className="dim small prose">
                                   a partial buy re-rests what is left at the same address,
                                   so this is where the covenant sits now, not where it was funded
                                 </div>
                               )}
                             </td></tr>
+                      )}
+                      {sale.status === 'reclaimed' && (sale.reclaim_txids || []).length > 0 && (
+                        <tr><th>Reclaimed in</th>
+                            <td><Hex value={sale.reclaim_txids[sale.reclaim_txids.length - 1]} href={explorer('tx', sale.reclaim_txids[sale.reclaim_txids.length - 1])} label="reclaim transaction" /></td></tr>
                       )}
                     </tbody>
                   </table>
