@@ -8,6 +8,7 @@ an entry is **`METHOD /path`**, and a long one wraps after the method -- so it
 does not have to be reformatted to be checked.
 """
 
+import ast
 import re
 import sys
 from pathlib import Path
@@ -179,3 +180,20 @@ def test_the_documented_defaults_are_the_code(t):
         t.ok(name in rows, "the README has a row for %s" % name)
         t.ok(name in rows and re.search(r"(?<![0-9.])%s(?![0-9.])" % re.escape(shown), rows[name]),
              "and its default column says %s" % shown, rows.get(name, "")[:80])
+
+
+def test_every_python_file_parses_under_the_3_8_grammar(t):
+    """The README says levod runs on Python 3.8 or later and that every file
+    parses under the 3.8 grammar. A newer construct slipping in -- a match
+    statement, a parenthesised with -- would fail on the older interpreter
+    the README invites, at import time, with a syntax error."""
+    files = sorted(list((ROOT / "levod").glob("*.py")) + list((ROOT / "levod" / "tests").glob("*.py"))
+                   + list((ROOT / "tools").glob("*.py")) + [ROOT / "bin" / "levo"])
+    t.ok(len(files) >= 30, "the walk found the sources", len(files))
+    bad = []
+    for f in files:
+        try:
+            ast.parse(f.read_text(encoding="utf-8"), filename=str(f), feature_version=(3, 8))
+        except SyntaxError as e:
+            bad.append("%s:%s %s" % (f.relative_to(ROOT), e.lineno, e.msg))
+    t.eq(bad, [], "every Python file parses under the 3.8 grammar")
