@@ -15,7 +15,24 @@ set -eu
 
 DIR=${1:-/root/sequentia/levo}
 UNIT=${2:-levod}
-HEALTH=${3:-http://127.0.0.1:8787/api/health}
+
+# Where to ask is where levod listens, and that is written in the unit's
+# environment file, the same place levod reads it from. A guessed port would
+# report a healthy deployment as a silent one. When the unit is not installed
+# yet, levod's own defaults apply.
+health_url() {
+  env_file=$(systemctl show "$UNIT" -p EnvironmentFiles --value 2>/dev/null | cut -d' ' -f1)
+  host=127.0.0.1
+  port=8099
+  if [ -n "$env_file" ] && [ -r "$env_file" ]; then
+    h=$(sed -n 's/^LEVOD_HOST=//p' "$env_file" | tail -n 1)
+    p=$(sed -n 's/^LEVOD_PORT=//p' "$env_file" | tail -n 1)
+    [ -n "$h" ] && host=$h
+    [ -n "$p" ] && port=$p
+  fi
+  printf 'http://%s:%s/api/health' "$host" "$port"
+}
+HEALTH=${3:-$(health_url)}
 
 say() { printf '%s\n' "$*" >&2; }
 die() { printf 'deploy: %s\n' "$*" >&2; exit 1; }
