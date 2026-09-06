@@ -865,7 +865,10 @@ class Handler(BaseHTTPRequestHandler):
         except Unsupported as e:
             # A 429 without a Retry-After tells a client to back off and gives
             # it nothing to back off by.
-            self._json(e.code, {"code": "rate_limited" if e.code == 429 else "refused",
+            # A 411 is a request whose body could not be read at all, which
+            # is what the document calls malformed; a 429 is rate limited.
+            self._json(e.code, {"code": ("rate_limited" if e.code == 429
+                                         else "malformed" if e.code == 411 else "refused"),
                                 "error": str(e)},
                        headers={"Retry-After": "60"} if e.code == 429 else None)
         except Unauthorised as e:
