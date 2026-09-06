@@ -174,7 +174,7 @@ export default function HowItWorks() {
         the same address a second time.
       </p>
 
-      <h2 className="section-h">Checking Levo's work</h2>
+      <h2 className="section-h">Checking Levo&rsquo;s work</h2>
       <p>
         A hostile or broken Levo could show a sale that is not funded, quote a
         price that is not the covenant's, or hide a listing. What it cannot do
