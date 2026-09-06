@@ -170,8 +170,8 @@ export default function Launch() {
         own page.
       </p>
       <Notice style={{ marginTop: '1.5rem' }}>
-        <strong>Before you start you need:</strong> an issued asset, registered so
-        wallets show its name; the whole allocation in a wallet you can send from; an
+        <strong>Before you start you need:</strong> an issued asset, registered if
+        you want wallets to show its name; the whole allocation in a wallet you can send from; an
         address for the treasury, which is where buyers' payments land; and a
         reclaim key you can sign with outside a browser wallet.{' '}
         <span className="mono">levo keygen</span> makes one; keep its secret offline.
