@@ -11,7 +11,7 @@ import { Copy, Notice } from './ui'
 // to, so there is nothing to register and nothing to remember.
 
 export default function SignIn({ onDone, label = 'Sign in with your wallet' }) {
-  const { refresh, config, links } = useStore()
+  const { refresh, config, links, sessionNotice, setSessionNotice } = useStore()
   const hrp = config.hrp || 'tb'
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState(null)
@@ -54,6 +54,7 @@ export default function SignIn({ onDone, label = 'Sign in with your wallet' }) {
 
       const r = await api.authVerify(ch.message, signature)
       setToken(r.token)
+      setSessionNotice(null)
       await refresh()
       onDone && onDone(r)
     } catch (e) {
@@ -78,6 +79,7 @@ export default function SignIn({ onDone, label = 'Sign in with your wallet' }) {
     try {
       const r = await api.authVerify(manual.message, pasted.trim(), address.trim() || undefined)
       setToken(r.token)
+      setSessionNotice(null)
       await refresh()
       onDone && onDone(r)
     } catch (e) {
@@ -147,6 +149,7 @@ export default function SignIn({ onDone, label = 'Sign in with your wallet' }) {
 
   return (
     <div>
+      {sessionNotice && !error && <Notice style={{ marginBottom: '1rem' }}>{capitalise(sessionNotice)}.</Notice>}
       {error && <Notice kind="bad" style={{ marginBottom: '1rem' }}>{error}</Notice>}
       <div className="btn-row">
         {hasProvider() && (
