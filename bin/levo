@@ -1458,6 +1458,13 @@ def _zero_or_more(text):
 def main():
     ap = argparse.ArgumentParser(prog="levo", description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
+    # Levo has no version number; the checkout's commit is what names it in a
+    # report, and a copy outside a checkout says so instead of inventing one.
+    import checkout as _checkout
+    _commit = _checkout.short(HERE.parent)
+    ap.add_argument("--version", action="version",
+                    version=("levo at commit %s" % _commit) if _commit
+                    else "levo, from a copy that is not a git checkout")
     sub = ap.add_subparsers(dest="cmd", required=True)
     # In the order the summary above lists them, so that `levo --help` and
     # `levo <command> --help` tell the same story; and every argument says what

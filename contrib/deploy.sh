@@ -125,7 +125,8 @@ elif app.get("source_newer_than_bundle"):
 if bad:
     print("deploy: " + "; ".join(bad), file=sys.stderr)
     raise SystemExit(1)
-print("deploy: serving %s, built %s" % (app.get("bundle", "the app"), app.get("built_at")))
+print("deploy: serving %s, built %s, at commit %s" % (app.get("bundle", "the app"), app.get("built_at"),
+                                                       (app.get("commit") or "unknown")[:12]))
 ' || die "the deploy did not take"
 
 say "== done"

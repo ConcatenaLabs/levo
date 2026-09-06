@@ -271,6 +271,9 @@ def run(d):
           "so the note may say what consensus does", r["note"])
     code, _, h = _req(d.base, "HEAD", "/api/health")
     ok.eq(code, 200, "HEAD works on the API")
+    code, r, _ = _req(d.base, "GET", "/api/health")
+    ok.ok("commit" in (r.get("app") or {}) and (r["app"]["commit"] is None or re.match(r"^[0-9a-f]{40}$", r["app"]["commit"])),
+          "health names the checkout's commit, or null outside one", r.get("app"))
     ok.ok(h.get("Content-Length") not in (None, "0"), "HEAD carries the length it would send")
     code, _, h = _req(d.base, "OPTIONS", "/api/health")
     ok.eq(code, 204, "OPTIONS answers")

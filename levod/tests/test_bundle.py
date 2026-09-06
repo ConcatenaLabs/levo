@@ -106,3 +106,38 @@ def test_an_unreadable_index_still_reports_what_it_can(t):
     state = SV._bundle_state(app)
     t.ok("built_at" in state, "the date survives an index with no entry script")
     t.ok("bundle" not in state, "and the name is simply absent rather than invented")
+
+
+def test_the_checkout_commit_is_read_without_git(t):
+    """Levo has no version number, so the commit is what names a levod or a
+    levo in a report. It is read from .git by hand: the service's sandbox need
+    not have git, and a copy outside a checkout says None rather than guess."""
+    import subprocess
+    import checkout
+    root = HERE.parent.parent
+    mine = checkout.commit(root)
+    try:
+        git = subprocess.run(["git", "-C", str(root), "rev-parse", "HEAD"],
+                             capture_output=True, text=True, timeout=30).stdout.strip() or None
+    except (OSError, subprocess.SubprocessError):
+        git = None
+    if git:
+        t.eq(mine, git, "the commit read by hand is the one git reports")
+        t.eq(checkout.short(root), git[:12], "and short() is its first twelve characters")
+    else:
+        t.ok(True, "no git here to compare against")
+    t.eq(checkout.commit(tempfile.mkdtemp(prefix="levo-nocheckout-")), None, "a directory that is no checkout is None")
+    # A detached HEAD is the commit itself; a ref is followed to its file, or
+    # into packed-refs when the file is not there.
+    fake = Path(tempfile.mkdtemp(prefix="levo-fakegit-"))
+    (fake / ".git").mkdir()
+    (fake / ".git" / "HEAD").write_text("a" * 40 + "\n")
+    t.eq(checkout.commit(fake), "a" * 40, "a detached HEAD is the commit")
+    (fake / ".git" / "HEAD").write_text("ref: refs/heads/main\n")
+    (fake / ".git" / "packed-refs").write_text("# pack-refs with: peeled\n" + "b" * 40 + " refs/heads/main\n")
+    t.eq(checkout.commit(fake), "b" * 40, "a ref not on disk is found in packed-refs")
+    (fake / ".git" / "refs" / "heads").mkdir(parents=True)
+    (fake / ".git" / "refs" / "heads" / "main").write_text("c" * 40 + "\n")
+    t.eq(checkout.commit(fake), "c" * 40, "and the loose ref wins when both exist")
+    (fake / ".git" / "HEAD").write_text("garbage\n")
+    t.eq(checkout.commit(fake), None, "a HEAD that is neither is None, not a crash")
