@@ -27,9 +27,10 @@ export default function Home() {
           Levo allocates by commitment. Stake Sequence &mdash; the token
           Sequentia is secured with, ticker {stake.label} &mdash; and you can
           take a position in a sale; stake enough and you can run one.
-          Everything in between is settled by a covenant that holds the
+          Between the two sits a covenant, not Levo: it holds the
           project&rsquo;s tokens from the moment they are locked to the moment
-          they reach a buyer. Sales here are priced in {payment.label}.
+          they reach a buyer, and settles each purchase in one transaction.
+          Sales here are priced in {payment.label}.
         </p>
         <div className="hero-actions">
           <Link className="btn btn-primary" to="/projects">See the sales</Link>
