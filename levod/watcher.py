@@ -865,13 +865,18 @@ class Watcher:
         # A hint that pointed here has done its work. Left in place it is one
         # more gettxout the next time the sale moves, and a state file that
         # says the watcher is still looking for where the sale already is.
+        hints = len(sale.candidates)
         sale.candidates = [c for c in sale.candidates
                            if not (c.get("txid") == txid and int(c.get("vout", -1)) == int(vout))]
         sale.locked_atoms = atoms
         total = sale.terms.total_atoms or atoms
         sale.sold_atoms = max(0, total - atoms)
         sale.status = S.LIVE if atoms >= total else S.PARTIAL
-        return before != (sale.status, sale.locked_atoms, txid, int(vout))
+        # A dropped hint is a change worth writing: otherwise the file on disk
+        # goes on saying the watcher is looking for where the sale already is
+        # until something else happens to be saved.
+        return (before != (sale.status, sale.locked_atoms, txid, int(vout))
+                or len(sale.candidates) != hints)
 
     def _is_resting(self, out, sale):
         """Whether a `gettxout` result is this sale's token at this sale's
