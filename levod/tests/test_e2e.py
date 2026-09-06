@@ -958,6 +958,9 @@ def run(d):
     code, r, h = _req(d.base, "PUT", "/api/health")
     ok.eq(code, 405, "PUT is refused")
     ok.eq(h.get("Allow"), "GET, HEAD, OPTIONS", "with the same list OPTIONS gives")
+    code, r, h = _req(d.base, "POST", "/api/health", {})
+    ok.eq(code, 405, "and so is POST")
+    ok.eq(h.get("Allow"), "GET, HEAD, OPTIONS", "with the same list again, HEAD included: the two refusals took different paths")
     ok.eq(h.get("X-Content-Type-Options"), "nosniff",
           "and the site's own headers on it")
     code, r, h = _req(d.base, "POST", "/index.html")
