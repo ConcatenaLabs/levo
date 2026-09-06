@@ -543,9 +543,25 @@ def run(ok, rig):
     signed = w("signrawtransactionwithwallet", built["unsigned_tx_hex"])
     allowed, why = accept(signed["hex"])
     ok.ok(allowed, "and the chain accepts a fee paid in an asset of its own", why)
+    # Broadcast and walk away. Nobody records this purchase: the buyer built
+    # it through Levo, so Levo knows its id, and the watcher records it
+    # against the account it was built for once the treasury credit is on
+    # chain. That is what makes the cap a cap for purchases Levo plans.
+    before = A.sale.allocations.get("buyer", 0)
+    ok.ok(any(b["txid"] == built["txid"] for b in A.sale.builds),
+          "the build is remembered by its id before anything is signed")
+    ok.eq(built["txid"], n("decoderawtransaction", signed["hex"])["txid"],
+          "and that id is the signed transaction's, witness and all")
     n("sendrawtransaction", signed["hex"])
     rig.mine()
     watch.poll()
+    ok.eq(A.sale.allocations.get("buyer", 0) - before, fee_plan.payment_atoms,
+          "an unconfirmed purchase is recorded by the watcher, for what it paid")
+    ok.eq(A.sale.by_txid.get(built["txid"]), "buyer", "against the account it was built for")
+    ok.ok(not any(b["txid"] == built["txid"] for b in A.sale.builds), "and the build is done with")
+    ok.ok(any(e["txid"] == built["txid"] and e.get("verified")
+              for e in A.sale.purchases.get("buyer", [])),
+          "with the treasury payment checked on the real chain")
 
     # --- a reorg under a funded sale ---------------------------------------
     #

@@ -362,8 +362,9 @@ export default function BuyFlow({ project, tier, onSettled }) {
         {sentTxid ? (
           <Notice kind="good" style={{ marginBottom: '1rem' }}>
             <strong>Your purchase is on chain.</strong> Your session ended before
-            Levo could record it against your cap, which is bookkeeping and
-            nothing more: the sale has moved either way. Sign in and record it.
+            Levo could record it against your cap. Levo built this transaction,
+            so it records it itself once its node sees the payment; signing in
+            and recording it now only gets there first.
             <div style={{ marginTop: '.4rem' }}>
               <Hex value={sentTxid} href={explorer('tx', sentTxid)} label="transaction id" />
             </div>
@@ -690,6 +691,11 @@ export default function BuyFlow({ project, tier, onSettled }) {
           </div>
           {recorded === 'failed' && (
             <div style={{ marginTop: '.6rem' }}>
+              <div className="small dim" style={{ marginBottom: '.4rem' }}>
+                Not recorded against your cap yet. Levo built this transaction,
+                so it records it itself once its node sees the payment, usually
+                within a minute; recording it now only gets there first.
+              </div>
               <button className="btn btn-sm" aria-disabled={busy}
                       onClick={() => record(sentTxid)}>
                 Record it against my cap

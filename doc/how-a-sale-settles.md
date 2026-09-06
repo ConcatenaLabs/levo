@@ -193,6 +193,17 @@ own outpoint answers, and the UTXO set is walked only for a sale whose outpoint
 has moved -- and, every tenth poll, to notice assets resting at a sale address
 that the covenant does not sell.
 
+The watcher also carries the allocation ledger's one dependency on it. Levo
+knows the id of every purchase it builds before the buyer signs -- a segwit id
+excludes the witness, and Levo assembles every input and output -- so each
+build is remembered against the account it was built for, and when its
+treasury credit appears the purchase is recorded whether or not that buyer
+ever confirms. Without this the cap was a cap only for buyers who came back:
+one who built, broadcast and said nothing kept a commitment of nothing, and
+was planned the whole cap again as soon as the covenant re-rested. A build
+whose outpoint the sale has moved on from, with its transaction still unseen,
+lost the race to another spend and is dropped.
+
 Three states look identical from the address alone and mean different things.
 A sold-out sale, a sale whose funding was undone by a Bitcoin-driven reorg, and
 a sale the project reclaimed after the close all leave nothing at the address.
