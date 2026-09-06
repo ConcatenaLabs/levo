@@ -997,12 +997,14 @@ def cmd_buy(args):
                 "sale rests now")
         raise Fail("the chain would reject this: %s" % why)
     if args.dry_run:
+        # The fee asset is named the way the person named it: the label they
+        # typed, or the payment asset's own; a slice of hex names nothing.
         print("would broadcast %s (accepted by testmempoolaccept, %s fee)"
               % (built["txid"],
                  U.fmt(fee_atoms,
                        _payment_decimals(p) if fee_asset == pay_asset else 8,
                        _payment_label(p) if fee_asset == pay_asset
-                       else fee_asset[:8])))
+                       else (args.fee_asset or fee_asset[:8]))))
         return
     txid = node("sendrawtransaction", signed["hex"])
     print("bought. %s" % txid)
