@@ -103,6 +103,19 @@ so nothing stale is served after a change. `X-Board-Cache` says `hit` or `miss`.
 so a client can rebuild it and compare. That comparison is the only thing that has to be
 trusted, and it does not have to be trusted to levod.
 
+`sale`: `status`, `terms`, `funding` (the output the tokens rest at, null
+before the lock), `locked_atoms` and `sold_atoms` as decimal strings, `buyers`
+(how many accounts Levo has recorded a purchase for), `reclaim_txids`, `strays`
+(payments in other assets that landed at the sale address) and `created_at`.
+`status` is one of `draft` (terms fixed and the address derived, tokens not yet
+locked), `live` (funded, verified, selling), `partial` (some sold, the
+remainder re-rested at the same address), `sold_out` (spent with no remainder
+before the close), `closed` (past the close: reclaimable by the project, and
+still buyable until it does), `ghost` (its funding undone by a Bitcoin-driven
+reorg) and `reclaimed` (closed, and the project's reclaim has swept the rest).
+The board and the CLI say these in fewer words: `live` and `partial` are
+"open", `draft` and `ghost` are "not funded", `closed` is "reclaimable".
+
 **`GET /api/projects/<slug>/fee`** `?kind=buy|reclaim&inputs=<n>&asset=<id>` →
 what a fee should be for a transaction of that shape, from the node's own relay
 floor: `{asset, vsize_estimate, min_atoms, suggested_atoms, rate_atoms_per_kvb}`.

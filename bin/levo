@@ -144,7 +144,7 @@ def api(method, path, body=None, token=None):
                        "is restarting, try again in a minute, and otherwise check "
                        "that LEVO_URL points at a levod" % (LEVO_URL, e.code, path))
     except urllib.error.URLError as e:
-        raise Fail("cannot reach levod at %s: %s" % (LEVO_URL, e))
+        raise Fail("cannot reach levod at %s: %s (LEVO_URL names the Levo to talk to)" % (LEVO_URL, e))
 
 
 def atoms(v):
@@ -434,16 +434,21 @@ def cmd_sales(args):
     total = r.get("total", shown)
     # The asset id, not only the ticker: a ticker is free text any lister can
     # choose, and two listings can carry the same one. The id is the token.
-    print("%-20s %-6s %-16s %-10s %s"
-          % ("page", "ticker", "asset", "status", "sale address"))
+    print("%-20s %-6s %-16s %-11s %-22s %s"
+          % ("page", "ticker", "asset", "status", "sold", "sale address"))
     for p in r["projects"]:
         s = p.get("sale") or {}
-        status = (s.get("status") or "-").replace("_", " ")
-        asset = ((s.get("terms") or {}).get("token_asset") or "")
-        print("%-20s %-6s %-16s %-10s %s"
+        terms = s.get("terms") or {}
+        asset = terms.get("token_asset") or ""
+        try:
+            sold = "%s of %s" % (U.fmt(int(s.get("sold_atoms") or 0), p["decimals"], ""),
+                                 U.fmt(int(terms.get("total_atoms") or 0), p["decimals"], ""))
+        except (KeyError, ValueError, TypeError):
+            sold = "-"
+        print("%-20s %-6s %-16s %-11s %-22s %s"
               % (plain(p["slug"]), plain(p["ticker"]),
                  (asset[:8] + "…" + asset[-6:]) if asset else "-",
-                 status, p.get("address") or ""))
+                 status_word(s.get("status")), sold.strip(), p.get("address") or ""))
     if total > args.offset + shown:
         print("\n%d of %d shown. --offset %d for the next page."
               % (shown, total, args.offset + shown))
@@ -483,7 +488,7 @@ def cmd_positions(args):
     pay_dec = payment_decimals()
     for pos in r["positions"]:
         ticker = plain(pos["ticker"])
-        status = str(pos.get("status") or "-").replace("_", " ")
+        status = status_word(pos.get("status"))
         print("%s (%s)  %s  %s" % (plain(pos["name"]), ticker, plain(pos["slug"]), status))
         print("  bought     %s" % U.fmt(int(pos["tokens_atoms"]), pos["decimals"], ticker))
         print("  committed  %s of a %s cap, %s still open"
@@ -582,7 +587,7 @@ def cmd_verify(args):
     if resting is False:
         # Said after the verdict, because it is news about the sale rather than
         # about the listing's integrity.
-        status = (sale.get("status") or "").replace("_", " ")
+        status = status_word(sale.get("status"))
         print("               Nothing is resting at it now%s. A sale that has "
               "sold out, been reclaimed, or simply moved with a purchase your "
               "node has seen looks exactly like this."
@@ -1453,6 +1458,19 @@ def _zero_or_more(text):
     if n < 0:
         raise argparse.ArgumentTypeError("0 or more")
     return n
+
+
+# A sale's state in the board's words. The API says `live`, `partial`, `draft`,
+# `ghost` and `closed` (doc/api.md); the board says open, not funded and
+# reclaimable, and so does this, since a person reads both. The one thing
+# "partial" said that "open" does not -- that something has sold -- is its own
+# column.
+STATUS_WORDS = {"live": "open", "partial": "open", "sold_out": "sold out", "draft": "not funded",
+                "closed": "reclaimable", "ghost": "not funded", "reclaimed": "reclaimed"}
+
+
+def status_word(status):
+    return STATUS_WORDS.get(status or "", (status or "-").replace("_", " "))
 
 
 def main():
