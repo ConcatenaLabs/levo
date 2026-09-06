@@ -14,7 +14,7 @@
   a funded sale whose terms are gone can be seen on chain and reclaimed by
   nobody. Copy `/var/backups/levo` off the box on whatever schedule the rest of
   the deployment uses -- the file holds an allocation ledger, so treat it as
-  private -- and check `contrib/README.md`'s restore drill against it once.
+  private -- and run the restore drill below against one of those copies once.
 
 ```sh
 # Build the app FIRST. levod serves the app and the API from one origin, so
