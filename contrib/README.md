@@ -50,7 +50,9 @@ cd /root/sequentia/levo && contrib/deploy.sh
 `deploy.sh` fetches, checks out `origin/main`, builds the app, restarts levod
 and then asks levod what it is serving, at the host and port the unit's
 environment file names. It takes the checkout, the unit name and the health
-URL as arguments if this deployment uses others.
+URL as arguments if this deployment uses others. A deployment that changes
+`deploy.sh` itself hands over to the fetched copy, so the new script is the
+one that finishes the run.
 
 Every step is checked, and the build is the reason. A build that fails leaves
 the previous bundle exactly where it was: the pages still render, every API
