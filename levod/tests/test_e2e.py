@@ -1388,6 +1388,17 @@ def run(d):
     code, r, h = _req(d.base, "GET", "/api/rails")
     ok.ok("max-age=30" in (h.get("Cache-Control") or ""), "rails may be held for half a minute, as the document says")
 
+    # --- 409 carries the allowance, as the document says -------------------
+    ok.section("409")
+    code, r = req("POST", "/api/projects/helios/buy", {"token_atoms": 4_001 * 100_000_000}, token=buyer_tok)
+    ok.eq(code, 409, "a plan past the cap is a 409")
+    ok.eq(r.get("code"), "cap_exceeded", "with the documented code")
+    ok.ok(isinstance(r.get("allowance_atoms"), str) and r["allowance_atoms"].isdigit(),
+          "and the allowance beside it, as a decimal string", r.get("allowance_atoms"))
+    ok.eq(r.get("enforced_by"), "levo", "labelled as policy, not consensus")
+    ok.ok("tier" in r.get("error", "") and "USDX" in r.get("error", ""),
+          "and a sentence naming the tier and the figures", r.get("error"))
+
     # --- the statement a wallet is asked to sign ---------------------------
     ok.section("login")
     code, ch = req("POST", "/api/auth/challenge")
