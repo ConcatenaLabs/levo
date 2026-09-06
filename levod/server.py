@@ -1294,7 +1294,9 @@ class Handler(BaseHTTPRequestHandler):
                                     "error": "%s is not allowed here; this path "
                                              "takes %s" % (method, ", ".join(allowed))},
                               headers={"Allow": ", ".join(allowed + ["OPTIONS"])})
-        return self._json(404, {"code": "not_found", "error": "no such endpoint"})
+        return self._json(404, {"code": "not_found",
+                                "error": "nothing answers at this path; the routes "
+                                         "levod serves are listed in doc/api.md"})
 
     # --- the SPA ------------------------------------------------------------
 
@@ -1312,7 +1314,8 @@ class Handler(BaseHTTPRequestHandler):
                 # A file that is not there is not the app: a stale bundle
                 # asking for an old hashed asset should hear 404 and reload,
                 # not receive HTML as a script.
-                return self._json(404, {"code": "not_found", "error": "no such file"})
+                return self._json(404, {"code": "not_found",
+                                        "error": "nothing is served at this path"})
             target = root / "index.html"      # history-API fallback
         if not target.is_file():
             return self._json(404, {"code": "not_found",
