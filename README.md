@@ -329,6 +329,17 @@ handle_path /levo/* {
     encode gzip zstd
     reverse_proxy 127.0.0.1:8099
 }
+# While levod is down the proxy would answer an empty 502: a blank page with
+# nothing said. This answers for Levo's paths and no other.
+handle_errors 502 503 {
+    @levo path /levo /levo/*
+    handle @levo {
+        header Content-Type "text/html; charset=utf-8"
+        respond <<HTML
+<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Levo is restarting</title></head><body><h1>Levo is restarting.</h1><p>The service behind this page is not answering at the moment. Every sale is a covenant on the Sequentia chain, so nothing about any sale changes while this page is down; it is only the page.</p><p>Try again in a minute.</p></body></html>
+HTML {err.status_code}
+    }
+}
 ```
 
 `encode` belongs in the proxy rather than in levod: the answers worth
