@@ -66,9 +66,12 @@ terms a buyer sees.
 
 Both covenant paths are exercised on the Sequentia testnet: a buy that pays the
 treasury and re-rests the remainder at the identical address
-([`bbed7529…ce69`](https://sequentiatestnet.com/explorer/tx/bbed75291600bcd31ef9f6db4b2aaa4466a6a8399d66f8f1f6ec2b20a286ce69)),
-and a reclaim through the reclaim leaf after the close
-([`2f97173f…3ab`](https://sequentiatestnet.com/explorer/tx/2f97173f4dd60976e5862f0bb572871114c6008607eb16003911f4eff1b843ab)).
+([`43636934…1a7a`](https://sequentiatestnet.com/explorer/tx/43636934b5289a45fa3860489112ebf1659a1c55395cc3ea62da167513981a7a)),
+and a reclaim through the reclaim leaf after a close set by block height
+([`2c980cd0…08ee`](https://sequentiatestnet.com/explorer/tx/2c980cd0ed69d5a0052005111840f16ff9d0247ca643bcf067b4b516436f08ee)),
+both from one sale
+([reclaim-drill](https://sequentiatestnet.com/levo/p/reclaim-drill)) that was
+listed, locked, bought from and reclaimed entirely with `bin/levo`.
 The platform runs sales end to end at
 [sequentiatestnet.com/levo](https://sequentiatestnet.com/levo/). You do not
 have to take that on trust: every sale publishes the terms its address was
