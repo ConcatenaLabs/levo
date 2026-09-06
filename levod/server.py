@@ -97,6 +97,11 @@ MAINNET_CHAINS = ("sequentia", "main")
 
 BUSY_WAIT_SECONDS = 5            # how long a request waits for a free handler
 MAX_HANDLERS = 64                 # concurrent requests before the rest wait
+# How long one rendering of the board may answer for, and how many distinct
+# queries are kept. A write moves the platform's version and empties it at
+# once; the clock is there for the reader nothing was written for.
+BOARD_CACHE_SECONDS = 5
+BOARD_CACHE_ENTRIES = 64
 # Polls that must fail in a row before health calls the watcher broken. One is
 # a bad minute on the node; three in a row is something to look at.
 WATCHER_FAILURES_BEFORE_UNHEALTHY = 3
@@ -283,6 +288,7 @@ class App:
                                  operators=self.operators,
                                  registry_url=self.registry_url,
                                  on_stale=lambda: self.watcher and self.watcher.nudge())
+        self.board_cache = {}            # (version, height, query) -> (expires, body)
         watch_node = self.node.with_timeout(WATCHER_RPC_TIMEOUT) \
             if hasattr(self.node, "with_timeout") else self.node
         self.watcher = W.Watcher(
@@ -1152,14 +1158,34 @@ class Handler(BaseHTTPRequestHandler):
             # listing hidden with no way back to it is a decision nobody can
             # revisit.
             who = self._account()
+            operator = bool(who and who.lower() in app.market.operators)
+            # The board, once per state of the platform rather than once per
+            # reader. Its inputs change only when something is written or the
+            # chain moves, and a burst of readers -- a launch, a link shared
+            # somewhere -- asks the same question hundreds of times a second.
+            # The key carries the state's version, the height the statuses
+            # are read at, and everything in the query; a write moves the
+            # version, so nothing stale is ever served after one.
+            height = app.market.height()
+            key = (app.market.version, height, operator,
+                   _one(query, "status"), _one(query, "q"),
+                   _one(query, "sort") or "new",
+                   _int_param(query, "limit"), _int_param(query, "offset") or 0)
+            hit = app.board_cache.get(key)
+            if hit and hit[0] > time.monotonic():
+                return self._send(200, hit[1], "application/json",
+                                  headers={"X-Board-Cache": "hit"})
             page = app.market.public_projects(
-                status=_one(query, "status"), q=_one(query, "q"),
-                sort=_one(query, "sort") or "new",
-                limit=_int_param(query, "limit"),
-                offset=_int_param(query, "offset") or 0,
-                operator=bool(who and who.lower() in app.market.operators))
-            page["node_reachable"] = app.market.height() is not None
-            return self._json(200, page)
+                status=key[3], q=key[4], sort=key[5], limit=key[6], offset=key[7],
+                operator=operator)
+            page["node_reachable"] = height is not None
+            body = json.dumps(page, indent=2, sort_keys=True).encode()
+            if len(app.board_cache) >= BOARD_CACHE_ENTRIES or \
+                    any(k[0] != key[0] for k in list(app.board_cache)[:1]):
+                app.board_cache.clear()          # a new version, or too many queries
+            app.board_cache[key] = (time.monotonic() + BOARD_CACHE_SECONDS, body)
+            return self._send(200, body, "application/json",
+                              headers={"X-Board-Cache": "miss"})
 
         if method == "GET" and len(parts) == 3 and parts[0] == "projects" \
                 and parts[2] == "purchases":

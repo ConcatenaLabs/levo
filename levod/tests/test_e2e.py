@@ -1264,6 +1264,23 @@ def run(d):
     code, _, h = _req(d.base, "HEAD", "/sitemap.xml")
     ok.eq(code, 200, "HEAD works for the sitemap, which is how some crawlers check it")
 
+    # --- the board, once per state rather than once per reader ------------
+    ok.section("board cache")
+    code, b1, h1 = _req(d.base, "GET", "/api/projects?status=all&limit=5")
+    code, b2, h2 = _req(d.base, "GET", "/api/projects?status=all&limit=5")
+    ok.eq(h1.get("X-Board-Cache"), "miss", "the first reader renders the board")
+    ok.eq(h2.get("X-Board-Cache"), "hit", "the second, moments later, is answered from it")
+    ok.eq(b1, b2, "with the same answer")
+    code, r = req("PATCH", "/api/projects/helios", {"summary": "Edited under a cached board."}, token=issuer_tok)
+    ok.eq(code, 200, "a write lands")
+    code, b3, h3 = _req(d.base, "GET", "/api/projects?status=all&limit=50")
+    ok.eq(h3.get("X-Board-Cache"), "miss", "and the next board is rendered afresh")
+    ok.ok(any(p["summary"] == "Edited under a cached board." for p in b3["projects"]),
+          "showing the write, not the cache")
+    code, b4, h4 = _req(d.base, "GET", "/api/projects?status=all&limit=50", token=issuer_tok)
+    ok.eq(h4.get("X-Board-Cache"), "miss", "a different reader kind (the session's own view) is its own entry")
+    req("PATCH", "/api/projects/helios", {"summary": "Solar microgrids, tokenised."}, token=issuer_tok)
+
     # --- the statement a wallet is asked to sign ---------------------------
     ok.section("login")
     code, ch = req("POST", "/api/auth/challenge")
