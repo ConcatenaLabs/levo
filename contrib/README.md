@@ -76,13 +76,13 @@ It does not make levod unhealthy -- a site serving an old bundle is still
 serving, and paging someone at 3am for it would be wrong -- so the deploy is
 what refuses.
 
-Reinstall the units when one changes in the repo; that reaches the box only
-here, and levod's own "do not restart me" status is a unit setting.
-
-```sh
-install -m 644 contrib/levod.service contrib/levo-backup.service contrib/levo-backup.timer /etc/systemd/system/
-systemctl daemon-reload
-```
+`deploy.sh` also reinstalls the units, since a unit change in the repository
+reaches the box nowhere else. `levod.service` sandboxes the process: it holds
+no capabilities and can gain none, sees the filesystem read-only apart from
+its state directory, has a temp directory of its own, and can open only the
+sockets a web service needs. It still runs as root, because the checkout
+lives under `/root` where no other user can reach it; `systemd-analyze
+security levod` scores what is left.
 
 `ok` in health is false when the node is unreachable, the watcher has stalled
 or is failing every poll, the state file cannot be written, or the built app is

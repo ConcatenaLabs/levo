@@ -28,5 +28,37 @@ SyslogLevelPrefix=yes
 # another way.
 #OnFailure=levod-failed.service
 
+# What levod may touch. It is a Python process serving HTTP that reads a
+# checkout, an environment file and a node's RPC, and writes one directory. It
+# runs as root only because the checkout lives under /root, which no other
+# user can reach; with these lines a root process is still a root process,
+# but one that holds no capabilities, cannot gain any, sees the rest of the
+# filesystem read-only and its own temp directory, and can open only the
+# sockets a web service needs. `systemd-analyze security levod` scores it.
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/var/lib/levo
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources
+UMask=0077
+
 [Install]
 WantedBy=multi-user.target
