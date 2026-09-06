@@ -265,6 +265,21 @@ export default function HowItWorks() {
           because the key that signs it is the project's own, held outside any
           wallet that would recognise the transaction.
         </dd>
+        <dt>Remainder</dt>
+        <dd>
+          What a partial buy leaves unsold. The covenant requires it to go back
+          to the identical sale address in the same transaction, so the sale
+          carries on from a new output at the same address, and never for less
+          than the minimum purchase.
+        </dd>
+        <dt>Ledger</dt>
+        <dd>
+          Levo's own record of which account made which purchase, and the one
+          thing the per-buyer caps are measured against. A purchase Levo built
+          is entered in it when the payment is seen on chain; one built
+          elsewhere is entered when somebody records it. The chain, not the
+          ledger, is the authority on what a sale holds.
+        </dd>
       </dl>
 
       <div className="btn-row" style={{ marginTop: '2.5rem' }}>
