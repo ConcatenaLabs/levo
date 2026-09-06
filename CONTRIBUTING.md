@@ -15,8 +15,8 @@ npm --prefix web test && npm --prefix web run build
 python3 levod/tests/test_render.py  # every page in a real browser; skipped without a chromium
 ```
 
-Those four run on every push and pull request, and `main` refuses a merge
-until they are green. Three more need a Sequentia node and a wallet, and say
+Everything after `npm ci` runs on every push and pull request, and `main`
+refuses a merge until it is green. Three more need a Sequentia node and a wallet, and say
 so when they skip: `test_node.py`, `test_cli.py` and `test_browser.py`. Run
 `test_node.py` whenever `covenant.py`, `tx.py`, `pset.py` or `watcher.py`
 change; it is the only suite that proves anything about consensus.
