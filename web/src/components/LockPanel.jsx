@@ -55,6 +55,8 @@ export default function LockPanel({ project, onLocked }) {
           Send exactly {amount(sale.terms.total_atoms, decimals)} {project.ticker} to the
           address below, in one output, from a wallet you control. Until that output
           exists and matches your terms, the sale stays a draft and nobody can buy.
+          Confirm it below once it is sent; if you do not, Levo finds it on its own
+          within about ten minutes of it confirming.
         </p>
       )}
       <div className="field">
