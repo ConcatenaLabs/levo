@@ -338,6 +338,26 @@ def main():
         finally:
             page.stop()
 
+        # --- a phone's home screen gets a mark, not a screenshot -------------
+        #
+        # Safari and the Android launchers ignore an SVG favicon and read the
+        # touch icon instead; without one a saved page shows a shrunken
+        # screenshot of itself. The head declares it, the bundle rewrites its
+        # address under the app's base, and it answers as a 180-pixel PNG.
+        with _url.urlopen(demo.base + "/", timeout=10) as r:
+            shell = r.read().decode("utf-8", "replace")
+        m = re.search(r'<link rel="apple-touch-icon"[^>]*href="([^"]+)"', shell)
+        if m:
+            passed += 1
+            with _url.urlopen(demo.base + m.group(1), timeout=10) as r:
+                png = r.read()
+            if png[:8] == b"\x89PNG\r\n\x1a\n" and png[16:24] == (180).to_bytes(4, "big") * 2:
+                passed += 1
+            else:
+                failed.append("the touch icon is not a 180-pixel PNG: %r" % png[:24])
+        else:
+            failed.append("the app shell declares no touch icon")
+
         # --- every page can be read by everyone -----------------------------
         #
         # Signed out and signed in, since the forms -- the listing, the buy
