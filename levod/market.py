@@ -1388,8 +1388,13 @@ class Platform:
                 continue
             if not self._matches(p, wanted, h, now):
                 continue
-            if needle and needle not in " ".join(
-                    filter(None, [p.slug, p.name, p.ticker, p.summary])).lower():
+            # The asset id is searchable too: a ticker is free text any lister
+            # may choose and two sales can carry the same one, but a buyer
+            # holding an id from their wallet is holding the one thing that
+            # names the token, and could not find its sale with it.
+            haystack = " ".join(filter(None, [p.slug, p.name, p.ticker, p.summary,
+                                               p.sale.terms.token_asset if p.sale else None]))
+            if needle and needle not in haystack.lower():
                 continue
             items.append(p)
         items.sort(key=self._order(sort, h, now))

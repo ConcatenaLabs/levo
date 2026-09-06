@@ -91,7 +91,7 @@ query, node_reachable}`.
 |---|---|
 | `status` | `open`, `finished`, `draft`, `all` (default `all`) |
 | `sort` | `new`, `closing`, `progress` (default `new`) |
-| `q` | matches a listing's page name, name, ticker or summary |
+| `q` | matches a listing's page name, name, ticker, summary or the token's asset id |
 | `status=hidden` | what an operator has taken off the board; only an operator may ask, and only their answers carry `hidden` on a row |
 | `limit`, `offset` | a page; a size is always applied, and `total` says how many there are |
 
