@@ -384,7 +384,7 @@ reaches the box nowhere else.
 | `LEVOD_PAYMENT_LABEL` | `USDX` | Its label in the node's rate table and in the interface. |
 | `LEVOD_STAKE_LABEL` | `tSEQ` on chain `test`, else `SEQ` | The staking token's ticker in the interface. |
 | `LEVOD_HRP` | `tb` | Address prefix: `tb` testnet, `bc` mainnet (Sequentia's unblinded addresses use Bitcoin's own HRPs), `ert` on `elementsregtest`. |
-| `LEVOD_TIERS` | supply-share defaults | JSON tier table; see `levod/tiers.py`. Takes effect on restart; caps apply to open sales at once, while what an account has already committed stays committed. |
+| `LEVOD_TIERS` | supply-share defaults | JSON list of tiers, lowest first, each with `name`, `min_stake` (whole SEQ), `cap` (whole units of the payment asset; the most one account may commit per sale), `may_list`, and a `blurb` that the home page shows beside the tier. Takes effect on restart; caps apply to open sales at once, while what an account has already committed stays committed. |
 | `LEVOD_EXPLORER_URL` | — | An esplora-style explorer base (`.../tx/`, `.../address/`, `.../asset/`), for links. |
 | `LEVOD_LINKS` | — | JSON of label to URL for the rest of the deployment (wallet, faucet, staking pools), shown on the site. |
 | `LEVOD_REGISTRY_URL` | — | An asset registry, read as `<url>/<asset id>`. A listing whose ticker or decimals contradict a registered contract is refused; an unregistered asset lists as it is. A registry that cannot be reached blocks nothing. |
