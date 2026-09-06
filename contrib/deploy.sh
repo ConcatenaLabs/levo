@@ -13,6 +13,20 @@
 # Usage: contrib/deploy.sh [checkout] [service] [health url]
 set -eu
 
+case "${1:-}" in
+  -h|--help)
+    cat <<'HELP'
+Usage: contrib/deploy.sh [checkout] [service] [health url]
+
+Puts origin/main on this box: fetches, builds the app under a Node in Vite's
+range, installs the systemd units, restarts levod and asks it what it is
+serving. Defaults: /root/sequentia/levo, levod, and the health URL the unit's
+environment file names. A change to this script hands over to the fetched
+copy. contrib/README.md carries the rest.
+HELP
+    exit 0 ;;
+esac
+
 DIR=${1:-/root/sequentia/levo}
 UNIT=${2:-levod}
 

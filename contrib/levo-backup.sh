@@ -5,6 +5,19 @@
 # holds the allocation ledger, which is nobody's business but its own account's
 # -- hence the mode the copies are made with.
 set -eu
+case "${1:-}" in
+  -h|--help)
+    cat <<'HELP'
+Usage: contrib/levo-backup.sh
+
+Copies levod's state file to a dated file under the backup directory and
+keeps the newest copies, by name. Settings: LEVOD_STATE (the file),
+LEVO_BACKUP_DIR (default /var/backups/levo), LEVO_BACKUP_KEEP (default 60).
+The timer in contrib/levo-backup.timer runs it; contrib/README.md carries the
+restore drill.
+HELP
+    exit 0 ;;
+esac
 STATE="${LEVOD_STATE:-/var/lib/levo/levo-state.json}"
 DEST="${LEVO_BACKUP_DIR:-/var/backups/levo}"
 KEEP="${LEVO_BACKUP_KEEP:-60}"
