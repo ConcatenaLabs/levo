@@ -194,8 +194,9 @@ address those same terms derive; and the tokens must reach the address the
 buyer gave. The web app does exactly that before it offers anything for
 signing, and refuses to offer a signature for a transaction it cannot read.
 
-A purchase built here is recorded by levod itself once its treasury credit is
-on chain, against the account it was built for: the transaction id is known
+A purchase built here is recorded by levod itself as soon as its node sees the
+treasury credit, in the mempool or in a block, against the account it was built
+for: the transaction id is known
 before anything is signed, since a segwit id excludes the witness and levod
 assembles every input and output, and the watcher looks for that id. The
 response carries it as `txid`. A buyer who broadcasts and says nothing more is
