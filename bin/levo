@@ -912,7 +912,9 @@ def cmd_buy(args):
     decimals = int(p.get("decimals", 8))
     token_atoms = U.parse(args.tokens, decimals)
     if token_atoms is None:
-        raise Fail("--tokens must be a number with at most %d decimal places" % decimals)
+        raise Fail("--tokens must be a number with at most %d decimal places, with a "
+                   "point before the decimals; a comma only groups thousands, as in 1,000"
+                   % decimals)
 
     plan = api("POST", "/api/projects/%s/buy" % args.slug, {"token_atoms": token_atoms}, tok)
     print("buying %s %s for %s"
@@ -1406,6 +1408,26 @@ def cmd_withdraw(args):
     print("withdrawn %s" % args.slug)
 
 
+def _at_least_one(text):
+    try:
+        n = int(text)
+    except ValueError:
+        raise argparse.ArgumentTypeError("%r is not a whole number" % text)
+    if n < 1:
+        raise argparse.ArgumentTypeError("at least 1")
+    return n
+
+
+def _zero_or_more(text):
+    try:
+        n = int(text)
+    except ValueError:
+        raise argparse.ArgumentTypeError("%r is not a whole number" % text)
+    if n < 0:
+        raise argparse.ArgumentTypeError("0 or more")
+    return n
+
+
 def main():
     ap = argparse.ArgumentParser(prog="levo", description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -1421,8 +1443,8 @@ def main():
                     choices=["all", "open", "draft", "finished", "hidden"],
                     help="which sales to list: open, draft (listed, not yet funded), "
                          "finished, or hidden (operators only); default: all")
-    sl.add_argument("--limit", type=int, default=50, help="how many to show")
-    sl.add_argument("--offset", type=int, default=0, help="where to start")
+    sl.add_argument("--limit", type=_at_least_one, default=50, help="how many to show")
+    sl.add_argument("--offset", type=_zero_or_more, default=0, help="where to start")
     sl.set_defaults(fn=cmd_sales)
 
     sh = sub.add_parser("show", help="the terms, and the address to check")
@@ -1437,8 +1459,8 @@ def main():
     sub.add_parser("whoami", help="the account you are signed in as").set_defaults(fn=cmd_whoami)
 
     ps = sub.add_parser("positions", help="what you have bought, sale by sale")
-    ps.add_argument("--limit", type=int, default=50, help="how many sales to show")
-    ps.add_argument("--offset", type=int, default=0, help="where to start")
+    ps.add_argument("--limit", type=_at_least_one, default=50, help="how many sales to show")
+    ps.add_argument("--offset", type=_zero_or_more, default=0, help="where to start")
     ps.set_defaults(fn=cmd_positions)
 
     ln = sub.add_parser("link", help="prove a staking key for your account")

@@ -18,6 +18,12 @@ test('amount formats atoms exactly, above 2**53 too', () => {
 test('toAtoms reads what a person types', () => {
   assert.equal(toAtoms('12.5'), 1250000000n)
   assert.equal(toAtoms('1,000'), 100000000000n)
+  assert.equal(toAtoms('1,000,000.25'), 100000025000000n)
+  // A comma that is not grouping thousands is not read as anything: in half
+  // the world '10,5' is ten and a half, and 105 would be ten times the buy.
+  assert.equal(toAtoms('10,5'), null)
+  assert.equal(toAtoms('1,00'), null)
+  assert.equal(toAtoms('1,0000'), null)
   assert.equal(toAtoms('.5'), 50000000n)
   assert.equal(toAtoms('1.'), 100000000n)
   assert.equal(toAtoms('1.123456789'), null)

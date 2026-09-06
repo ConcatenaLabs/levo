@@ -123,3 +123,14 @@ def test_a_sale_nobody_could_buy_from_is_refused_at_any_precision(t):
          "total_atoms": 1_000 * 10 ** 8})
     t.eq(project.sale.terms.cost_for(100), 1,
          "a hundred token atoms cost one payment atom at this price")
+
+
+def test_a_comma_groups_thousands_and_nothing_else(t):
+    """'1,000.5' is read; '10,5' is not, because in half the world that is
+    ten and a half, and reading it as a hundred and five would buy ten
+    times what was meant. The web parser follows the same rule."""
+    t.eq(U.parse("1,000", 8), 1_000 * 10 ** 8, "a thousands comma is read")
+    t.eq(U.parse("1,000,000.25", 8), 1_000_000_25 * 10 ** 6, "several are")
+    t.eq(U.parse("10,5", 8), None, "a decimal comma is refused rather than misread")
+    t.eq(U.parse("1,00", 8), None, "and so is a comma grouping the wrong count")
+    t.eq(U.parse("1,0000", 8), None, "either way")

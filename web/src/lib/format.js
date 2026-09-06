@@ -59,7 +59,14 @@ export function plain(atoms, decimals = 8) {
 // A decimal string typed by a person, to atoms. null when it is not a number
 // or carries more decimals than the asset has.
 export function toAtoms(text, decimals = 8) {
-  const s = String(text ?? '').trim().replace(/,/g, '')
+  let s = String(text ?? '').trim()
+  // A comma groups thousands and means nothing else: '1,000.5' reads, '10,5'
+  // does not, since in half the world that is ten and a half, and reading it
+  // as a hundred and five would buy ten times what was meant.
+  if (s.includes(',')) {
+    if (!/^[0-9]{1,3}(,[0-9]{3})+(\.[0-9]*)?$/.test(s)) return null
+    s = s.replace(/,/g, '')
+  }
   if (!s) return null
   if (!/^\d*\.?\d*$/.test(s) || s === '.') return null
   const [whole, frac = ''] = s.split('.')
