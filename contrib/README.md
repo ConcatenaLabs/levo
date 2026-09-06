@@ -49,7 +49,11 @@ cd /root/sequentia/levo && contrib/deploy.sh
 
 `deploy.sh` fetches, checks out `origin/main`, builds the app, restarts levod
 and then asks levod what it is serving, at the host and port the unit's
-environment file names. It takes the checkout, the unit name and the health
+environment file names. `python3 tools/smoke.py https://<your levo>` then
+meets the site the way a visitor does -- health, every route in a real
+browser, the sitemap, a sale's social card, the headers -- and, given a
+staking key in `LEVO_SIGN_WIF` and a `sequentia-cli`, signs in by pasting a
+signature and reads the account page. It takes the checkout, the unit name and the health
 URL as arguments if this deployment uses others. A deployment that changes
 `deploy.sh` itself hands over to the fetched copy, so the new script is the
 one that finishes the run.

@@ -148,6 +148,7 @@ own; after the close, `bin/levo reclaim` sweeps what did not sell.
 | `levod/rpc.py`, `levod/units.py` | The node connection, and atoms to and from the decimal strings everything else speaks. |
 | `levod/registry.py` | What an asset registry says a token is, if one is configured. Advisory: a listing that contradicts a registered contract is refused, an unregistered asset lists as it is, and a registry that cannot be reached blocks nothing. |
 | `tools/gen_vectors.py` | Regenerates `levod/vectors.json`. Running it is a migration, not a refresh; see `CLAUDE.md`. |
+| `tools/smoke.py` | Meets a running Levo from the outside after a deploy: health, every route in a real browser, the sitemap, a sale's social card, the headers, and a paste-signature sign-in when given a key. |
 | `bin/levo` | A CLI that runs the whole flow against your own node. |
 | `levod/tests/cdp.py` | A small Chrome DevTools client, so the browser suite can press the buttons rather than only look at the pixels. |
 | `web/` | The single-page app: Vite and React, plain CSS, fonts served from the app itself. |
