@@ -360,3 +360,23 @@ def test_the_documented_session_lifetime_is_the_constant(t):
     t.ok(hours in words, "the lifetime is a number this guard can spell: %r hours" % hours)
     for doc in ("doc/api.md", "README.md", "web/src/pages/HowItWorks.jsx"):
         t.ok("%s hours" % words.get(hours, "?") in (ROOT / doc).read_text(), "%s says %s hours" % (doc, words.get(hours)))
+
+
+def test_a_token_amount_is_checked_before_the_node_is_looked_up(t):
+    """`levo buy x --tokens abc` used to answer that sequentia-cli was not
+    found: the amount was parsed after the node, so a typo got the wrong
+    sentence. It is refused at the parser, with no node and no levod."""
+    import os
+    import subprocess
+    for cmd, bad in (("buy", "abc"), ("buy", "0"), ("buy", "10,5"), ("record", "-3")):
+        r = subprocess.run([sys.executable, str(ROOT / "bin" / "levo"), cmd, "some-sale", "--tokens", bad]
+                           + (["--txid", "ab" * 32] if cmd == "record" else []),
+                           capture_output=True, text=True, timeout=30,
+                           env=dict(os.environ, LEVO_URL="http://127.0.0.1:1", SEQUENTIA_CLI="/nonexistent"))
+        t.eq(r.returncode, 2, "levo %s --tokens %s is refused by the parser" % (cmd, bad))
+        t.ok("not an amount of tokens" in r.stderr and "node" not in r.stderr.lower(),
+             "with a sentence about the amount, not about the node", r.stderr[-200:])
+    r = subprocess.run([sys.executable, str(ROOT / "bin" / "levo"), "buy", "some-sale", "--tokens", "1,000.5"],
+                       capture_output=True, text=True, timeout=30,
+                       env=dict(os.environ, LEVO_URL="http://127.0.0.1:1", SEQUENTIA_CLI="/nonexistent"))
+    t.ok("not an amount" not in r.stderr, "and 1,000.5 is an amount", r.stderr[-200:])
