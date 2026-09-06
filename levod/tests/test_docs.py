@@ -155,3 +155,27 @@ def test_deploy_asks_where_levod_listens_by_default(t):
     t.eq(re.search(r"^  port=(\d+)$", script, re.M).group(1), port, "fallback port")
     t.eq(re.search(r"^  host=(\S+)$", script, re.M).group(1), host, "fallback host")
     t.ok("EnvironmentFiles" in script, "reads the unit's environment file")
+
+
+def test_the_documented_defaults_are_the_code(t):
+    """The README's Default column is typed by hand; the number that runs is
+    the one in the code. Every numeric default levod reads has to appear in
+    the row that names its setting."""
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    rows = {}
+    for m in re.finditer(r"^\| (.*?) \| (.*?) \| .*\|$", readme, re.M):
+        for name in re.findall(r"`(LEVOD_[A-Z_]+)`", m.group(1)):
+            rows[name] = m.group(2)
+    defaults = {}
+    for f in sorted((ROOT / "levod").glob("*.py")):
+        src = f.read_text(encoding="utf-8")
+        for name, num in re.findall(r'_setting\("(LEVOD_[A-Z_]+)",\s*([0-9.]+)', src):
+            defaults[name] = num
+        for name, num in re.findall(r'environ\.get\("(LEVOD_[A-Z_]+)",\s*"?([0-9.]+)"?\)', src):
+            defaults.setdefault(name, num)
+    t.ok(len(defaults) >= 8, "the code declares numeric defaults", sorted(defaults))
+    for name, num in sorted(defaults.items()):
+        shown = num[:-2] if num.endswith(".0") else num
+        t.ok(name in rows, "the README has a row for %s" % name)
+        t.ok(name in rows and re.search(r"(?<![0-9.])%s(?![0-9.])" % re.escape(shown), rows[name]),
+             "and its default column says %s" % shown, rows.get(name, "")[:80])
