@@ -82,6 +82,13 @@ def main():
        "sitemap %s vs board %s" % (sorted(slugs), sorted(public)))
 
     # --- what a link previewer sees -----------------------------------------
+    status, _, home = get(base + "/")
+    m = re.search(rb'<link rel="apple-touch-icon"[^>]*href="([^"]+)"', home)
+    ok(m is not None, "the app shell declares a touch icon")
+    if m:
+        href = m.group(1).decode()
+        status, _, png = get(href if href.startswith("http") else base.split("/", 3)[0] + "//" + base.split("/", 3)[2] + href)
+        ok(status == 200 and png[:8] == b"\x89PNG\r\n\x1a\n", "and the touch icon answers as a PNG")
     status, _, how = get(base + "/how-it-works")
     ok(b"<title>How it works \xc2\xb7 Levo</title>" in how, "a page of the app carries its own title for a previewer")
     if public:

@@ -169,10 +169,11 @@ export default function Home() {
               <ol className="small dim" style={{ paddingLeft: '1.1rem', margin: 0 }}>
                 <li>
                   Get a Sequentia wallet. The browser extension signs in here in one
-                  click{extension ? <> (<a href={extension} target="_blank" rel="noopener noreferrer">where to get it</a>)</> : ''};
+                  click{extension ? <> (<a href={extension} target="_blank" rel="noopener noreferrer">where to get it</a>)</> : ''}.
+                  Without it, paste a signature instead:{' '}
+                  {wallet ? <><a href={wallet} target="_blank" rel="noopener noreferrer">the web wallet</a>&rsquo;s Sign tab and Ambra&rsquo;s Sign screen make one with your staking key, as does </> : ''}
                   any wallet that signs a message the way{' '}
-                  <span className="mono">sequentia-cli signmessage</span> does works
-                  too, by pasting the signature{wallet ? <>, which <a href={wallet} target="_blank" rel="noopener noreferrer">the web wallet</a>&rsquo;s Sign tab makes with your staking key, as does Ambra&rsquo;s Sign screen on a phone</> : ''}.
+                  <span className="mono">sequentia-cli signmessage</span> does{wallet ? '' : ' makes one'}.
                 </li>
                 {config.testnet && faucet && (
                   <li>Get testnet {stake.label} and {payment.label} from <a href={faucet} target="_blank" rel="noopener noreferrer">the faucet</a>.</li>
