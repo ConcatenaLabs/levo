@@ -582,6 +582,7 @@ EXAMPLE_LISTING = {
         "summary": "One line, shown on the board.",
         "description": "The long text on the sale page. Blank lines separate paragraphs.",
         "links": {"Website": "https://example.com"},
+        "issuance_txid": None,
     },
     "terms": {
         "token_asset": "the 64-hex asset id of the token you are selling",
@@ -603,7 +604,10 @@ def cmd_create(args):
               "\n# 0.25 payment units per whole token at 8 decimals."
               "\n# min_lot and total_atoms are ATOMS of the token."
               "\n# close_locktime is a unix time above 500000000, or a block"
-              "\n# height below it. It is when the RECLAIM path opens.",
+              "\n# height below it. It is when the RECLAIM path opens."
+              "\n# issuance_txid is the transaction that created the token, or null."
+              "\n# Levo publishes it as a link and does not check it; a buyer asking"
+              "\n# whether the supply can grow has nowhere else on the page to start.",
               file=sys.stderr)
         return
     if not args.file:
