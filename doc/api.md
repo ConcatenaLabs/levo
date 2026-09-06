@@ -2,9 +2,12 @@
 
 levod serves this under `/api/` from the same origin as the app, so a
 deployment behind a reverse proxy needs one route for both. Everything is JSON.
-Amounts are always **atoms** — the asset's smallest unit — and are sent and
-returned as decimal strings or numbers; a client that cannot hold a number
-above 2^53 should read them as strings, which levod accepts on the way in.
+Amounts are always **atoms** — the asset's smallest unit. Every field ending
+in `_atoms`, plus `min_lot` and `total_atoms`, is a decimal string on the way
+out, because an asset with a hundred million units at eight places has more
+atoms than a JavaScript number can hold, and an amount rounded on the way into
+a browser puts a figure in a funding command that the terms do not name. Either
+a string or a number is accepted on the way in.
 
 An error is `{"error": "<a sentence>"}` with a status:
 
@@ -36,13 +39,6 @@ There is no version in the path. What is documented here is what a client may
 rely on; fields are added rather than repurposed, and anything removed would
 be announced in the repository's own history rather than by a silent change of
 shape. Read what you need and ignore the rest.
-
-Atom counts cross the wire as decimal strings rather than JSON numbers: an
-asset with a hundred million units at eight places has more atoms than a
-JavaScript number can hold, and an amount rounded on the way into a browser
-puts a figure in a funding command that the terms do not name. Every field
-ending in `_atoms`, plus `min_lot` and `total_atoms`, is a string on the way
-out; either a string or a number is accepted on the way in.
 
 ## Signing in
 
@@ -94,6 +90,11 @@ query, node_reachable}`.
 | `q` | matches a listing's page name, name, ticker, summary or the token's asset id |
 | `status=hidden` | what an operator has taken off the board; only an operator may ask, and only their answers carry `hidden` on a row |
 | `limit`, `offset` | a page; a size is always applied, and `total` says how many there are |
+
+**The board is cached** for a few seconds per distinct query, keyed by the
+platform's own state version, so a burst of readers costs one rendering rather
+than one each; any write moves the version and the next request renders afresh,
+so nothing stale is served after a change. `X-Board-Cache` says `hit` or `miss`.
 
 **`GET /api/projects/<slug>`** → the listing, its sale, its address, `issuer`
 (the listing account, its tier and what the chain says it has staked), and
@@ -152,11 +153,6 @@ the tokens to the destination, which is often a cold wallet or a custodian
 that credits only the token. A request with change and no change address is
 refused rather than guessing.
 
-Recording the same transaction twice is safe: the second call answers as the
-first did, with `already_recorded: true`, and the ledger is not doubled. A
-client whose request timed out can simply send it again. A transaction another
-account has already recorded is refused, because a purchase counts once.
-
 **`GET /api/projects/<slug>/purchases`** (session, the issuer or an operator) →
 Levo's own ledger for that sale, newest first, with `limit`, `offset` and
 `total`, and what each account has committed.
@@ -212,6 +208,11 @@ Levo's node is not the node it was broadcast to -- so a client that has just
 broadcast should try again shortly. It takes the amount from the treasury credit
 on chain when it can still read it.
 
+Recording the same transaction twice is safe: the second call answers as the
+first did, with `already_recorded: true`, and the ledger is not doubled. A
+client whose request timed out can simply send it again. A transaction another
+account has already recorded is refused, because a purchase counts once.
+
 ## Operating
 
 **`GET /api/health`** → `{ok, node, watcher, state_file, app}`. `ok` is false
@@ -221,11 +222,6 @@ endpoint to point an uptime check at, so its answer is a fixed size whatever
 the platform holds: `watcher.unverified_sales` names at most twenty sales with
 `watcher.unverified_total` beside it, and the errors it quotes are cut. The
 whole list is on `GET /api/watcher`.
-
-**The board is cached** for a few seconds per distinct query, keyed by the
-platform's own state version, so a burst of readers costs one rendering rather
-than one each; any write moves the version and the next request renders afresh,
-so nothing stale is served after a change. `X-Board-Cache` says `hit` or `miss`.
 
 `app` says which build is being served: `bundle` is the hashed entry script,
 `built_at` when it was written, and `source_newer_than_bundle` whether the
