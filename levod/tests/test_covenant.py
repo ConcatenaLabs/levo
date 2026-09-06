@@ -210,7 +210,7 @@ def test_close_locktime_and_total_are_bounded(t):
         _terms(total_atoms=99_999, min_lot=100_000)
         t.ok(False, "a total below the minimum lot is refused")
     except ValueError as e:
-        t.ok("minimum lot" in str(e), "a total below the minimum lot is refused")
+        t.ok("minimum purchase" in str(e), "a total below the minimum lot is refused")
     for bad in (2.5, True, "abc"):
         try:
             _terms(min_lot=bad)

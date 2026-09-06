@@ -65,9 +65,20 @@ export default function Launch() {
       const total = toAtoms(form.total, decimals)
       const minLot = toAtoms(form.min_lot, decimals)
       const priceAtoms = toAtoms(form.price, payment.decimals)
-      if (!total || total <= 0n) throw bad('total', 'Say how many tokens are for sale, with at most ' + decimals + ' decimals.')
-      if (!minLot || minLot <= 0n) throw bad('min', 'Say the minimum purchase, with at most ' + decimals + ' decimals.')
-      if (!priceAtoms || priceAtoms <= 0n) throw bad('price', 'Say the price per token in ' + payment.label + '.')
+      // Two different mistakes, two different sentences: a value that could not
+      // be read (1e5, a stray letter) and one that read as nothing.
+      const amountOr = (field, what, places, atoms, raw) => {
+        if (atoms === null || atoms === undefined) {
+          const typed = String(raw ?? '').trim()
+          if (!typed) throw bad(field, what + ' is needed.')
+          throw bad(field, what + ' must be a plain number with at most ' + places + ' decimals; ' +
+                    JSON.stringify(typed) + ' could not be read as one.')
+        }
+        if (atoms <= 0n) throw bad(field, what + ' must be more than zero.')
+      }
+      amountOr('total', 'The amount for sale', decimals, total, form.total)
+      amountOr('min', 'The minimum purchase', decimals, minLot, form.min_lot)
+      amountOr('price', 'The price per token, in ' + payment.label + ',', payment.decimals, priceAtoms, form.price)
       if (!form.close) throw bad('close', 'Pick a close date.')
       const close = Math.floor(new Date(form.close + 'T23:59:59Z').getTime() / 1000)
       if (!close || Number.isNaN(close)) throw bad('close', 'Pick a close date.')

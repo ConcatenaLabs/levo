@@ -110,7 +110,7 @@ def canonical_price(num, den):
     from math import gcd
     num, den = _price_part(num, "price_num"), _price_part(den, "price_den")
     if num < 1 or den < 1:
-        raise ValueError("price_num and price_den must both be at least 1")
+        raise ValueError("the price must be more than zero")
     g = gcd(num, den)
     return num // g, den // g
 
@@ -278,12 +278,36 @@ def _int(v, name):
     raise ValueError("%s must be a whole number of atoms" % name)
 
 
+# What each field is called in a sentence a person reads. A refusal that says
+# "token_asset" names a key in a JSON body; the person at the form typed into a
+# box labelled "Token asset id", and that is the words they will look for.
+SAID = {
+    "token_asset": "the token asset id",
+    "payment_asset": "the payment asset id",
+    "reclaim_xonly": "the reclaim key",
+    "treasury_prog": "the treasury address",
+    "price_num": "the price", "price_den": "the price",
+    "min_lot": "the minimum purchase", "close_locktime": "the close",
+    "total_atoms": "the amount for sale",
+}
+
+
+def _said(name):
+    return SAID.get(name, name.replace("_", " "))
+
+
 def _hex32(v, name):
     if isinstance(v, (bytes, bytearray)):
         v = bytes(v).hex()
-    v = str(v).lower()
+    v = str(v).strip().lower()
     if len(v) != 64 or any(c not in "0123456789abcdef" for c in v):
-        raise ValueError("%s must be 32 bytes of hex, got %r" % (name, v))
+        # Say what was wrong with it rather than echoing all of it back: a
+        # 64-character value repeated in a refusal is the one part nobody reads.
+        if len(v) != 64:
+            why = "%d characters were given" % len(v)
+        else:
+            why = "it has a character that is not hex"
+        raise ValueError("%s must be 64 hex characters (32 bytes); %s" % (_said(name), why))
     return v
 
 
@@ -337,14 +361,14 @@ class SaleTerms:
 
     def _validate(self):
         if self.price_num < 1 or self.price_den < 1:
-            raise ValueError("price_num and price_den must both be at least 1")
+            raise ValueError("the price must be more than zero")
         if self.min_lot < 1:
-            raise ValueError("min_lot must be at least 1")
+            raise ValueError("the minimum purchase must be at least one atom")
         if self.token_asset == self.payment_asset:
             raise ValueError("a sale cannot price a token in itself")
         if self.close_locktime < 1:
-            raise ValueError("close_locktime must be set; a sale with no close "
-                             "could never be reclaimed")
+            raise ValueError("the close must be set; a sale with no close could "
+                             "never be reclaimed")
         if EC.lift_x(int(self.reclaim_xonly, 16)) is None:
             # An x-only public key is the x coordinate of a curve point, and
             # not every 32-byte number is one. A reclaim leaf built on a value
@@ -353,7 +377,7 @@ class SaleTerms:
             # covenant for good. Nothing later in the sale's life can catch
             # this, so it is caught before the address exists.
             raise ValueError(
-                "reclaim_xonly is not an x-only public key: no point on the "
+                "the reclaim key is not an x-only public key: no point on the "
                 "curve has that x coordinate, so the reclaim path could never "
                 "be signed and unsold tokens would stay locked for ever. Use "
                 "the key `levo keygen` prints")
@@ -365,7 +389,7 @@ class SaleTerms:
                              "time no larger than 4294967295")
         if self.total_atoms is not None:
             if self.total_atoms < self.min_lot:
-                raise ValueError("total_atoms must be at least the minimum lot, "
+                raise ValueError("the amount for sale must be at least the minimum purchase, "
                                  "or the sale could never be bought")
             self.assert_no_overflow(self.total_atoms)
 
