@@ -131,6 +131,17 @@ its tokens by sending them to the sale address, and Levo finds the lock on
 chain, whether the project confirms the send or the watcher finds it on its
 own; after the close, `bin/levo reclaim` sweeps what did not sell.
 
+**What Levo keeps.** An account is a public key. Levo keeps that key, the
+listings it makes and the purchases recorded for it -- the allocation ledger
+-- in the state file on the operator's server, with copies on the same
+machine; a visitor's session is a token in their browser's local storage,
+good for twelve hours, and there are no cookies. The request log keeps the
+address a request came from with the path it asked for and the answer's
+status, and the address counts against the rate limits. The pages load
+nothing from anywhere else: no analytics, no third-party scripts, and the
+fonts are served by the app itself. How it works says the same to visitors.
+
+
 ## Layout
 
 | Path | What |

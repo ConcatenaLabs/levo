@@ -358,5 +358,5 @@ def test_the_documented_session_lifetime_is_the_constant(t):
     hours = auth.SESSION_TTL // 3600
     words = {12: "twelve", 24: "twenty-four", 6: "six", 8: "eight", 48: "forty-eight"}
     t.ok(hours in words, "the lifetime is a number this guard can spell: %r hours" % hours)
-    for doc in ("doc/api.md", "README.md"):
+    for doc in ("doc/api.md", "README.md", "web/src/pages/HowItWorks.jsx"):
         t.ok("%s hours" % words.get(hours, "?") in (ROOT / doc).read_text(), "%s says %s hours" % (doc, words.get(hours)))
