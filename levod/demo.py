@@ -186,10 +186,20 @@ def build(app, node):
 
 
 def main():
-    state = Path(tempfile.gettempdir()) / "levo-demo-state.json"
-    if state.exists():
-        state.unlink()
-    os.environ["LEVOD_STATE"] = str(state)
+    # A demo is throwaway: left to itself it starts from nothing every time,
+    # in a file of its own under the temp directory. Told where to keep its
+    # state, it keeps it there and touches nothing else -- two demos at once,
+    # or a demo beside a real levod, each have a file of their own. Overriding
+    # the setting instead put every demo on one path and deleted that path on
+    # the way in, so starting a second demo emptied the first one's state
+    # from under it before the lock on the file could refuse the second.
+    if os.environ.get("LEVOD_STATE"):
+        state = Path(os.environ["LEVOD_STATE"])
+    else:
+        state = Path(tempfile.gettempdir()) / "levo-demo-state.json"
+        if state.exists():
+            state.unlink()
+        os.environ["LEVOD_STATE"] = str(state)
     os.environ.setdefault("LEVOD_SECRET", "levo-demo-secret")
 
     import server
@@ -205,6 +215,7 @@ def main():
     srv = ThreadingHTTPServer((host, port), server.Handler)
     print("Levo demo on http://%s:%d" % (host, port), flush=True)
     print("  serving %s" % app.webroot, flush=True)
+    print("  state in %s" % state, flush=True)
     print("  seeded issuer account %s" % issuer, flush=True)
     if not (app.webroot / "index.html").is_file():
         print("  NOTE: the web app is not built yet -- run: cd web && npm install && npm run build",

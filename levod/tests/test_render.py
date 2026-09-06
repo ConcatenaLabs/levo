@@ -72,6 +72,7 @@ class Demo:
         self.proc = subprocess.Popen([sys.executable, str(ROOT / "levod" / "demo.py")],
                                      stdout=self.log, stderr=subprocess.STDOUT, env=env)
         self.base = "http://127.0.0.1:%d" % port
+        self.state = env["LEVOD_STATE"]
         for _ in range(80):
             try:
                 urllib.request.urlopen(self.base + "/api/health", timeout=2).read()
@@ -196,6 +197,20 @@ def main():
     failed = []
     passed = 0
     try:
+        # The demo keeps its state where it was told to, and nowhere else.
+        # It used to put every demo on one fixed path and delete that path on
+        # the way in, so a second demo -- this suite beside a demo somebody
+        # was reading -- emptied the first one's state before the lock on
+        # the file could refuse it.
+        if Path(demo.state).is_file():
+            passed += 1
+        else:
+            failed.append("the demo did not write its state where LEVOD_STATE said: %s" % demo.state)
+        stray = Path(tempfile.gettempdir()) / "levo-demo-state.json"
+        if not (stray.is_file() and stray.stat().st_mtime > time.time() - 60):
+            passed += 1
+        else:
+            failed.append("the demo touched the default state path although it was told another")
         for path in ROUTES:
             name = path.strip("/").replace("/", "-") or "home"
             painted, complaints, shot = render(chromium, demo.base + path, out_dir, name)

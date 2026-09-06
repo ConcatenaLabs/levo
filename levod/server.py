@@ -21,6 +21,8 @@ to the funded output does not have to trust this server about the thing that
 matters most.
 """
 
+import hashlib
+import html
 import json
 import os
 import signal
@@ -1287,6 +1289,17 @@ class Handler(BaseHTTPRequestHandler):
                                     "error": "the Levo web app is not built; "
                                              "run npm run build in web/"})
         body = target.read_bytes()
+        # A sale's own page carries the sale's own name in its head. The app
+        # renders everything else, but a crawler making a preview card for a
+        # link -- a messenger, a social feed -- runs no JavaScript and reads
+        # only the head, and every sale shared anywhere was a card that said
+        # "Levo". The head is filled in for /p/<slug> from what the board
+        # already publishes, escaped, and for nothing else.
+        stamp = b""
+        if target.name == "index.html":
+            filled = self._sale_head(path, body)
+            if filled is not None:
+                body, stamp = filled, hashlib.sha1(filled).digest()[:6]
         ctype = {
             ".html": "text/html; charset=utf-8",
             ".js": "text/javascript",
@@ -1307,10 +1320,45 @@ class Handler(BaseHTTPRequestHandler):
         # bytes. The tag is the file's own size and modification time, which is
         # what changes when a build replaces it.
         st = target.stat()
-        etag = '"%x-%x"' % (st.st_mtime_ns, st.st_size)
+        etag = '"%x-%x%s"' % (st.st_mtime_ns, st.st_size, ("-" + stamp.hex()) if stamp else "")
         if self.headers.get("If-None-Match") == etag:
             return self._send(304, b"", ctype, cache=cache, headers={"ETag": etag})
         self._send(200, body, ctype, cache=cache, headers={"ETag": etag})
+
+
+    def _sale_head(self, path, body):
+        """The app shell with this sale's name and one-liner in its head, or
+        None when the path is not a sale's page or the sale is not public."""
+        m = re.match(r"^/p/([a-z0-9][a-z0-9-]{1,38}[a-z0-9])/?$", path)
+        if not m:
+            return None
+        try:
+            project = self.app.market.project(m.group(1))
+        except Exception:
+            return None
+        if getattr(project, "hidden", False):
+            return None            # off the board: the generic card, like any other page
+        name = html.escape(str(project.name or "").strip(), quote=True)
+        ticker = html.escape(str(project.ticker or "").strip(), quote=True)
+        summary = html.escape(str(project.summary or "").strip(), quote=True)
+        if not name:
+            return None
+        title = "%s%s \u00b7 Levo" % (name, (" (" + ticker + ")") if ticker else "")
+        blurb = summary or ("%s is a sale on Levo, a launchpad on Sequentia." % name)
+        text = body.decode("utf-8", "replace")
+        text = re.sub(r"<title>[^<]*</title>", lambda _: "<title>%s</title>" % title, text, count=1)
+        text = re.sub(r'(<meta property="og:title" content=")[^"]*(")',
+                      lambda mm: mm.group(1) + title + mm.group(2), text, count=1)
+        for tag in ('<meta name="description" content="', '<meta property="og:description" content="'):
+            text = re.sub("(" + re.escape(tag) + r')[^"]*(")',
+                          lambda mm: mm.group(1) + blurb + mm.group(2), text, count=1)
+        origin = self.origin()
+        if origin and "og:url" not in text:
+            text = text.replace('<meta property="og:type" content="website" />',
+                                '<meta property="og:type" content="website" />'
+                                '<meta property="og:url" content="%s/p/%s" />'
+                                % (html.escape(origin, quote=True), m.group(1)), 1)
+        return text.encode("utf-8")
 
 
 class Unauthorised(Exception):

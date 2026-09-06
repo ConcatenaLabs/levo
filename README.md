@@ -126,7 +126,7 @@ chain; after the close, `bin/levo reclaim` sweeps what did not sell.
 | Path | What |
 |---|---|
 | `levod/` | The backend. Pure Python, standard library only. Serves the API and the built app from one origin. |
-| `levod/server.py` | The service: the API under `/api/` and the built app, one origin. `levod/demo.py` is the same server over a stub node, with two seeded sales. |
+| `levod/server.py` | The service: the API under `/api/` and the built app, one origin. A sale's own page is served with the sale's name and one-liner in its head, so a link to it previews as that sale wherever it is shared. `levod/demo.py` is the same server over a stub node, with two seeded sales. |
 | `levod/covenant.py` | The sale covenant, checked byte for byte against `levod/vectors.json` on every import. |
 | `levod/sale.py`, `levod/market.py` | The sale lifecycle (lock, sell, reclaim) and the marketplace rules: listing, the settlement plan, the per-buyer caps, the ledger. |
 | `levod/tiers.py` | The tier policy, and the `LEVOD_TIERS` table it reads. |
