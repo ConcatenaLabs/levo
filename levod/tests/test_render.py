@@ -381,6 +381,26 @@ def main():
         finally:
             page.stop()
 
+        # --- a session that ran out says so on the way back in ---------------
+        #
+        # A tab left open past the session's twelve hours woke signed out
+        # with nothing said. The server now names the reason on the 401, and
+        # the sign-in pane shows it until the next sign-in.
+        import auth as _A
+        stale = _A.Sessions(secret="render-test-secret", ttl=-1).issue("02" + "ab" * 32)
+        page = cdp.Page(chromium)
+        try:
+            page.go(demo.base + "/", settle=0.5)
+            page.eval("localStorage.setItem('levo.session', %s)" % _json.dumps(stale))
+            page.go(demo.base + "/account", settle=2.0)
+            if "session has run out" in page.text():
+                passed += 1
+            else:
+                failed.append("an expired session did not say so on the sign-in pane: %r" % page.text()[:200])
+            page.eval("localStorage.removeItem('levo.session')")
+        finally:
+            page.stop()
+
         # --- every page can be read by everyone -----------------------------
         #
         # Signed out and signed in, since the forms -- the listing, the buy

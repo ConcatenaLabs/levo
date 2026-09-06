@@ -22,6 +22,10 @@ export function StoreProvider({ children }) {
   const [loading, setLoading] = useState(true)
   const [health, setHealth] = useState(null)
   const [meError, setMeError] = useState(null)
+  // Why the last session ended, in the server's words, for the sign-in pane
+  // to show: a tab left open past the session's twelve hours used to wake
+  // signed out with nothing said.
+  const [sessionNotice, setSessionNotice] = useState(null)
 
   const refresh = useCallback(async () => {
     if (!getToken()) { setStanding(null); return null }
@@ -31,8 +35,10 @@ export function StoreProvider({ children }) {
       setMeError(null)
       return s
     } catch (e) {
-      if (e.status === 401) { setToken(null); setStanding(null) }
-      else setMeError(e.message)
+      if (e.status === 401) {
+        setToken(null); setStanding(null)
+        if (/run out/.test(e.message || '')) setSessionNotice(e.message)
+      } else setMeError(e.message)
       return null
     }
   }, [])
@@ -78,7 +84,7 @@ export function StoreProvider({ children }) {
   const signedIn = !!standing
   const value = {
     standing, tiers, config, loading, health, meError, signedIn,
-    refresh, signOut, setStanding, explorer,
+    refresh, signOut, setStanding, explorer, sessionNotice, setSessionNotice,
     account: standing ? standing.account : null,
     tier: standing ? standing.tier : null,
     mayList: !!(standing && standing.tier && standing.tier.may_list),
