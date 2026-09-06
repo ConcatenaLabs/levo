@@ -466,8 +466,9 @@ def cmd_positions(args):
     """What the signed-in account holds in each sale, as Levo's ledger has it.
 
     The same view the account page shows: tokens bought, payment committed
-    against the tier cap, and the purchases behind them. A purchase is marked
-    unverified until levod's node has seen its treasury payment."""
+    against the tier cap, and the purchases behind them. A purchase whose
+    treasury payment levod could not read from its node when it was recorded
+    says so; a checked one was read from the chain, not from the buyer."""
     tok = sign_in()
     r = api("GET", "/api/me/positions?limit=%d&offset=%d" % (args.limit, args.offset),
             token=tok)
@@ -489,7 +490,7 @@ def cmd_positions(args):
             print("  %s  %s for %s%s"
                   % (pu["txid"], U.fmt(int(pu["token_atoms"]), pos["decimals"], ticker),
                      U.fmt(int(pu["payment_atoms"]), pay_dec, label),
-                     "" if pu.get("verified") else "  (payment not yet seen by levod's node)"))
+                     "" if pu.get("verified") else "  (treasury payment not checked on chain)"))
         more = int(pos.get("purchases_total") or 0) - len(pos.get("purchases") or [])
         if more > 0:
             print("  and %d earlier purchase%s" % (more, "" if more == 1 else "s"))

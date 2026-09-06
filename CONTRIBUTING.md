@@ -49,4 +49,7 @@ change; it is the only suite that proves anything about consensus.
 ## Reporting a security problem
 
 Do not open a public issue for a vulnerability. Use the repository's private
-vulnerability reporting on GitHub, which reaches the maintainers alone.
+vulnerability reporting on GitHub, which reaches the maintainers alone. GitHub's
+dependency alerts are on for this repository as well, so a known problem in a
+package the app or the gate pulls in reaches the maintainers without anyone
+reporting it.

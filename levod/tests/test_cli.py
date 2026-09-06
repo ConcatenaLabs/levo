@@ -130,6 +130,8 @@ def run(ok, rig, levod, env):
     # --- it knows who it is ------------------------------------------------
     out = levo("whoami")
     ok.ok("account" in out and "tier" in out, "whoami says who and what", out[:120])
+    out = levo("positions")
+    ok.ok("no purchases yet" in out, "positions says so before any purchase", out[:120])
 
     # --- a listing file it printed itself is one it accepts ----------------
     example = json.loads(subprocess.run(
@@ -208,7 +210,7 @@ def run(ok, rig, levod, env):
     ok.ok("cli-sale" in out and "bought" in out, "positions lists the sale just bought into",
           out[:300])
     ok.ok("100 " in out, "with the tokens bought", out[:300])
-    ok.ok("not yet seen" not in out, "and the purchase counts as verified once mined",
+    ok.ok("not checked" not in out, "and the purchase's payment was checked on chain",
           out[:300])
     ok.ok("cap" in out and "still open" in out, "and says what the cap still allows",
           out[:300])
