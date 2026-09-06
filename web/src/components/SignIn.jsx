@@ -157,9 +157,11 @@ export default function SignIn({ onDone, label = 'Sign in with your wallet' }) {
       {!hasProvider() && (
         <p className="small dim" style={{ marginTop: '.9rem', marginBottom: 0 }}>
           No Sequentia wallet was found in this browser. You can still sign the
-          challenge with any wallet that signs messages and paste the result
-          {(links && (links.Wallet || links.wallet))
-            ? <>, or <a href={links.Wallet || links.wallet} target="_blank" rel="noopener noreferrer">get a wallet</a> first</>
+          challenge with any wallet that signs a message the way{' '}
+          <span className="mono">sequentia-cli signmessage</span> does, and paste
+          the result
+          {(links && (links.Extension || links.extension))
+            ? <>, or <a href={links.Extension || links.extension} target="_blank" rel="noopener noreferrer">get the browser extension</a>, which signs in here in one click</>
             : ''}.
         </p>
       )}
