@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react'
-import { Routes, Route, Link, useLocation } from 'react-router-dom'
+import { Routes, Route, Link, Navigate, useLocation } from 'react-router-dom'
 import { Nav, Footer } from './components/Chrome'
 import { usePageTitle } from './components/ui'
 import Home from './pages/Home'
@@ -47,6 +47,9 @@ export default function App() {
         <Routes>
           <Route path="/" element={<Home />} />
           <Route path="/projects" element={<Projects />} />
+          {/* The site calls the board "Sales" everywhere, so the address a person
+              types from that name lands on it rather than on a 404. */}
+          <Route path="/sales" element={<Navigate to="/projects" replace />} />
           <Route path="/p/:slug" element={<ProjectDetail />} />
           <Route path="/account" element={<Account />} />
           <Route path="/launch" element={<Launch />} />

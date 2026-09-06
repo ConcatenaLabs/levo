@@ -232,6 +232,17 @@ def main():
         # made elsewhere never appeared. It reads again every half minute now,
         # so an edit made through the API shows up on a page that was opened
         # before it, without a reload.
+        # --- the board answers to the name the site gives it ----------------
+        page = cdp.Page(chromium)
+        try:
+            page.go(demo.base + "/sales", settle=1.0)
+            where = page.eval("location.pathname")
+            if str(where).endswith("/projects"):
+                passed += 1
+            else:
+                failed.append("/sales landed on %s rather than the board" % where)
+        finally:
+            page.stop()
         import json as _json
         import urllib.request as _url
         import signhelper as SH
