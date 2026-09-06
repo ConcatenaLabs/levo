@@ -359,7 +359,7 @@ def run(d):
         r = _sp.run(["bash", check], capture_output=True, text=True, timeout=60, env=env2)
         ok.eq(open(state).read().strip(), "ok", "told where to, it records the verdict")
         ok.ok("alert:" not in r.stderr, "and a first passing verdict pages nobody", r.stderr)
-        dead = dict(env2, LEVO_HEALTH_URL="http://127.0.0.1:1/api/health")
+        dead = dict(env2, LEVO_HEALTH_URL="http://127.0.0.1:1/api/health", LEVO_CHECK_RETRY_AFTER="0")
         r = _sp.run(["bash", check], capture_output=True, text=True, timeout=60, env=dead)
         ok.eq(r.returncode, 1, "against nothing it fails")
         ok.ok("did not answer" in r.stdout, "naming the fault", r.stdout[-300:])
@@ -370,6 +370,30 @@ def run(d):
         ok.ok("alert: levo check FAILED" not in r.stderr, "the same verdict again pages nobody", r.stderr)
         r = _sp.run(["bash", check], capture_output=True, text=True, timeout=60, env=env2)
         ok.ok("passes again" in r.stderr, "and the run that passes again says so", r.stderr)
+        # A refused connection is tried once more after the pause, so a check
+        # that lands inside a restart finds the levod that comes back.
+        import socket as _socket
+        s_ = _socket.socket(); s_.bind(("127.0.0.1", 0)); port_ = s_.getsockname()[1]; s_.close()
+        late = dict(env2, LEVO_HEALTH_URL="http://127.0.0.1:%d/api/health" % port_, LEVO_CHECK_RETRY_AFTER="2")
+        import threading as _th
+        def _appear():
+            time.sleep(0.7)
+            srv_ = _socket.socket(); srv_.setsockopt(_socket.SOL_SOCKET, _socket.SO_REUSEADDR, 1)
+            srv_.bind(("127.0.0.1", port_)); srv_.listen(1)
+            try:
+                c, _ = srv_.accept(); c.recv(4096)
+                body_ = json.dumps({"ok": True, "app": {"serving": True}, "node": {"reachable": True, "height": 1},
+                                    "state_file": {"writable": True}, "watcher": {"running": True, "last_run_age_seconds": 1,
+                                                                                    "consecutive_errors": 0, "unverified_sales": []}}).encode()
+                c.sendall(b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: %d\r\nConnection: close\r\n\r\n" % len(body_) + body_)
+                c.close()
+            finally:
+                srv_.close()
+        t_ = _th.Thread(target=_appear, daemon=True); t_.start()
+        r = _sp.run(["bash", check], capture_output=True, text=True, timeout=60, env=late)
+        t_.join(5)
+        ok.eq(r.returncode, 0, "a levod that answers on the second try passes the check")
+        ok.ok("alert:" not in r.stderr, "and pages nobody", r.stderr)
     r = _sp.run(["bash", str(HERE.parent.parent / "contrib" / "levo-alert.sh"), "a test line"],
                 capture_output=True, text=True, timeout=30, env=dict(os.environ, LEVO_ALERT_ENV="/nonexistent"))
     ok.eq(r.returncode, 0, "the alert script exits 0 without a topic")

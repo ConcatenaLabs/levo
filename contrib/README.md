@@ -34,7 +34,9 @@
   whose node has gone away, whose state file has gone read-only, or whose
   watcher has stopped goes on answering every page. The check reads the health
   document and names each field that is wrong; it tells a person on the first
-  failing run and on the run that passes again, not every five minutes. Run it
+  failing run and on the run that passes again, not every five minutes, and a
+  connection nobody answers is tried once more after a few seconds, so a check
+  that lands inside a deploy's restart pages nobody. Run it
   by hand to see the board; only the timer's runs record a verdict and page
   anyone.
 
