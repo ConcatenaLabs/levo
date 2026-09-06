@@ -215,13 +215,13 @@ note on what each field means; `bin/levo create listing.json` submits it.
 ## Tests
 
 ```sh
-python3 levod/tests/run.py        # crypto, covenant, tiers, precision, transactions, watcher, persistence
+python3 levod/tests/run.py        # everything that needs no node: crypto, covenant, tiers, the request handler
 python3 levod/tests/test_e2e.py   # the API end to end, against a stub node
 python3 levod/tests/test_node.py  # the whole life of a sale against a real sequentiad; skipped without one
 python3 levod/tests/test_render.py # every page, in a real browser; skipped without a chromium
 python3 levod/tests/test_cli.py   # bin/levo end to end against a real node; skipped without one
 python3 levod/tests/test_browser.py # a purchase made in a browser, with a wallet; skipped without either
-npm --prefix web test             # formatting, the beam's geometry, bech32
+npm --prefix web test             # the formatters, the parsers, and the guards that walk the sources
 npm --prefix web run build        # the frontend gate
 ```
 
@@ -307,8 +307,10 @@ The state file lives outside the checkout (`LEVOD_STATE=/var/lib/levo/levo-state
 and `contrib/levo-backup.sh` with its timer keeps dated copies of it: a funded
 sale's leaves are rebuilt from the terms in that file, so it is worth keeping.
 
-The app is built on the box with `LEVO_BASE=/levo/ npm run build` under a Node
-that meets Vite's engine range, and Caddy routes the sub-path to levod's default
+`contrib/deploy.sh` puts a commit on the box: it fetches, builds the app under
+a Node that meets Vite's engine range, restarts levod, and then asks levod which
+bundle it is serving, since a build that fails leaves the previous one in place
+with every other check passing. Caddy routes the sub-path to levod's default
 port, stripping the prefix:
 
 ```

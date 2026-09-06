@@ -57,8 +57,9 @@ class Checker:
 class Levod:
     """The real server, against the rig's node, on a port of its own."""
 
-    def __init__(self, rig, port, payment_asset):
-        self.state = Path(tempfile.mkdtemp()) / "state.json"
+    def __init__(self, rig, port, payment_asset, state=None, operator=None):
+        self.rig, self.port, self.payment_asset = rig, port, payment_asset
+        self.state = state or Path(tempfile.mkdtemp()) / "state.json"
         env = dict(
             os.environ,
             LEVOD_PORT=str(port), LEVOD_HOST="127.0.0.1",
@@ -75,6 +76,8 @@ class Levod:
             LEVOD_TIERS=json.dumps([{"name": "Everyone", "min_stake": 0,
                                      "cap": 1000000, "may_list": True}]),
         )
+        if operator:
+            env["LEVOD_OPERATORS"] = operator
         self.log = open(os.path.join(tempfile.mkdtemp(), "levod.log"), "w+")
         self.proc = subprocess.Popen([sys.executable, str(ROOT / "levod" / "server.py")],
                                      stdout=self.log, stderr=subprocess.STDOUT, env=env)
@@ -97,6 +100,18 @@ class Levod:
         except Exception:
             self.proc.kill()
         self.log.close()
+
+    def restart(self, operator):
+        """The same deployment -- port, state, everything -- with an operator named.
+
+        Operators are a setting read at start, and the account the CLI signs
+        in as does not exist until it first signs in, so this is the only order
+        the two can happen in.
+        """
+        self.stop()
+        fresh = Levod(self.rig, self.port, self.payment_asset,
+                      state=self.state, operator=operator)
+        self.__dict__.update(fresh.__dict__)
 
 
 def run(ok, rig, levod, env):
@@ -337,6 +352,52 @@ def run(ok, rig, levod, env):
     rig.mine()
     ok.eq(len(resting_at("rescue-me")), 0,
           "nothing at all is left at the sale address")
+
+
+    # --- an operator, from the command line --------------------------------
+    #
+    # An operator's reach is the page and nothing else, and the commands that
+    # exercise it had never been run end to end. The account is known only
+    # after the first sign-in, and operators are a setting read at start, so
+    # levod comes back as the same deployment with this account named.
+    account = [l.split()[1] for l in levo("whoami").splitlines() if l.startswith("account")][0]
+    levod.restart(operator=account)
+
+    out = levo("sales", "--status", "hidden")
+    ok.ok("nothing is listed with status hidden" in out,
+          "nothing is hidden before anything is flagged", out[-160:])
+    out = levo("flag", "cli-sale", "--hide", "--notice", "Under review by the operator.")
+    ok.ok("off the board" in out and "Under review" in out,
+          "flag says what it did", out[-200:])
+    ok.ok("page" in out and ("chain" in out or "covenant" in out),
+          "and how far that reaches", out[-200:])
+    out = levo("sales", "--status", "hidden")
+    ok.ok("cli-sale" in out, "the hidden list shows the listing an operator hid", out[-300:])
+    out = levo("sales")
+    ok.ok("cli-sale" in out, "and an operator's own board still lists it", out[-300:])
+    shown = json.loads(levo("show", "cli-sale"))
+    ok.eq(shown.get("hidden"), True, "show says it is hidden")
+    ok.eq(shown.get("notice"), "Under review by the operator.", "with the notice")
+    ok.eq(shown.get("flagged_by"), account, "and who did it")
+    out = levo("flag", "cli-sale", "--show")
+    ok.ok("on the board" in out, "and back it comes", out[-160:])
+    ok.eq(json.loads(levo("show", "cli-sale")).get("hidden"), False, "show agrees")
+    out = levo("flag", "cli-sale", expect_failure=True)
+    ok.ok("say what to change" in out, "flag with nothing to change says so", out[-160:])
+
+    # Somebody else, with a session of their own, is not an operator.
+    other = dict(env, LEVO_SESSION=os.path.join(tempfile.mkdtemp(), "session.json"),
+                 LEVO_SIGN_WIF=rig.w("dumpprivkey", rig.w("getnewaddress", "", "legacy")))
+    r = subprocess.run([sys.executable, str(ROOT / "bin" / "levo"), "sales", "--status", "hidden"],
+                       capture_output=True, text=True, env=other, timeout=180)
+    ok.ok(r.returncode != 0 and "status must be one of" in (r.stdout + r.stderr),
+          "a visitor asking for the hidden list is refused, naming what they may ask for",
+          (r.stdout + r.stderr)[-200:])
+    r = subprocess.run([sys.executable, str(ROOT / "bin" / "levo"), "flag", "cli-sale", "--hide"],
+                       capture_output=True, text=True, env=other, timeout=180)
+    ok.ok(r.returncode != 0, "and cannot hide anything", (r.stdout + r.stderr)[-200:])
+    ok.eq(json.loads(levo("show", "cli-sale")).get("hidden"), False,
+          "the listing is untouched by the attempt")
 
 
 def main():
