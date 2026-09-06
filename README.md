@@ -201,6 +201,7 @@ bin/levo buy helios-grid --tokens 40                 # picks unblinded inputs, b
 | `SEQUENTIA_WALLET` | Passed as `-rpcwallet`, when several wallets are loaded. |
 | `LEVO_SIGN_WIF` | Sign in with this key instead of a wallet address. A staker who signs in with the staking key's WIF is recognised at once; there is nothing to link. Without it, the first sign-in creates a legacy address labelled `levo-login` and every later sign-in reuses it, so the account stays the same key. The node's message signing works with legacy addresses only. |
 | `LEVO_RECLAIM_KEY` | The 32-byte hex reclaim secret, for `levo reclaim` (or pass `--reclaim-key`). |
+| `LEVO_TRACE` | Set to `1` to print the full traceback when a command fails, instead of the one-line sentence. |
 
 `levo --help` lists every command: `sales`, `show`, `verify`, `whoami`,
 `link`, `keygen`, `create`, `lock`, `buy`, `record`, `reclaim`, `terms`,
