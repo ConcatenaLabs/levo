@@ -95,25 +95,35 @@ def recover_pubkey(message, signature_b64):
     if len(raw) != 65:
         raise BadSignature("a recoverable signature is 65 bytes; this one is %d" % len(raw))
 
+    # From here on, every way the bytes can fail means one thing to the person
+    # who pasted them: this is not a signature of the message shown. That is
+    # the sentence they get, with the reason after it for whoever is debugging
+    # a wallet; "r/s out of range" on its own was a refusal nobody could act on.
+    def not_a_signature(reason):
+        return BadSignature(
+            "this is not a signature of the message shown (%s). Sign the exact "
+            "text, whole, with your wallet's message signing, and paste the "
+            "whole signature" % reason)
+
     header = raw[0]
     if not (27 <= header <= 34):
-        raise BadSignature("signature header byte %d out of range" % header)
+        raise not_a_signature("its header byte, %d, is not one a message signature has" % header)
     recid = (header - 27) & 3
 
     r = int.from_bytes(raw[1:33], "big")
     s = int.from_bytes(raw[33:65], "big")
     if not (1 <= r < S.N) or not (1 <= s < S.N):
-        raise BadSignature("signature r/s out of range")
+        raise not_a_signature("its numbers are out of the curve's range")
 
     z = int.from_bytes(message_hash(message), "big")
 
     try:
         Q = S.ecdsa_recover(z, r, s, recid)
     except ValueError as e:
-        raise BadSignature(str(e))
+        raise not_a_signature("no key recovers from it: %s" % e)
 
     if not S.ecdsa_verify(Q, r, s, z):
-        raise BadSignature("signature does not verify against the recovered key")
+        raise not_a_signature("it does not verify against the key it recovers to")
 
     return S.compressed(Q).hex()
 
