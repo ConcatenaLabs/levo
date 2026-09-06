@@ -30,7 +30,7 @@ export default function Reclaim({ project }) {
       .then((f) => {
         if (!alive) return
         setAdvice(f)
-        setForm((cur) => (cur.fee ? cur : { ...cur, fee: f.suggested_atoms
+        setForm((cur) => (cur.fee ? cur : { ...cur, fee: positive(f.suggested_atoms)
           ? amount(f.suggested_atoms, payment.decimals) : '' }))
       })
       .catch(() => {})

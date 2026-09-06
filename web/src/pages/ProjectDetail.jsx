@@ -496,10 +496,10 @@ export default function ProjectDetail() {
       <h1 style={{ fontSize: 'clamp(2rem, 4.5vw, 3.2rem)' }}>{project.name}</h1>
       <p className="hero-lede" style={{ marginTop: '1rem' }}>{project.summary}</p>
       {project.issuer && (
-        <p className="small dim" style={{ marginTop: '.75rem' }}>
+        <p className="small dim measure" style={{ marginTop: '.75rem' }}>
           Listed by <span className="mono">{shortHex(project.issuer.account, 8, 6)}</span>
           {project.issuer.tier ? <>, {project.issuer.tier}</> : null}
-          {project.issuer.stake_atoms
+          {positive(project.issuer.stake_atoms)
             ? <>, with {compact(project.issuer.stake_atoms)} {stake.label} staked</>
             : null}. That stake is the only thing on this page the project did
           not write itself.
