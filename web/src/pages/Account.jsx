@@ -272,6 +272,12 @@ export default function Account() {
         <p className="eyebrow">Account</p>
         <h1 className="h2">{st.tier.name}</h1>
         <p className="mono small" style={{ overflowWrap: 'anywhere' }}>{account} <Copy value={account} label="Copy the account key" /></p>
+        {st.operator && (
+          <p className="small dim">
+            This account is an operator of this Levo: it may flag or hide a listing, from the
+            listing&rsquo;s own page, and read any sale&rsquo;s ledger.
+          </p>
+        )}
       </div>
 
       {tiers && (

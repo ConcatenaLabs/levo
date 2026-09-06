@@ -471,6 +471,8 @@ def cmd_whoami(args):
                                      "  (login key)" if k.get("is_login_key") else ""))
     if not me.get("staking_available", True):
         print("note     %s" % me["delegation_note"])
+    if me.get("operator"):
+        print("operator yes: this account may flag or hide a listing on this Levo")
 
 
 def cmd_positions(args):
