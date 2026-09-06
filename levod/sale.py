@@ -87,6 +87,9 @@ class SaleError(ValueError):
     pass
 
 
+MAX_BUILDS = 32
+
+
 class CapExceeded(SaleError):
     def __init__(self, msg, allowance_atoms):
         super().__init__(msg)
@@ -115,6 +118,7 @@ class Sale:
         # on the path a busy sale takes most often.
         self.by_txid = {}
         self.candidates = []       # outpoints a recorded purchase said the remainder rests at
+        self.builds = []           # purchases Levo built and has not yet seen on chain
         self.reclaim_txids = []    # reclaims Levo built for this sale, by txid
         self.strays = []           # other assets seen resting at the sale address
         # Labels for messages people read. Never used in arithmetic.
@@ -408,6 +412,37 @@ class Sale:
         if cand not in self.candidates:
             self.candidates = (self.candidates + [cand])[-8:]
 
+    def note_build(self, txid, account, token_atoms, payment_atoms, spends):
+        """Levo built this purchase, for this account, against this outpoint.
+
+        The transaction id is known before anything is signed: a segwit id
+        excludes the witness, and Levo assembles every input and output, so
+        the buyer's signature changes nothing the id is made of. That is what
+        lets a purchase be attributed without the buyer saying anything -- the
+        watcher sees the treasury paid by a transaction it was told to expect,
+        and records it against the account it was built for.
+
+        The cap rests on this. Without it a buyer who built through Levo and
+        never confirmed kept a commitment of nothing, and was planned another
+        purchase the size of their whole cap as soon as the covenant re-rested.
+        """
+        txid = str(txid or "").lower()
+        if not txid:
+            return
+        entry = {"txid": txid, "account": account,
+                 "token_atoms": int(token_atoms), "payment_atoms": int(payment_atoms),
+                 "spends": {"txid": str(spends["txid"]).lower(), "vout": int(spends["vout"])},
+                 "at": int(time.time())}
+        kept = [b for b in self.builds if b.get("txid") != txid]
+        self.builds = (kept + [entry])[-MAX_BUILDS:]
+        # And the watcher looks for its remainder at output 1 from now on,
+        # exactly as it does for a purchase recorded by hand.
+        self.expect_remainder_at(txid, 1)
+
+    def forget_build(self, txid):
+        txid = str(txid or "").lower()
+        self.builds = [b for b in self.builds if b.get("txid") != txid]
+
     def note_reclaim(self, txid):
         """A reclaim was built with this transaction id. Once its output 0
         shows up holding the sale token, the sale is proven reclaimed."""
@@ -429,6 +464,7 @@ class Sale:
         self.locked_atoms = 0
         self.sold_atoms = 0
         self.candidates = []
+        self.builds = []           # built against an outpoint that no longer exists
         self.allocations = {}
         for entries in self.purchases.values():
             for e in entries:

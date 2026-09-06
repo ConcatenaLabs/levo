@@ -194,6 +194,15 @@ address those same terms derive; and the tokens must reach the address the
 buyer gave. The web app does exactly that before it offers anything for
 signing, and refuses to offer a signature for a transaction it cannot read.
 
+A purchase built here is recorded by levod itself once its treasury credit is
+on chain, against the account it was built for: the transaction id is known
+before anything is signed, since a segwit id excludes the witness and levod
+assembles every input and output, and the watcher looks for that id. The
+response carries it as `txid`. A buyer who broadcasts and says nothing more is
+therefore recorded all the same, which is what makes the cap a cap for
+purchases levod plans. `confirm` remains for purchases built elsewhere, and is
+harmless for one already recorded, answering `already_recorded`.
+
 **`POST /api/projects/<slug>/confirm`** `{txid, token_atoms, payment_atoms}`
 (session) records the purchase against the caller's cap. This writes Levo's
 ledger and nothing else: the sale itself moves because the chain moved, whether

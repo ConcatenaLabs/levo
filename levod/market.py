@@ -42,6 +42,10 @@ class NotFound(PlatformError):
     pass
 
 
+class NotYetSeen(PlatformError):
+    """The node has not seen the transaction yet: not a refusal, a wait."""
+
+
 SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9-]{1,38}[a-z0-9]$")
 TXID_RE = re.compile(r"^[0-9a-f]{64}$")
 ASSET_RE = re.compile(r"^[0-9a-fA-F]{64}$")
@@ -453,6 +457,7 @@ class Platform:
                 sl.purchases = {k: list(v) for k, v in (sd.get("purchases") or {}).items()}
                 sl.index_purchases()
                 sl.candidates = list(sd.get("candidates") or [])
+                sl.builds = list(sd.get("builds") or [])[-S.MAX_BUILDS:]
                 sl.reclaim_txids = list(sd.get("reclaim_txids") or [])
                 sl.strays = list(sd.get("strays") or [])[:MAX_STRAYS_KEPT]
                 # The address is what everything about a sale rests on: the
@@ -509,6 +514,7 @@ class Platform:
                     d["sale"]["purchases"] = {k: [dict(e) for e in v]
                                               for k, v in p.sale.purchases.items()}
                     d["sale"]["candidates"] = [dict(c) for c in p.sale.candidates]
+                    d["sale"]["builds"] = [dict(b) for b in p.sale.builds]
                     d["sale"]["strays"] = [dict(x) for x in p.sale.strays]
                     d["sale"]["funding"] = dict(p.sale.funding) if p.sale.funding else None
                     d["sale"]["reclaim_txids"] = list(p.sale.reclaim_txids)
@@ -1049,6 +1055,14 @@ class Platform:
                 "the fee in another asset"
                 % (p.sale.payment(plan.payment_atoms), p.sale.payment(floor)))
         built = TX.build_buy(p.sale, plan, buyer, hrp=self.hrp)
+        # Remembered before it is handed over, so the watcher can attribute it
+        # when it lands whether or not the buyer comes back to confirm. What is
+        # remembered is the plan, not the buyer's inputs: the ledger takes the
+        # treasury credit from the chain when it records.
+        with self.lock:
+            p.sale.note_build(built["txid"], account, plan.token_atoms, plan.payment_atoms,
+                              spends=p.sale.funding)
+        self.save()
         built["token_atoms"] = plan.token_atoms
         built["payment_atoms"] = plan.payment_atoms
         built["remainder_atoms"] = plan.remainder_atoms
@@ -1176,7 +1190,26 @@ class Platform:
         self.on_stale()
         return recorded
 
-    def _record_purchase(self, account, slug, txid, token_atoms, payment_atoms):
+    def attribute_build(self, slug, build):
+        """Record a purchase Levo built, now that its treasury credit is on chain.
+
+        Called by the watcher, under no lock of its own. Returns True when the
+        ledger took it (or already had it), False when the node has not seen
+        the transaction yet -- keep waiting -- and raises PlatformError for a
+        build that can never be recorded, which the caller drops.
+        """
+        with self.lock:
+            try:
+                self._record_purchase(build["account"], slug, build["txid"],
+                                      build["token_atoms"], build["payment_atoms"],
+                                      planned=True)
+            except NotYetSeen:
+                return False
+            self._project(slug).sale.forget_build(build["txid"])
+        return True
+
+    def _record_purchase(self, account, slug, txid, token_atoms, payment_atoms,
+                         planned=False):
         p = self._project(slug)
         sale = p.sale
         if sale is None:
@@ -1195,7 +1228,10 @@ class Platform:
             raise PlatformError("a purchase has a positive token amount and a positive payment")
         standing = self.stake.standing(account)
         tier = self.stake.policy.for_stake(standing["stake_atoms"])
-        if not tier.cap_atoms:
+        # A purchase Levo planned passed this gate when it was planned. A stake
+        # that has since moved does not un-make the purchase, and a ledger
+        # that refused it would hand the account its headroom back.
+        if not tier.cap_atoms and not planned:
             raise NotAuthorised(
                 "the ledger records a purchase against your allocation, and "
                 "your tier has none. Stake to a tier that may buy, then record "
@@ -1252,7 +1288,7 @@ class Platform:
                 # lost by waiting -- the purchase is already on chain, the
                 # watcher will move the sale whatever happens here, and the
                 # record can be made at any time afterwards.
-                raise PlatformError(
+                raise NotYetSeen(
                     "the node Levo reads has not seen %s yet. If you have just "
                     "broadcast it, wait a few seconds and record it again; the "
                     "purchase itself is on chain either way, and this is only "
@@ -1277,6 +1313,8 @@ class Platform:
 
         entry = sale.record_purchase(account, payment_atoms, token_atoms,
                                      txid=txid, verified=verified)
+        # Recorded by hand or seen by the watcher, once is enough.
+        sale.forget_build(txid)
         # A partial buy re-rests the remainder at this transaction's output 1.
         # Telling the watcher where to look lets it see the remainder in the
         # mempool, so the sale moves as soon as the buy is broadcast.

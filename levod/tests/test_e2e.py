@@ -1147,6 +1147,66 @@ def run(d):
                 target = path.replace("@", a_listing())
     ok.eq(broke, [], "%d hostile bodies, and every refusal was levod's own" % tried)
 
+    # --- a purchase Levo built is recorded whether or not the buyer says so --
+    #
+    # The cap gates planning and the ledger records what happened. A buyer who
+    # built through Levo, broadcast, and never confirmed used to keep a ledger
+    # of nothing, and was planned the whole cap again as soon as the covenant
+    # re-rested. Levo knows the id of everything it builds, so the watcher
+    # records those itself when their treasury credit appears.
+    ok.section("attribution")
+    t4 = dict(terms, min_lot=terms["min_lot"] + 7, reclaim_xonly="44" * 32)
+    code, r = req("POST", "/api/projects", {"project": dict(meta, slug="quiet"), "terms": t4},
+                  token=issuer_tok)
+    ok.eq(code, 201, "a sale for a buyer who says nothing")
+    qspk = r["lock"]["script_pubkey"]
+    node.utxos[("a4" * 32, 0)] = {"scriptPubKey": {"hex": qspk}, "asset": TOKEN,
+                                  "valueatoms": total, "confirmations": 1}
+    node.unspents.append({"txid": "a4" * 32, "vout": 0, "scriptPubKey": qspk,
+                          "amount": total / 1e8, "asset": TOKEN, "height": node.height})
+    code, r = req("POST", "/api/projects/quiet/lock", {"txid": "a4" * 32, "vout": 0}, token=issuer_tok)
+    ok.eq(code, 200, "funded")
+    code, planned = req("POST", "/api/projects/quiet/buy", {"token_atoms": 100 * 100_000_000},
+                        token=buyer_tok)
+    ok.eq(code, 200, "planned")
+    qbody = {"token_atoms": 100 * 100_000_000,
+             "buyer": {"token_address": buyer_addr, "change_address": buyer_addr,
+                       "inputs": [{"txid": "77" * 32, "vout": 0}],
+                       "fee_atoms": planned["fee"]["suggested_atoms"]}}
+    code, qbuilt = req("POST", "/api/projects/quiet/transaction", qbody, token=buyer_tok)
+    ok.eq(code, 200, "built")
+    qtx = qbuilt["txid"]
+    ok.ok(len(qtx) == 64, "the transaction id is known before anything is signed")
+    _, pos = req("GET", "/api/me/positions", token=buyer_tok)
+    quiet = [p for p in pos["positions"] if p["slug"] == "quiet"]
+    ok.eq(int(quiet[0]["committed_atoms"]) if quiet else 0, 0, "nothing committed yet")
+    d.app.watcher.poll()
+    _, pos = req("GET", "/api/me/positions", token=buyer_tok)
+    quiet = [p for p in pos["positions"] if p["slug"] == "quiet"]
+    ok.eq(int(quiet[0]["committed_atoms"]) if quiet else 0, 0,
+          "and still nothing after a poll that saw no broadcast")
+    # The buyer broadcasts and walks away: the treasury credit appears.
+    node.utxos[(qtx, 0)] = {"scriptPubKey": {"hex": "5120" + TREASURY_PROG}, "asset": USDX,
+                            "valueatoms": int(planned["payment_atoms"])}
+    d.app.watcher.poll()
+    _, pos = req("GET", "/api/me/positions", token=buyer_tok)
+    quiet = [p for p in pos["positions"] if p["slug"] == "quiet"]
+    ok.eq(int(quiet[0]["committed_atoms"]) if quiet else 0, int(planned["payment_atoms"]),
+          "the watcher recorded the purchase against the buyer")
+    ok.ok(any(e["txid"] == qtx and e.get("verified") for e in quiet[0]["purchases"]),
+          "with the treasury payment checked")
+    code, r = req("POST", "/api/projects/quiet/confirm",
+                  {"txid": qtx, "token_atoms": 100 * 100_000_000,
+                   "payment_atoms": int(planned["payment_atoms"])}, token=buyer_tok)
+    ok.eq(code, 200, "the buyer confirming afterwards is fine")
+    ok.eq(r.get("already_recorded"), True, "and is told it was already there")
+    code, again = req("POST", "/api/projects/quiet/buy", {"token_atoms": 100 * 100_000_000},
+                      token=buyer_tok)
+    ok.eq(code, 200, "the buyer can plan again")
+    ok.eq(int(again["allowance_after_atoms"]),
+          int(planned["allowance_after_atoms"]) - int(planned["payment_atoms"]),
+          "measured against a cap the recorded purchase has already used")
+
     # --- the statement a wallet is asked to sign ---------------------------
     ok.section("login")
     code, ch = req("POST", "/api/auth/challenge")

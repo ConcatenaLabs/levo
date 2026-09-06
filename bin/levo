@@ -926,7 +926,9 @@ def _record(slug, txid, token_atoms, payment_atoms, tok, tries=5, decimals=8):
                 time.sleep(2)
     print("note: the purchase is on chain, and recording it against your "
           "allocation did not go through (%s).\n"
-          "      Finish it whenever you like with:\n"
+          "      Levo built this transaction, so it records it itself once its "
+          "node sees the payment,\n"
+          "      usually within a minute. To get there first:\n"
           "        levo record %s --txid %s --tokens %s"
           # In the token's OWN units: `levo record` parses --tokens at the
           # project's precision, so eight decimal places on a two-place token

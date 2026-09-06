@@ -176,6 +176,15 @@ class Watcher:
         dirty = False
         pending = []
 
+        # Purchases Levo built and has not yet seen. First, so that a buy the
+        # watcher attributes this poll also moves the sale this poll: the
+        # record leaves a remainder hint that the check below reads.
+        for slug, p in sales:
+            try:
+                dirty = self._attribute(slug, p) or dirty
+            except Exception as e:
+                errors.append("%s builds: %s" % (slug, e))
+
         # The outpoint each sale is known to rest at, with the mempool
         # included. In the steady state that answers for every sale and the
         # UTXO set is not walked at all.
@@ -263,6 +272,59 @@ class Watcher:
     @property
     def hrp(self):
         return self._hrp() if callable(self._hrp) else self._hrp
+
+    def _attribute(self, slug, project):
+        """Record the purchases Levo built for this sale, as they land.
+
+        Levo knows the id of every purchase it assembles before the buyer
+        signs it. When the treasury credit of one of those appears -- in the
+        mempool or in a block, `gettxout` sees both -- the purchase is
+        recorded against the account it was built for, whether or not that
+        buyer ever came back to say so. This is what makes the cap a cap for
+        purchases Levo plans: without it a buyer who built and never confirmed
+        kept a commitment of nothing.
+
+        A build whose outpoint the sale has moved on from, and whose
+        transaction the node has still not seen, lost the race to another
+        spend of that outpoint and can never land; it is dropped. One built
+        against the outpoint the sale still rests at is kept, however old, up
+        to the bound the sale keeps.
+        """
+        sale = project.sale
+        builds = list(getattr(sale, "builds", None) or [])
+        if not builds:
+            return False
+        attribute = getattr(self.market, "attribute_build", None)
+        if attribute is None:
+            return False
+        resting = sale.funding or {}
+        changed = False
+        for b in builds:
+            try:
+                taken = attribute(slug, b)
+            except Exception as e:
+                # A build the ledger can never take: recorded by somebody
+                # else, a ledger that is full, a transaction that pays a
+                # different treasury. Say so once and stop asking.
+                self.log("watcher: %s: dropping a build %s it cannot record: %s"
+                         % (slug, b.get("txid", "")[:16], e))
+                with self._held():
+                    sale.forget_build(b.get("txid"))
+                changed = True
+                continue
+            if taken:
+                self.note("watcher: %s: recorded purchase %s against the account "
+                          "it was built for" % (slug, b.get("txid", "")[:16]))
+                changed = True
+                continue
+            spends = b.get("spends") or {}
+            moved = (resting.get("txid") != spends.get("txid")
+                     or resting.get("vout") != spends.get("vout"))
+            if moved:
+                with self._held():
+                    sale.forget_build(b.get("txid"))
+                changed = True
+        return changed
 
     def _announce(self, slug, sale, was):
         """Say what changed, and on what evidence.

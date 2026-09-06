@@ -71,6 +71,23 @@ class FakeMarket:
     def save(self):
         self.saved += 1
 
+    def attribute_build(self, slug, build):
+        """What the platform does with a build the watcher saw land: record
+        it against the account it was built for, once the treasury credit is
+        visible. Mirrors Market.attribute_build closely enough for the watcher
+        to be tested against the same three answers."""
+        sale = self.projects[slug].sale
+        out = self.rpc.txout(build["txid"], 0) if getattr(self, "rpc", None) else None
+        if out is None:
+            return False
+        if out.get("refuse"):
+            raise RuntimeError(out["refuse"])
+        if build["txid"] not in sale.by_txid:
+            sale.record_purchase(build["account"], build["payment_atoms"],
+                                 build["token_atoms"], txid=build["txid"], verified=True)
+        sale.forget_build(build["txid"])
+        return True
+
 
 class P:
     def __init__(self, sale):
@@ -1200,3 +1217,101 @@ def test_a_poll_and_a_purchase_can_run_at_the_same_time(t):
     t.eq(sum(s.allocations.values()), 120 * 25, "and every one is counted once")
     t.eq(len(s.by_txid), 120, "with every transaction indexed")
     t.eq(s.locked_atoms, TOTAL, "while the watcher kept the sale where it rests")
+
+
+def _watch_with_rpc(sale, rpc):
+    w = _watch(sale, rpc)
+    w.market.rpc = rpc
+    return w
+
+
+def test_a_build_is_recorded_when_its_treasury_credit_appears(t):
+    """The buyer built through Levo, broadcast, and never came back.
+
+    The cap rests on this. Before, the ledger held nothing for them, and the
+    next plan was allowed the whole cap again.
+    """
+    s = _sale()
+    rpc = FakeRPC()
+    rpc.txouts[("ab" * 32, 0)] = {"value": TOTAL / 1e8, "confirmations": 6,
+                                  "scriptPubKey": {"hex": s.script_pubkey}}
+    rpc.blocks[100] = "block-100"
+    w = _watch_with_rpc(s, rpc)
+    w.poll()
+    s.note_build("f1" * 32, "buyer", 40 * 10**8, 10 * 10**8, spends=s.funding)
+    t.eq(len(s.builds), 1, "the build is remembered")
+    t.ok({"txid": "f1" * 32, "vout": 1} in s.candidates,
+         "and its remainder is looked for from now on")
+    w.poll()
+    t.eq(s.allocations.get("buyer", 0), 0, "nothing is recorded while the node has not seen it")
+    t.eq(len(s.builds), 1, "and the build is kept, since the sale still rests where it was built")
+    rpc.txouts[("f1" * 32, 0)] = {"value": 10.0}          # the treasury credit, in the mempool
+    w.poll()
+    t.eq(s.allocations.get("buyer", 0), 10 * 10**8, "the purchase is recorded against the buyer")
+    t.eq(s.by_txid.get("f1" * 32), "buyer", "under its transaction id")
+    t.eq(s.builds, [], "and the build is done with")
+    w.poll()
+    t.eq(s.allocations.get("buyer", 0), 10 * 10**8, "once")
+
+
+def test_a_build_that_lost_the_race_is_dropped(t):
+    """Two buyers built against the same outpoint; one landed.
+
+    The other's transaction can never confirm -- its input is gone -- and a
+    build kept forever would be looked for on every poll for ever.
+    """
+    s = _sale()
+    rpc = FakeRPC()
+    rpc.txouts[("ab" * 32, 0)] = {"value": TOTAL / 1e8, "confirmations": 6,
+                                  "scriptPubKey": {"hex": s.script_pubkey}}
+    rpc.blocks[100] = "block-100"
+    w = _watch_with_rpc(s, rpc)
+    w.poll()
+    s.note_build("f1" * 32, "alice", 40 * 10**8, 10 * 10**8, spends=s.funding)
+    s.note_build("f2" * 32, "bob", 40 * 10**8, 10 * 10**8, spends=s.funding)
+    # alice's lands: her treasury credit exists and her remainder rests at f1:1
+    del rpc.txouts[("ab" * 32, 0)]
+    rpc.txouts[("f1" * 32, 0)] = {"value": 10.0}
+    rpc.txouts[("f1" * 32, 1)] = {"value": (TOTAL - 40 * 10**8) / 1e8,
+                                  "scriptPubKey": {"hex": s.script_pubkey}}
+    rpc.txs["f1" * 32] = {"vin": [{"txid": "ab" * 32, "vout": 0}], "vout": []}
+    w.poll()
+    t.eq(s.allocations.get("alice", 0), 10 * 10**8, "alice's purchase is recorded")
+    t.eq(s.funding["txid"], "f1" * 32, "and the sale moved to her remainder")
+    t.eq([b["txid"] for b in s.builds], ["f2" * 32],
+         "bob's build is still there the poll the sale moved")
+    w.poll()
+    t.eq(s.allocations.get("bob", 0), 0, "bob never lands")
+    t.eq(s.builds, [], "and his build is dropped once the sale has moved on without it")
+
+
+def test_a_build_the_ledger_cannot_take_is_dropped_and_logged(t):
+    s = _sale()
+    rpc = FakeRPC()
+    rpc.txouts[("ab" * 32, 0)] = {"value": TOTAL / 1e8, "confirmations": 6,
+                                  "scriptPubKey": {"hex": s.script_pubkey}}
+    rpc.blocks[100] = "block-100"
+    lines = []
+    w = _watch_with_rpc(s, rpc)
+    w.log = lines.append
+    w.poll()
+    s.note_build("f3" * 32, "carol", 40 * 10**8, 10 * 10**8, spends=s.funding)
+    rpc.txouts[("f3" * 32, 0)] = {"value": 10.0, "refuse": "recorded by somebody else"}
+    r = w.poll()
+    t.eq(s.builds, [], "a build that can never be recorded is dropped")
+    t.ok(any("cannot record" in l and "somebody else" in l for l in lines),
+         "and the reason is in the log", lines[-1:])
+    t.eq(r.get("checked"), 1, "and the poll itself is not an error")
+
+
+def test_builds_survive_a_save_and_are_bounded(t):
+    s = _sale()
+    for i in range(S.MAX_BUILDS + 5):
+        s.note_build("%064x" % (i + 1), "a%d" % i, 1, 1, spends=s.funding)
+    t.eq(len(s.builds), S.MAX_BUILDS, "the newest builds are kept, up to the bound")
+    t.eq(s.builds[-1]["txid"], "%064x" % (S.MAX_BUILDS + 5), "newest last")
+    s.note_build(s.builds[0]["txid"], "again", 2, 2, spends=s.funding)
+    t.eq(len([b for b in s.builds if b["account"] == "again"]), 1,
+         "the same transaction noted twice is one build, the newer one")
+    s.mark_ghost()
+    t.eq(s.builds, [], "a ghost has nothing to attribute: its outpoint is gone")
