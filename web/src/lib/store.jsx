@@ -87,6 +87,9 @@ export function StoreProvider({ children }) {
     stake: config.stake,
     links: config.links || {},
     nodeDown: !!(health && health.node && health.node.reachable === false),
+    // levod keeps serving when its state file cannot be written, and health
+    // says so; a buyer about to record a purchase should hear it too.
+    stateFrozen: !!(health && health.state_file && health.state_file.writable === false),
     chainHeight: (health && health.node && health.node.height) || null,
   }
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>

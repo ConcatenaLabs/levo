@@ -16,7 +16,7 @@ function Mark() {
 }
 
 export function Nav() {
-  const { signedIn, tier, account, loading, nodeDown, meError, configError } = useStore()
+  const { signedIn, tier, account, loading, nodeDown, meError, configError, stateFrozen } = useStore()
   return (
     <>
       <a className="skip" href="#main">Skip to content</a>
@@ -45,6 +45,15 @@ export function Nav() {
           <div className="wrap">
             Levo cannot reach its Sequentia node right now. Sale states may be stale, and
             purchases cannot be priced or built until it is back.
+          </div>
+        </div>
+      )}
+      {stateFrozen && !nodeDown && (
+        <div className="banner" role="status">
+          <div className="wrap">
+            Levo cannot write its own record right now. Sales and purchases are
+            settled on chain regardless, but a purchase recorded now may not be
+            remembered against your cap until this is fixed.
           </div>
         </div>
       )}
