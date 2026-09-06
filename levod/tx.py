@@ -163,9 +163,9 @@ def v1_script_pubkey(program_hex):
 def treasury_script_pubkey(terms):
     """The scriptPubKey a sale's treasury credit must pay.
 
-    A treasury may be a taproot output or a version-0 one, and which it is is
-    part of the terms the covenant was compiled from. Reading it from the
-    terms is what keeps this in step with the leaf.
+    A treasury may be a taproot output or a version-0 one, and the terms the
+    covenant was compiled from say which. Reading it from the terms is what
+    keeps this in step with the leaf.
     """
     return terms.treasury_spk
 

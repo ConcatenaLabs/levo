@@ -206,7 +206,7 @@ export default function Launch() {
         <div className="field">
           <label htmlFor="website">Website <span className="dim">(optional)</span></label>
           <input id="website" value={form.website} onChange={set('website')} placeholder="https://…" />
-          <div className="hint">More links can be added on the sale's page after listing.</div>
+          <div className="hint">More links can be added on the sale&rsquo;s page after listing.</div>
         </div>
 
         <h2 className="section-h">The sale</h2>

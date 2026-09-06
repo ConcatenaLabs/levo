@@ -617,7 +617,7 @@ export default function ProjectDetail() {
               )}
               {sale.funding && sale.funding.unverifiable && (
                 <Notice kind="bad" style={{ marginTop: '1rem' }}>
-                  <strong>Levo cannot place this sale's funding in the chain.</strong>{' '}
+                  <strong>Levo cannot place this sale&rsquo;s funding in the chain.</strong>{' '}
                   Its own record of where the tokens were locked was lost, and the
                   transaction is in none of the recent blocks it can see. The sale
                   is shown exactly as it was last known, which may be out of date.
