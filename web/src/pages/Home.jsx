@@ -14,6 +14,7 @@ export default function Home() {
   // carries the first threshold so the page can still say what it is.
   const firstAtoms = first ? first.min_stake_atoms : config.first_tier_atoms
   const floor = compact(config.staking_floor_atoms)
+  const extension = links.Extension || links.extension
   const wallet = links.Wallet || links.wallet
   const faucet = links.Faucet || links.faucet
   const pools = links['Staking pools'] || links.pools
@@ -168,8 +169,10 @@ export default function Home() {
               <ol className="small dim" style={{ paddingLeft: '1.1rem', margin: 0 }}>
                 <li>
                   Get a Sequentia wallet. The browser extension signs in here in one
-                  click; any wallet that can sign a message works too, by pasting the
-                  signature{wallet ? <>. <a href={wallet} target="_blank" rel="noopener noreferrer">Where to get one</a></> : ''}.
+                  click{extension ? <> (<a href={extension} target="_blank" rel="noopener noreferrer">where to get it</a>)</> : ''};
+                  any wallet that signs a message the way{' '}
+                  <span className="mono">sequentia-cli signmessage</span> does works
+                  too, by pasting the signature{wallet && !extension ? <>. <a href={wallet} target="_blank" rel="noopener noreferrer">Where to get one</a></> : ''}.
                 </li>
                 {config.testnet && faucet && (
                   <li>Get testnet {stake.label} and {payment.label} from <a href={faucet} target="_blank" rel="noopener noreferrer">the faucet</a>.</li>

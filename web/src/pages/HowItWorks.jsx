@@ -11,6 +11,7 @@ export default function HowItWorks() {
   const floor = compact(config.staking_floor_atoms)
   const hrp = config.hrp || 'tb'
   const source = config.source_url
+  const extension = links.Extension || links.extension
   const wallet = links.Wallet || links.wallet
   const faucet = links.Faucet || links.faucet
   return (
@@ -27,7 +28,9 @@ export default function HowItWorks() {
       <h2 className="section-h">What you need</h2>
       <p>
         <strong>To buy:</strong> a Levo account, which is a key you can sign with
-        {wallet ? <> (<a href={wallet} target="_blank" rel="noopener noreferrer">a wallet</a>, or any wallet that signs messages)</> : ' (a browser extension, or any wallet that signs messages)'};
+        {' '}({extension || wallet ? <a href={extension || wallet} target="_blank" rel="noopener noreferrer">the browser extension</a> : 'the browser extension'}, or
+        any wallet that signs a message the way{' '}
+        <span className="mono">sequentia-cli signmessage</span> does);
         staked Sequence under a key you can prove you control, at or above the first
         tier; and unblinded {payment.label} to pay with — unblinded meaning the
         amount is written on the chain in the clear, which is how Sequentia pays

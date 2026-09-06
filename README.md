@@ -94,7 +94,8 @@ it against your own wallet before swapping.
 ## Who does what
 
 **A buyer** needs a Levo account (a key that can sign a message: the browser
-extension, or any wallet that signs messages), staked Sequence under a key they
+extension, or any wallet that signs a message the way `sequentia-cli signmessage`
+does), staked Sequence under a key they
 can prove they control, and unblinded USDX. A browser wallet signs and
 broadcasts the purchase in place: Levo hands it a PSET whose covenant input
 already carries its witness, and the wallet signs only the buyer's own inputs.
@@ -386,7 +387,7 @@ reaches the box nowhere else.
 | `LEVOD_HRP` | `tb` | Address prefix: `tb` testnet, `bc` mainnet (Sequentia's unblinded addresses use Bitcoin's own HRPs), `ert` on `elementsregtest`. |
 | `LEVOD_TIERS` | supply-share defaults | JSON list of tiers, lowest first, each with `name`, `min_stake` (whole SEQ), `cap` (whole units of the payment asset; the most one account may commit per sale), `may_list`, and a `blurb` that the home page shows beside the tier. Takes effect on restart; caps apply to open sales at once, while what an account has already committed stays committed. |
 | `LEVOD_EXPLORER_URL` | — | An esplora-style explorer base (`.../tx/`, `.../address/`, `.../asset/`), for links. |
-| `LEVOD_LINKS` | — | JSON of label to URL for the rest of the deployment (wallet, faucet, staking pools), shown on the site. |
+| `LEVOD_LINKS` | — | JSON of label to URL for the rest of the deployment, shown in the footer. Four labels are also used in the text: `Extension` (where to get the browser extension, which is what signs in here in one click), `Wallet`, `Faucet` and `Staking pools`. |
 | `LEVOD_REGISTRY_URL` | — | An asset registry, read as `<url>/<asset id>`. A listing whose ticker or decimals contradict a registered contract is refused; an unregistered asset lists as it is. A registry that cannot be reached blocks nothing. |
 | `LEVOD_WATCH_SECONDS` | `60` | How often the watcher reconciles. |
 | `LEVOD_REQUEST_DEADLINE` | `20` | Seconds one request may take from its first byte to its last, head and body together. A socket timeout re-arms on every read and bounds nothing on its own; this is the wall clock. |
