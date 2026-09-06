@@ -140,6 +140,7 @@ def test_the_documented_limits_are_the_constants(t):
     t.ok("at most %d purchases per account per sale" % M.MAX_PURCHASES_PER_ACCOUNT in text,
          "ledger entries per account per sale")
     t.ok("at most %d links" % M.MAX_LINKS in text, "links per listing")
+    t.ok("at most %d bytes" % SV.MAX_BODY in text, "the request body")
 
 
 def test_deploy_asks_where_levod_listens_by_default(t):

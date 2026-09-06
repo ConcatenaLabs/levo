@@ -750,25 +750,25 @@ class Handler(BaseHTTPRequestHandler):
         try:
             n = int(raw)
         except ValueError:
-            raise ValueError("Content-Length must be a number")
+            raise Malformed("Content-Length must be a number")
         if n < 0:
-            raise ValueError("Content-Length must be a number, 0 or more")
+            raise Malformed("Content-Length must be a number, 0 or more")
         if n > MAX_BODY:
-            raise ValueError("the request body is larger than %d bytes" % MAX_BODY)
+            raise Malformed("the request body is larger than %d bytes" % MAX_BODY)
         if not n:
             return {}
         data = self.rfile.read(n)
         try:
             body = json.loads(data.decode("utf-8"))
         except (UnicodeDecodeError, ValueError):
-            raise ValueError("the request body is not valid JSON")
+            raise Malformed("the request body is not valid JSON")
         except RecursionError:
             # A body nested a few thousand deep exhausts the parser's stack.
             # That is a malformed request, not a fault in levod, and answering
             # it with a traceback per attempt is a log flood anyone can start.
-            raise ValueError("the request body is nested too deeply")
+            raise Malformed("the request body is nested too deeply")
         if not isinstance(body, dict):
-            raise ValueError("the request body must be a JSON object")
+            raise Malformed("the request body must be a JSON object")
         return body
 
     def _account(self):
@@ -878,6 +878,11 @@ class Handler(BaseHTTPRequestHandler):
             self._json(409, {"code": "cap_exceeded", "error": str(e),
                              "allowance_atoms": str(e.allowance_atoms),
                              "enforced_by": "levo"})
+        except Malformed as e:
+            # Understood is the line: a body that could not be read at all is
+            # malformed, and a client branching on the code should not take it
+            # for a request that was read and turned down.
+            self._json(400, {"code": "malformed", "error": str(e)})
         except (M.PlatformError, S.SaleError, A.BadSignature, R.RailUnavailable,
                 ValueError) as e:
             self._json(400, {"code": "refused", "error": str(e)})
@@ -1505,6 +1510,12 @@ class Handler(BaseHTTPRequestHandler):
 
 class Unauthorised(Exception):
     pass
+
+
+class Malformed(ValueError):
+    """A request body that could not be read as one: not JSON, not an object,
+    too large, nested too deep. Distinct from a ValueError raised by the
+    checks on a body that WAS read, which is a request understood and refused."""
 
 
 class Unsupported(Exception):
