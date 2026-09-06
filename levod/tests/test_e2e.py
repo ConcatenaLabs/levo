@@ -1267,6 +1267,15 @@ def run(d):
     req("PATCH", "/api/projects/helios", {"summary": "Solar microgrids, tokenised."}, token=issuer_tok)
 
     # --- what a crawler asks for first ------------------------------------
+    # --- a body that could not be read is malformed, not refused -----------
+    ok.section("malformed bodies")
+    for raw, needle in ((b"{not json", "not valid JSON"), (b"[]", "must be a JSON object"),
+                        (b'{"x":"' + b"a" * (d.server_mod.MAX_BODY + 10) + b'"}', "larger than")):
+        code, r, _ = _req(d.base, "POST", "/api/projects", raw=raw, token=issuer_tok)
+        ok.eq(code, 400, "a body that cannot be read is a 400")
+        ok.eq((r or {}).get("code"), "malformed", "with the code malformed, since it was never understood")
+        ok.ok(needle in (r or {}).get("error", ""), "and a sentence saying how", (r or {}).get("error"))
+
     ok.section("crawlers")
     code, robots, h = _req(d.base, "GET", "/robots.txt")
     rtext = robots.get("raw", "") if isinstance(robots, dict) else str(robots)

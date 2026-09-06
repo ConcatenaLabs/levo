@@ -252,8 +252,10 @@ is any packaged copy of the app.
 inputs; consolidate first if a wallet holds more. The ledger keeps at most 64
 purchases per account per sale, and refuses to record a 65th, which is
 bookkeeping only: the purchase itself is on chain. A listing carries at most 8
-links, each label up to 24 characters and each address up to 200. Each is
-refused with a sentence that says so.
+links, each label up to 24 characters and each address up to 200. A request
+body is at most 262144 bytes. Each is refused with a sentence that says so,
+and a body that could not be read at all -- too large, not JSON, not an object
+-- carries the code `malformed` rather than `refused`.
 
 **`GET /api/watcher`** → what the watcher is doing, and any sale whose funding
 it cannot place in the chain.
