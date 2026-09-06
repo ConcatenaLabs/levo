@@ -1298,6 +1298,23 @@ def run(d):
     code, generic, h2 = _req(d.base, "GET", "/p/nope-not-here")
     gtext = generic.get("raw", "") if isinstance(generic, dict) else str(generic)
     ok.ok("<title>Levo</title>" in gtext, "a page for no sale keeps the generic head")
+    for route, title, words in (("/projects", "Sales", "The sales on Levo"),
+                                ("/how-it-works", "How it works", "not a custodian"),
+                                ("/launch", "Launch a project", "staked Sequence"),
+                                ("/account", "Account", "your positions")):
+        code, pg, _ = _req(d.base, "GET", route)
+        ptext = pg.get("raw", "") if isinstance(pg, dict) else str(pg)
+        ok.ok("<title>%s \u00b7 Levo</title>" % title in ptext, "%s carries its own title in the head" % route, ptext[:160])
+        ok.ok(words in ptext.split("</head>", 1)[0], "and its own first words as the description", ptext[:600])
+        ok.ok(('og:url" content="' in ptext) and (route + '"') in ptext.split("og:url", 1)[1][:160],
+              "and its own address on the card", ptext[:600])
+        code, pg2, _ = _req(d.base, "GET", route + "/")
+        p2 = pg2.get("raw", "") if isinstance(pg2, dict) else str(pg2)
+        ok.ok("<title>%s \u00b7 Levo</title>" % title in p2, "with or without the trailing slash")
+    for route in ("/sales", "/nothing-here-at-all"):
+        code, pg, _ = _req(d.base, "GET", route)
+        ptext = pg.get("raw", "") if isinstance(pg, dict) else str(pg)
+        ok.ok("<title>Levo</title>" in ptext, "%s, which the app redirects or does not have, keeps the generic head" % route)
     ok.ok(etag_sale and etag_sale != h2.get("ETag"), "and the two are different entities to a cache")
     code, _, h3 = _req(d.base, "GET", "/p/helios", headers={"If-None-Match": etag_sale})
     ok.eq(code, 304, "a cache holding the sale's page is told it still holds it")

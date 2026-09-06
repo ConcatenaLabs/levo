@@ -82,6 +82,8 @@ def main():
        "sitemap %s vs board %s" % (sorted(slugs), sorted(public)))
 
     # --- what a link previewer sees -----------------------------------------
+    status, _, how = get(base + "/how-it-works")
+    ok(b"<title>How it works \xc2\xb7 Levo</title>" in how, "a page of the app carries its own title for a previewer")
     if public:
         status, hdrs, page = get(base + "/p/" + public[0].decode())
         text = page.decode("utf-8", "replace")
