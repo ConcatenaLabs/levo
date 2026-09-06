@@ -878,9 +878,18 @@ class Platform:
             raise PlatformError("vout is the output's index in the transaction, 0 or more")
         out = self.rpc.txout(txid, vout)
         if out is None:
+            if not self._node_has_seen(txid):
+                # Levo's node is not the node the lock was broadcast to, and
+                # a transaction takes a moment to cross the network. Nothing
+                # is lost by asking again: the tokens are at the address
+                # whether or not this call succeeds.
+                raise NotYetSeen(
+                    "the node Levo reads has not seen %s yet. If you have just "
+                    "sent it, wait a few seconds and confirm the lock again; the "
+                    "tokens are at the sale address either way" % txid)
             raise PlatformError(
-                "no unspent output at %s:%s -- it does not exist, it has "
-                "already been spent, or the node has not seen it yet" % (txid, vout))
+                "no unspent output at %s:%s -- it has been spent, or the "
+                "output index is wrong" % (txid, vout))
         dating = self._read_funding_date(out)
         with self.lock:
             p = self._confirm_lock(account, slug, txid, vout, out, dating)

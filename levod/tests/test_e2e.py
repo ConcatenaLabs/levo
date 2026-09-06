@@ -535,6 +535,10 @@ def run(d):
     ok.section("lock")
     code, r = req("POST", "/api/projects/helios/buy", {"token_atoms": 100_000_000}, token=buyer_tok)
     ok.eq(code, 400, "cannot buy before the tokens are locked")
+    code, r = req("POST", "/api/projects/helios/lock", {"txid": "c0" * 32, "vout": 0}, token=issuer_tok)
+    ok.eq(code, 400, "a lock the node has never seen is refused")
+    ok.ok("has not seen" in r["error"] and "again" in r["error"],
+          "and says to ask again once it has, since Levo's node is not the one it was sent to", r["error"])
     node.utxos[("cc" * 32, 0)] = {"scriptPubKey": {"hex": "51200000"}, "asset": TOKEN, "valueatoms": total}
     code, r = req("POST", "/api/projects/helios/lock", {"txid": "cc" * 32, "vout": 0}, token=issuer_tok)
     ok.eq(code, 400, "a lock at the wrong address is refused")
