@@ -1287,7 +1287,8 @@ def run(d):
     ok.ok(h.get("Content-Type", "").startswith("application/atom+xml"), "as Atom", h.get("Content-Type"))
     ok.ok("<entry>" in ftext and "/p/helios</link>" not in ftext and 'href="' in ftext and "/p/helios" in ftext,
           "with an entry linking the sale's page", ftext[:400])
-    ok.ok("Helios Grid (HLX)" in ftext, "titled by the sale's name and ticker", ftext[:400])
+    ok.ok("Helios Grid (HLX) \u00b7 open" in ftext,
+          "titled by the sale's name, ticker and the board's word for its state", ftext[:400])
     ok.ok(re.search(r"<updated>\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z</updated>", ftext), "and dated in RFC 3339")
     code, r = req("POST", "/api/projects/helios/flag", {"hidden": True}, token=issuer_tok)
     code, feed, h = _req(d.base, "GET", "/feed.xml")
