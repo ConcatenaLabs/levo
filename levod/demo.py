@@ -97,7 +97,7 @@ class StubNode:
 
 
 def build(app, node):
-    """Seed two sales: one open, one still a draft."""
+    """Seed three sales: one open, one still a draft, one reclaimed."""
     import covenant as C
     import market as M
     import sale as S
@@ -133,6 +133,19 @@ def build(app, node):
              links={},
              token="b2" * 32, price_num=8_000_000, total=500_000, min_lot=100,
              fund=False),
+        # A sale that has run its course: funded, part sold, closed, and the
+        # rest taken back by the project. The board's Finished filter and the
+        # page's past tense both need one to show.
+        dict(slug="meridian-salt", name="Meridian Salt", ticker="MSL",
+             summary="Solar salt pans on the Meridian flats, sold by the tonne.",
+             description=(
+                 "Meridian Salt evaporates seawater on reclaimed flats and sells "
+                 "the harvest forward.\n"
+                 "This sale funded the first season. It closed, and what did "
+                 "not sell went back to the project."),
+             links={},
+             token="c3" * 32, price_num=2_000_000, total=200_000, min_lot=50,
+             fund=True, ended=True),
     ]
 
     for i, L in enumerate(listings):
@@ -145,7 +158,10 @@ def build(app, node):
             "price_num": L["price_num"], "price_den": 100_000_000,
             "treasury_prog": K.xonly_pubkey(0x30 + i).hex(),
             "min_lot": L["min_lot"] * 100_000_000,
-            "close_locktime": 2_000_000_000,
+            # A sale that has ended closes a few blocks on; the chain is moved
+            # past that close once it is listed, since Levo refuses to list a
+            # sale that would be closed the moment it opened.
+            "close_locktime": (node.height + 2) if L.get("ended") else 2_000_000_000,
             "reclaim_xonly": K.xonly_pubkey(0x40 + i).hex(),
             "total_atoms": L["total"] * 100_000_000,
         }
@@ -175,6 +191,15 @@ def build(app, node):
                 "asset": L["token"], "valueatoms": sale.locked_atoms,
                 "confirmations": 3}
             del node.utxos[(txid, 0)]
+            if L.get("ended"):
+                # The close has passed and the project swept the remainder:
+                # nothing rests at the address, and the page says so.
+                reclaim = ("%02x" % (0xd0 + i)) * 32
+                sale.note_reclaim(reclaim)
+                sale.locked_atoms = 0
+                sale.status = S.RECLAIMED
+                del node.utxos[(txid, 1)]
+                node.height = max(node.height, terms["close_locktime"] + 3)
             app.market.save()
 
     # A buyer's wallet, for clicking through a purchase: unblinded USDX at a
