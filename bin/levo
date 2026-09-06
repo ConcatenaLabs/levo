@@ -10,6 +10,7 @@ the transaction, signs your inputs with your wallet, and broadcasts.
     levo verify <slug>                      rebuild the sale address and compare it
                                             with the funded output on your node
     levo whoami                             the account you are signed in as
+    levo positions                          what you have bought, sale by sale
     levo link                               prove a staking key for your account
     levo keygen                             a reclaim key pair for a new listing
     levo create terms.json                  list a project from a JSON file
@@ -459,6 +460,44 @@ def cmd_whoami(args):
                                      "  (login key)" if k.get("is_login_key") else ""))
     if not me.get("staking_available", True):
         print("note     %s" % me["delegation_note"])
+
+
+def cmd_positions(args):
+    """What the signed-in account holds in each sale, as Levo's ledger has it.
+
+    The same view the account page shows: tokens bought, payment committed
+    against the tier cap, and the purchases behind them. A purchase is marked
+    unverified until levod's node has seen its treasury payment."""
+    tok = sign_in()
+    r = api("GET", "/api/me/positions?limit=%d&offset=%d" % (args.limit, args.offset),
+            token=tok)
+    if not r["positions"]:
+        print("no purchases yet")
+        return
+    label = payment_label()
+    pay_dec = payment_decimals()
+    for pos in r["positions"]:
+        ticker = plain(pos["ticker"])
+        status = str(pos.get("status") or "-").replace("_", " ")
+        print("%s (%s)  %s  %s" % (plain(pos["name"]), ticker, plain(pos["slug"]), status))
+        print("  bought     %s" % U.fmt(int(pos["tokens_atoms"]), pos["decimals"], ticker))
+        print("  committed  %s of a %s cap, %s still open"
+              % (U.fmt(int(pos["committed_atoms"]), pay_dec, label),
+                 U.fmt(int(pos["cap_atoms"]), pay_dec, label),
+                 U.fmt(int(pos["allowance_remaining_atoms"]), pay_dec, label)))
+        for pu in pos.get("purchases") or []:
+            print("  %s  %s for %s%s"
+                  % (pu["txid"], U.fmt(int(pu["token_atoms"]), pos["decimals"], ticker),
+                     U.fmt(int(pu["payment_atoms"]), pay_dec, label),
+                     "" if pu.get("verified") else "  (payment not yet seen by levod's node)"))
+        more = int(pos.get("purchases_total") or 0) - len(pos.get("purchases") or [])
+        if more > 0:
+            print("  and %d earlier purchase%s" % (more, "" if more == 1 else "s"))
+    shown = len(r["positions"])
+    total = r.get("total", shown)
+    if total > args.offset + shown:
+        print("\n%d of %d shown. --offset %d for the next page."
+              % (shown, total, args.offset + shown))
 
 
 def cmd_verify(args):
@@ -1351,6 +1390,11 @@ def main():
     vf.set_defaults(fn=cmd_verify)
 
     sub.add_parser("whoami", help="the account you are signed in as").set_defaults(fn=cmd_whoami)
+
+    ps = sub.add_parser("positions", help="what you have bought, sale by sale")
+    ps.add_argument("--limit", type=int, default=50, help="how many sales to show")
+    ps.add_argument("--offset", type=int, default=0, help="where to start")
+    ps.set_defaults(fn=cmd_positions)
 
     ln = sub.add_parser("link", help="prove a staking key for your account")
     ln.add_argument("--pubkey", help="the 33-byte staking key, hex")

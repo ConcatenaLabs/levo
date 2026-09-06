@@ -204,7 +204,14 @@ def run(ok, rig, levod, env):
     detail = json.loads(levo("show", "cli-sale"))
     ok.eq(detail["sale"]["status"], "partial", "the sale is partial after it")
     ok.eq(int(detail["sale"]["locked_atoms"]), 900 * COIN, "holding the remainder")
-    positions = json.loads(levo("whoami").split("\n")[0]) if False else None
+    out = levo("positions")
+    ok.ok("cli-sale" in out and "bought" in out, "positions lists the sale just bought into",
+          out[:300])
+    ok.ok("100 " in out, "with the tokens bought", out[:300])
+    ok.ok("not yet seen" not in out, "and the purchase counts as verified once mined",
+          out[:300])
+    ok.ok("cap" in out and "still open" in out, "and says what the cap still allows",
+          out[:300])
 
     # --- a record that did not go through can be finished later ------------
     out = levo("record", "cli-sale", "--txid", "ff" * 32, "--tokens", "10",
