@@ -40,6 +40,8 @@ Environment:
                         recognised at once; there is nothing to link.
     LEVO_RECLAIM_KEY    the 32-byte hex reclaim secret, for `levo reclaim`
                         (or pass --reclaim-key)
+    LEVO_TRACE          set to 1 to print the full traceback when a command
+                        fails, instead of the one-line sentence
 
 Sign-in identity: without LEVO_SIGN_WIF, the first sign-in creates a legacy
 address labelled "levo-login" in your wallet and every later sign-in reuses
