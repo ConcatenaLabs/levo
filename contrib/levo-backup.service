@@ -9,3 +9,21 @@ SyslogLevelPrefix=yes
 # A backup that stops working is silent until it is needed. Point this at
 # whatever this deployment uses to tell someone.
 #OnFailure=levod-failed.service
+# The same fence as levod's, for a script that reads one file and writes one
+# directory.
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/var/backups/levo
+PrivateTmp=yes
+PrivateDevices=yes
+PrivateNetwork=yes
+ProtectKernelTunables=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_UNIX
+RestrictNamespaces=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+UMask=0077

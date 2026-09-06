@@ -49,6 +49,13 @@ fi
 LEVO_BASE=${LEVO_BASE:-/levo/} LEVO_SITE_ORIGIN=${LEVO_SITE_ORIGIN:-} npm run build || die "the app did not build -- the old bundle is still being served, so the site is unchanged rather than broken"
 cd ..
 
+# A unit change in the repository reaches the box nowhere but here. The
+# copy is idempotent, and daemon-reload is what makes systemd read it.
+say "== installing the units"
+install -m 644 contrib/levod.service contrib/levo-backup.service contrib/levo-backup.timer \
+  /etc/systemd/system/ || die "could not install the units"
+systemctl daemon-reload || die "daemon-reload failed"
+
 say "== restarting $UNIT"
 systemctl restart "$UNIT" || die "could not restart $UNIT"
 
