@@ -389,6 +389,45 @@ def test_a_recorded_purchase_moves_the_sale_before_it_confirms(t):
     t.eq(s.candidates, [], "and the hint is spent")
 
 
+def test_a_recorded_full_buy_ends_the_sale_on_one_poll(t):
+    """A full buy leaves no remainder to find, so the sale used to wait two
+    silent polls and a block to be called sold out, showing "0 of 20 sold"
+    meanwhile. The recorded purchase is positive evidence: the node has it,
+    it spends the resting outpoint, and its output 1 was never a remainder."""
+    s = _sale()
+    rpc = FakeRPC()
+    rpc.blocks[95] = "block-95"
+    rpc.txouts[("ab" * 32, 0)] = {"value": TOTAL / 1e8, "confirmations": 6}
+    _watch(s, rpc).poll()
+    del rpc.txouts[("ab" * 32, 0)]
+    s.expect_remainder_at("ee" * 32)
+    rpc.txouts[("ee" * 32, 1)] = {"value": 1.0, "asset": USDX, "scriptPubKey": {"hex": "0014" + "11" * 20}}
+    rpc.txs["ee" * 32] = {"txid": "ee" * 32, "vin": [{"txid": "ab" * 32, "vout": 0}],
+                          "vout": [{"n": 0, "asset": USDX, "scriptPubKey": {"hex": "0014" + "22" * 20}},
+                                   {"n": 1, "asset": USDX, "scriptPubKey": {"hex": "0014" + "11" * 20}}]}
+    _watch(s, rpc).poll()
+    t.eq(s.status, S.SOLD_OUT, "sold out on the first poll after the buy is seen")
+    t.eq(s.candidates, [], "and the hint is spent")
+
+
+def test_a_spent_remainder_is_not_mistaken_for_a_full_buy(t):
+    """The purchase's output 1 WAS a remainder, spent since by a later buy:
+    gettxout says nothing rests there, but the transaction says it did, so
+    this is not the buy that emptied the sale."""
+    s = _sale()
+    rpc = FakeRPC()
+    rpc.blocks[95] = "block-95"
+    rpc.txouts[("ab" * 32, 0)] = {"value": TOTAL / 1e8, "confirmations": 6}
+    _watch(s, rpc).poll()
+    del rpc.txouts[("ab" * 32, 0)]
+    s.expect_remainder_at("ee" * 32)
+    rpc.txs["ee" * 32] = {"txid": "ee" * 32, "vin": [{"txid": "ab" * 32, "vout": 0}],
+                          "vout": [{"n": 0, "asset": USDX, "scriptPubKey": {"hex": "0014" + "22" * 20}},
+                                   {"n": 1, "asset": GOLD, "scriptPubKey": {"hex": s.script_pubkey}}]}
+    _watch(s, rpc).poll()
+    t.ok(s.status != S.SOLD_OUT, "one poll with a spent remainder ends nothing", s.status)
+
+
 def test_a_candidate_holding_something_else_is_ignored(t):
     s = _sale()
     rpc = FakeRPC()

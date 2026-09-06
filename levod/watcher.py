@@ -512,6 +512,19 @@ class Watcher:
             except Exception:
                 out = None
             if out is None or not self._is_resting(out, sale):
+                # No remainder rests at the purchase's output 1. When the
+                # purchase itself is known to the node, spends the outpoint the
+                # sale rests at, and its output 1 was never a remainder, the
+                # buy emptied the covenant: that is positive evidence, and the
+                # sale need not wait two silent polls to say sold out. An
+                # output 1 that WAS a remainder and has since been spent is a
+                # later buy's business, and is left to the ordinary path.
+                if self._emptied_by(cand["txid"], sale):
+                    with self._held():
+                        sale.candidates = [c for c in sale.candidates if c != cand]
+                    self._misses.pop(slug, None)
+                    self._miss_height.pop(slug, None)
+                    return self._finish(sale, chain)
                 continue
             # A remainder is what a BUY leaves behind, so the transaction
             # holding it must spend the outpoint this sale was resting at.
@@ -928,6 +941,30 @@ class Watcher:
             if vin.get("txid") == f["txid"] and int(vin.get("vout", -1)) == int(f["vout"]):
                 return True
         return False
+
+    def _emptied_by(self, txid, sale):
+        """Whether this transaction spends the outpoint the sale rests at and
+        re-rests nothing: a full buy. Read from the transaction itself, so a
+        remainder that existed and was spent afterwards is not mistaken for
+        one that never did. Unknown counts as no."""
+        f = sale.funding or {}
+        if not f.get("txid"):
+            return False
+        try:
+            raw = self.rpc.call("getrawtransaction", txid, True) or {}
+        except Exception:
+            return False
+        spends = any(vin.get("txid") == f["txid"] and int(vin.get("vout", -1)) == int(f["vout"])
+                     for vin in raw.get("vin") or [])
+        if not spends:
+            return False
+        outs = raw.get("vout") or []
+        if len(outs) < 2:
+            return True
+        o = outs[1]
+        spk = ((o.get("scriptPubKey") or {}).get("hex") or "").lower()
+        asset = (o.get("asset") or "").lower()
+        return not (spk == sale.script_pubkey.lower() and asset == sale.terms.token_asset)
 
     def _mempool_spender(self, txid, vout):
         """(spending txid, its decoded outputs) for a mempool transaction that
