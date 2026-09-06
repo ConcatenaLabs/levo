@@ -1383,7 +1383,7 @@ class Handler(BaseHTTPRequestHandler):
         for rel in ("/", "/projects", "/how-it-works"):
             lines.append("  <url><loc>%s</loc></url>" % html.escape(origin + rel, quote=True))
         for slug, p in sorted(listings, key=lambda kv: -(getattr(kv[1], "created_at", 0) or 0)):
-            when = getattr(p, "flagged_at", None) or getattr(p, "created_at", None)
+            when = M.last_changed(p)
             stamp = ("<lastmod>%s</lastmod>" % time.strftime("%Y-%m-%d", time.gmtime(when))) if when else ""
             lines.append("  <url><loc>%s</loc>%s</url>"
                          % (html.escape("%s/p/%s" % (origin, slug), quote=True), stamp))

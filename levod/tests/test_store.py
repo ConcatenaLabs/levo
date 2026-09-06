@@ -700,3 +700,28 @@ def test_the_demo_answers_everything_levod_asks_a_node(t):
     missing = sorted(a for a in asked
                      if a not in demo and a not in ("call", "with_timeout"))
     t.eq(missing, [], "every node call levod makes is one the demo answers")
+
+
+def test_a_page_changes_when_it_is_edited_or_bought_from(t):
+    """The sitemap's lastmod is the latest thing that happened to the page,
+    not the day it was listed: an edit and a purchase both move it, and the
+    edit's stamp survives a round trip."""
+    d = Path(tempfile.mkdtemp())
+    p = _platform(d / "state.json")
+    pr = p.list_project("02" + "11" * 32, {"slug": "one", "name": "One", "ticker": "ONE"},
+                        {"token_asset": "aa" * 32, "payment_asset": USDX, "price_num": 1, "price_den": 4,
+                         "treasury_prog": TREASURY_PROG, "min_lot": 100, "close_locktime": 2_000_000_000,
+                         "reclaim_xonly": RECLAIM_XONLY, "total_atoms": 10_000})
+    pr.created_at = 1_700_000_000
+    t.eq(M.last_changed(pr), 1_700_000_000, "a fresh listing last changed when it was listed")
+    t.eq(pr.updated_at, None, "and has not been edited")
+    pr.update({"summary": "Edited."})
+    t.ok(pr.updated_at and pr.updated_at > 1_700_000_000, "an edit stamps the project")
+    t.eq(M.last_changed(pr), pr.updated_at, "and the page changed then")
+    pr.updated_at = 1_700_000_500
+    pr.sale.record_purchase("02" + "22" * 32, 25, 100, txid="cd" * 32, verified=True)
+    pr.sale.purchases["02" + "22" * 32][0]["at"] = 1_700_001_000
+    t.eq(M.last_changed(pr), 1_700_001_000, "a purchase after the edit moves it again")
+    p.save()
+    q = _platform(d / "state.json")
+    t.eq(q.projects["one"].updated_at, 1_700_000_500, "the edit stamp survives a round trip")

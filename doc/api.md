@@ -138,7 +138,8 @@ ordinary answer, and it is the one a project should want anyway.
 
 **`PATCH /api/projects/<slug>`** (session, the issuer) edits the copy: the
 name, the summary, the description and the links, and nothing the address is
-made of. **`DELETE /api/projects/<slug>`**, or **`POST
+made of. The listing then carries `updated_at`, when it was last edited, which
+is null until it has been. **`DELETE /api/projects/<slug>`**, or **`POST
 /api/projects/<slug>/withdraw`** for a client that cannot send DELETE,
 withdraws a listing that was never funded. Withdrawing deletes the terms, and
 the sale address is derived from them, so anything already sent to that address

@@ -335,6 +335,21 @@ def _decimals(v):
     return v
 
 
+def last_changed(project):
+    """When a project's page last changed, for a crawler: the latest of its
+    listing, its last edit, its last flag and its last recorded purchase. A
+    sale that sold this morning has a page that says so, whatever day it was
+    listed."""
+    stamps = [getattr(project, "created_at", None), getattr(project, "updated_at", None),
+              getattr(project, "flagged_at", None)]
+    sale = getattr(project, "sale", None)
+    for entries in (getattr(sale, "purchases", None) or {}).values():
+        for e in entries:
+            stamps.append(e.get("at"))
+    stamps = [int(s) for s in stamps if s]
+    return max(stamps) if stamps else None
+
+
 class Project:
     """A listing: what it is, who runs it, and the sale attached to it."""
 
@@ -361,6 +376,7 @@ class Project:
         # confirmed transaction at all -- and the page says so.
         self.issuance_txid = _txid_or_none(issuance_txid)
         self.created_at = created_at or int(time.time())
+        self.updated_at = None
         self.sale = None
         # Set by whoever runs this Levo, never by the project. A listing that
         # turns out to be a fraud has to be able to stop being advertised
@@ -405,6 +421,7 @@ class Project:
                 "amounts are read, so changing them would reprice the sale "
                 "without changing the covenant. Withdraw this listing and list "
                 "it again")
+        self.updated_at = int(time.time())
 
     def to_json(self, height=None, now=None):
         return {
@@ -416,6 +433,7 @@ class Project:
             "issuer_account": self.issuer_account,
             "links": dict(self.links),
             "decimals": self.decimals,
+            "updated_at": self.updated_at,
             "issuance_txid": self.issuance_txid,
             "registry": dict(self.registry or {}),
             "created_at": self.created_at,
@@ -504,6 +522,7 @@ class Platform:
             p.hidden = bool(d.get("hidden"))
             p.flagged_by = d.get("flagged_by")
             p.flagged_at = d.get("flagged_at")
+            p.updated_at = d.get("updated_at")
             p.notice = d.get("notice")
             p.registry = dict(d.get("registry") or {})
             sd = d.get("sale")
