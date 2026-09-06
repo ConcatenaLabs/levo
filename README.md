@@ -27,6 +27,8 @@ enforced by consensus:
 - **Settlement**, enforced by consensus. A buy spends the covenant, pays the
   treasury and delivers the tokens in one transaction. Levo builds that
   transaction unsigned; only the buyer's wallet can complete it.
+  [doc/how-a-sale-settles.md](doc/how-a-sale-settles.md) walks that
+  transaction output by output, and what the leaf does and does not check.
 - **Signed-message login**, a signature Levo checks. An account is a public key.
   Levo issues a challenge, a wallet signs it, and Levo recovers the key from the
   signature. The signed text has to be the issued challenge, word for word.
@@ -142,8 +144,8 @@ chain; after the close, `bin/levo reclaim` sweeps what did not sell.
 | `bin/levo` | A CLI that runs the whole flow against your own node. |
 | `levod/tests/cdp.py` | A small Chrome DevTools client, so the browser suite can press the buttons rather than only look at the pixels. |
 | `web/` | The single-page app: Vite and React, plain CSS, fonts served from the app itself. |
-| `contrib/` | The systemd unit, an environment file to fill in, and a backup timer for the state file. |
-| `doc/` | The design notes worth keeping outside the code, and `doc/api.md`, the HTTP API. |
+| `contrib/` | The deploy script, the systemd units (sandboxed), an environment file to fill in, and a backup timer for the state file, with the restore drill in its README. |
+| `doc/` | The HTTP API (`api.md`), how a sale settles, why tier caps are policy, and why delegated stake counts for its owner. |
 
 ## Running it
 
