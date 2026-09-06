@@ -214,7 +214,9 @@ bin/levo buy helios-grid --tokens 40                 # picks unblinded inputs, b
 
 `levo --help` lists every command: `sales`, `show`, `verify`, `whoami`,
 `positions`, `link`, `keygen`, `create`, `lock`, `buy`, `record`, `reclaim`, `terms`,
-`rescue`, `withdraw`, and `flag` for an operator. `record` exists for a
+`rescue`, `withdraw`, and `flag` for an operator. `levo --version` names the
+commit the checkout is at, which is the one fact a report about a levo needs,
+since Levo has no version number. `record` exists for a
 purchase built somewhere other than Levo: one Levo built is recorded by Levo
 itself as soon as its node sees the treasury credit, in the mempool or in a
 block, since it knows the transaction's id before anything is signed. Levo

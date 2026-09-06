@@ -38,6 +38,7 @@ from urllib.parse import urlparse, parse_qs
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+import checkout
 import address as ADDR    # noqa: E402
 import auth as A          # noqa: E402
 import market as M        # noqa: E402
@@ -355,6 +356,9 @@ class App:
         # exactly the case it was written for -- a restart, a rebuild or a
         # restore that left the app missing -- and health then reported a
         # healthy site that answered 404 for every page.
+        # The checkout's commit, read once: what names this levod in a report,
+        # since Levo has no version number. None outside a checkout.
+        self.commit = checkout.commit(Path(__file__).resolve().parent.parent)
         self.api_only = (os.environ.get("LEVOD_API_ONLY") or "").strip().lower() \
             in ("1", "true", "yes", "on")
         self.verbose = bool(os.environ.get("LEVOD_VERBOSE"))
@@ -1047,7 +1051,7 @@ class Handler(BaseHTTPRequestHandler):
                 "service": "levod", "ok": ok, "node": node,
                 # No path here: nothing reads it, and an unauthenticated
                 # endpoint should not name the filesystem it runs on.
-                "app": dict({"serving": serving}, **built),
+                "app": dict({"serving": serving, "commit": app.commit}, **built),
                 "payment": {"asset": app.rails.payment_asset,
                             "label": app.rails.payment_label,
                             "decimals": app.payment_decimals},
