@@ -897,6 +897,23 @@ def _check_before_signing(hexed, want, node_decode):
     return tx
 
 
+# A sale is one resting output and every buyer races for it. The node names a
+# lost race in more than one way: the output is gone from the confirmed set
+# ("missingorspent", "missing inputs"), or another transaction spending it is
+# already in the mempool ("txn-mempool-conflict"). Both mean the same thing
+# to a buyer, and neither cost them anything.
+RACE_LOST = ("this spends an output that is no longer there: another buyer "
+             "filled the sale first, or one of the outputs you were spending "
+             "has been spent elsewhere. Nothing was paid. Run the same command "
+             "again and it will be built against where the sale rests now")
+
+
+def lost_the_race(why):
+    text = str(why or "").lower()
+    return any(k in text for k in ("missingorspent", "missing inputs", "mempool-conflict",
+                                   "mempool conflict"))
+
+
 def cmd_buy(args):
     tok = sign_in()
     p = api("GET", "/api/projects/%s" % args.slug)
@@ -992,14 +1009,8 @@ def cmd_buy(args):
     check = node("testmempoolaccept", [signed["hex"]])
     if not check or not check[0].get("allowed"):
         why = check[0].get("reject-reason") if check else "unknown"
-        if "missingorspent" in str(why).lower() or "missing inputs" in str(why).lower():
-            # A sale is one resting output and every buyer races for it.
-            raise Fail(
-                "this spends an output that is no longer there: another buyer "
-                "filled the sale first, or one of the outputs you were "
-                "spending has been spent elsewhere. Nothing was paid. Run the "
-                "same command again and it will be built against where the "
-                "sale rests now")
+        if lost_the_race(why):
+            raise Fail(RACE_LOST)
         raise Fail("the chain would reject this: %s" % why)
     if args.dry_run:
         # The fee asset is named the way the person named it: the label they
@@ -1011,7 +1022,12 @@ def cmd_buy(args):
                        _payment_label(p) if fee_asset == pay_asset
                        else (args.fee_asset or fee_asset[:8]))))
         return
-    txid = node("sendrawtransaction", signed["hex"])
+    try:
+        txid = node("sendrawtransaction", signed["hex"])
+    except Fail as e:
+        if lost_the_race(str(e)):
+            raise Fail(RACE_LOST)
+        raise
     print("bought. %s" % txid)
     # The purchase is on chain now. Recording it against your allocation is a
     # bookkeeping step, so a failure here is worth saying out loud but must not
