@@ -169,6 +169,7 @@ p { margin: 0 0 1rem; }
 .nav-in { display: flex; align-items: center; gap: 1.5rem; height: 66px; }
 .nav-links { display: flex; gap: 1.4rem; margin-left: auto; align-items: center; }
 .nav a {
+  white-space: nowrap;   /* a link is one line; a row that is short of room wraps whole links instead */
   text-decoration: none; color: var(--ink-dim); font-size: .92rem;
   padding: .6rem 0; border-bottom: 1px solid transparent;
 }
@@ -512,7 +513,9 @@ input[type="date"]::-webkit-calendar-picker-indicator { filter: invert(.85); }
      gutter away, and the wordmark and links sat on the screen's edge while
      everything under them kept its margin. */
   .nav-in { height: auto; padding-block: .7rem; flex-wrap: wrap; row-gap: .25rem; }
-  .nav-links { margin-left: 0; width: 100%; gap: 1.1rem; font-size: .9rem; }
+  /* Whole links wrap onto the next row: a signed-in label is long, and
+     "How it works" broken across two lines beside it read as two links. */
+  .nav-links { margin-left: 0; width: 100%; gap: 0 1.1rem; font-size: .9rem; flex-wrap: wrap; }
   .nav a { font-size: .88rem; padding: .7rem 0; }
 
   .rail-pick { grid-template-columns: 1fr; }
