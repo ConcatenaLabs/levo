@@ -1,9 +1,12 @@
 #!/usr/bin/env python3
 """Run every Levo unit test. No dependencies, no framework, no network.
 
-The two that need something outside this process live beside it and are run on
-their own: `test_e2e.py` (the API end to end over a stub node), `test_node.py`
-(a real sequentiad) and `test_render.py` (a real browser).
+    python3 levod/tests/run.py
+
+The suites that need something outside this process -- a stub node, a real
+sequentiad, a browser, a wallet -- live beside it and are run on their own;
+they are named in STANDALONE below, this runner refuses to import them, and
+it refuses a standalone suite the CI gate does not list.
 """
 
 import importlib
@@ -40,6 +43,13 @@ class T:
 
 
 def main():
+    argv = sys.argv[1:]
+    if any(a in ("-h", "--help") for a in argv):
+        sys.stdout.write(__doc__.strip() + "\n")
+        return 0
+    if argv:
+        sys.stderr.write("run.py takes no arguments; it runs every unit test (--help says which)\n")
+        return 2
     # A unit module that is on disk and in neither list is a suite nobody runs,
     # and nothing else would say so: it would pass by never being asked.
     here = Path(__file__).resolve().parent
