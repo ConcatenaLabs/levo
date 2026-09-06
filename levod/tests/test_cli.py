@@ -427,10 +427,10 @@ def run(ok, rig, levod, env):
     ok.ok(code == 2 and "is not a page name" in out and "helios-grid" in out,
           "a page name with a space is refused with the rule", out[-200:])
     code, out = cold("create", "/nonexistent/listing.json")
-    ok.ok(code != 0 and out.endswith("no such file: /nonexistent/listing.json"),
+    ok.ok(code != 0 and out.endswith("there is no file at /nonexistent/listing.json"),
           "a listing file that is not there is said so, before signing in", out[-120:])
     code, out = cold("rescue", "--terms", "/nonexistent/sale.json")
-    ok.ok(code != 0 and "no such file" in out, "and so is a terms file", out[-120:])
+    ok.ok(code != 0 and "there is no file at" in out, "and so is a terms file", out[-120:])
 
 
 def main():

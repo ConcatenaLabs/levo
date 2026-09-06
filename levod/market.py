@@ -1437,7 +1437,8 @@ class Platform:
     def _project(self, slug):
         p = self.projects.get(slug)
         if p is None:
-            raise NotFound("no such project")
+            shown = re.sub(r"[^a-z0-9-]", "?", str(slug or "").lower())[:40]
+            raise NotFound("no sale is listed as %s" % (shown or "an empty name"))
         return p
 
     def public_projects(self, status=None, q=None, sort="new", limit=None,

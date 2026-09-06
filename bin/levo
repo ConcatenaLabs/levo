@@ -652,7 +652,7 @@ def _listing_file(path):
     try:
         text = Path(path).read_text()
     except FileNotFoundError:
-        raise Fail("no such file: %s" % path)
+        raise Fail("there is no file at %s" % path)
     except OSError as e:
         raise Fail("could not read %s: %s" % (path, e.strerror or e))
     try:
