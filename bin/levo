@@ -48,6 +48,7 @@ legacy addresses only.
 
 import argparse
 import json
+import re
 import os
 import secrets
 import subprocess
@@ -95,7 +96,16 @@ def node(*args, **named):
         cmd += ["-named", str(args[0])] + ["%s=%s" % (k, _arg(v)) for k, v in named.items()]
     else:
         cmd += [_arg(a) for a in args]
-    p = subprocess.run(cmd, capture_output=True, text=True)
+    try:
+        p = subprocess.run(cmd, capture_output=True, text=True)
+    except FileNotFoundError:
+        # The first thing a newcomer without a node meets, and it used to be a
+        # traceback hint. Everything that signs or reads the chain goes
+        # through the node's own client, so this names it and both remedies.
+        raise Fail("the node's command-line client was not found (looked for %s). "
+                   "Every command that signs in or reads the chain runs it: put "
+                   "sequentia-cli on your PATH, or set SEQUENTIA_CLI to its path"
+                   % CLI)
     if p.returncode != 0:
         raise Fail("node call %s failed: %s" % (args[0], p.stderr.strip() or p.stdout.strip()))
     out = p.stdout.strip()
@@ -597,6 +607,20 @@ EXAMPLE_LISTING = {
 }
 
 
+def _listing_file(path):
+    """A JSON file the person named, or a sentence about why it cannot be read."""
+    try:
+        text = Path(path).read_text()
+    except FileNotFoundError:
+        raise Fail("no such file: %s" % path)
+    except OSError as e:
+        raise Fail("could not read %s: %s" % (path, e.strerror or e))
+    try:
+        return json.loads(text)
+    except ValueError as e:
+        raise Fail("%s is not valid JSON: %s" % (path, e))
+
+
 def cmd_create(args):
     if args.example:
         print(json.dumps(EXAMPLE_LISTING, indent=2))
@@ -612,8 +636,8 @@ def cmd_create(args):
         return
     if not args.file:
         raise Fail("give the listing file, or `levo create --example` to print one")
+    spec = _listing_file(args.file)
     tok = sign_in()
-    spec = json.loads(Path(args.file).read_text())
     if not isinstance(spec, dict) or "project" not in spec or "terms" not in spec:
         raise Fail("the file holds {\"project\": {...}, \"terms\": {...}}. "
                    "`levo create --example` prints one to start from")
@@ -973,7 +997,7 @@ def cmd_rescue(args):
     that address on your own node, and sweeps it.
     """
     import secp256k1 as S  # noqa: E402
-    spec = json.loads(Path(args.terms).read_text())
+    spec = _listing_file(args.terms)
     terms_json = spec.get("terms", spec)
     terms = C.SaleTerms.from_json(terms_json)
     cov = C.derive(terms)
@@ -1424,6 +1448,15 @@ def main():
     fg.set_defaults(fn=cmd_flag)
 
     args = ap.parse_args()
+    # A page name is lowercase letters, digits and hyphens, and it goes into a
+    # URL; anything else is refused here with the rule, rather than by the
+    # HTTP library with a sentence about control characters.
+    slug = getattr(args, "slug", None)
+    if slug is not None and not re.match(r"^[a-z0-9][a-z0-9-]{1,38}[a-z0-9]$", slug):
+        print("levo: %r is not a page name. A sale's page name is 3 to 40 lowercase "
+              "letters, digits or hyphens -- the last part of its address, such as "
+              "helios-grid" % slug, file=sys.stderr)
+        sys.exit(2)
     try:
         rc = args.fn(args)
     except Fail:

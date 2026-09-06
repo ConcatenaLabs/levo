@@ -3,6 +3,7 @@ import { api, setToken } from '../lib/api'
 import { hasProvider, signMessage, signStakerMessage, supportsStakerSigning, connect,
          noStakingKey, friendly } from '../lib/wallet'
 import { useStore } from '../lib/store'
+import { capitalise } from '../lib/format'
 import { Copy, Notice } from './ui'
 
 // The whole login. Ask the backend for a challenge, have the wallet sign it,
@@ -51,7 +52,7 @@ export default function SignIn({ onDone, label = 'Sign in with your wallet' }) {
       await refresh()
       onDone && onDone(r)
     } catch (e) {
-      setError(friendly(e))
+      setError(capitalise(friendly(e)))
     } finally {
       setBusy(false)
     }
@@ -62,7 +63,7 @@ export default function SignIn({ onDone, label = 'Sign in with your wallet' }) {
     try {
       setManual(await api.authChallenge())
     } catch (e) {
-      setError(e.message || String(e))
+      setError(capitalise(e.message || String(e)))
     } finally { setBusy(false) }
   }
 
@@ -75,7 +76,7 @@ export default function SignIn({ onDone, label = 'Sign in with your wallet' }) {
       await refresh()
       onDone && onDone(r)
     } catch (e) {
-      setError(e.message || String(e))
+      setError(capitalise(e.message || String(e)))
       // The challenge is single use, so a failed attempt needs a fresh one.
       try { setManual(await api.authChallenge()) } catch {}
     } finally { setBusy(false) }
