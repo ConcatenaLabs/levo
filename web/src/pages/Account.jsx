@@ -156,6 +156,12 @@ function MyProjects() {
             <span><b>{p.name}</b> <span className="row-ticker">{p.ticker}</span></span>
             <Status sale={p.sale} />
           </div>
+          {p.sale && p.sale.funding && p.sale.terms && (
+            <p className="small dim mono" style={{ margin: '.4rem 0 0' }}>
+              {amount(p.sale.sold_atoms, p.decimals ?? 8)} of {amount(p.sale.terms.total_atoms, p.decimals ?? 8)} {p.ticker} sold
+              {typeof p.sale.buyers === 'number' ? ' \u00b7 ' + p.sale.buyers + (p.sale.buyers === 1 ? ' buyer' : ' buyers') : ''}
+            </p>
+          )}
           {p.sale && (p.sale.status === 'draft' || p.sale.status === 'ghost') && (
             <p className="small dim" style={{ margin: '.5rem 0 0' }}>
               {p.sale.status === 'ghost' ? 'The chain does not have the funding you locked: it never reached a block, or a reorg took the block that held it. ' : ''}Lock the tokens on the sale's page to open it.
