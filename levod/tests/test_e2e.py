@@ -341,7 +341,11 @@ def run(d):
     import subprocess as _sp
     import tempfile as _tf
     check = str(HERE.parent.parent / "contrib" / "levo-check.sh")
+    # A CI runner is itself a systemd service, so its environment carries the
+    # INVOCATION_ID that marks a timer's run; without this the check records
+    # a verdict where it cannot and says nothing about running by hand.
     env = dict(os.environ, LEVO_HEALTH_URL=d.base + "/api/health", LEVO_ALERT_ENV="/nonexistent")
+    env.pop("INVOCATION_ID", None)
     r = _sp.run(["bash", check], capture_output=True, text=True, timeout=60, env=env)
     ok.ok(r.returncode == 0, "the check passes against a healthy levod", r.stdout + r.stderr)
     ok.ok("levo check passed" in r.stdout and "run by hand" in r.stdout,
