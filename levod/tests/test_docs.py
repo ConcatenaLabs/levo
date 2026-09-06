@@ -297,7 +297,7 @@ def test_the_units_pass_systemd_verify(t):
     t.ok(len(units) >= 6, "the units are where the deploy script looks", units)
     r = subprocess.run([analyze, "verify", "--man=no"] + units, capture_output=True, text=True, timeout=60)
     noise = [l for l in (r.stdout + r.stderr).splitlines()
-             if l.strip() and "Unknown key" in l or "ignoring" in l.lower() or "Failed to" in l]
+             if "Unknown key" in l or "ignoring" in l.lower() or "Failed to" in l]
     t.eq(noise, [], "systemd-analyze verify has nothing to say about the units")
     for p in ("contrib/levod.service", "contrib/levo-backup.service"):
         text = (ROOT / p).read_text()

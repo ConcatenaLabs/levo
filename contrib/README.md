@@ -18,7 +18,8 @@
 - `levo-alert.sh` and `levo-alert@.service` tell a person when a unit fails:
   `levod.service` and `levo-backup.service` name it in `OnFailure=`, and one
   line goes to a push topic a phone or a browser subscribes to. Put the topic
-  in `/etc/sequentia/levo-alert.env` (mode 0600):
+  in `/etc/sequentia/levo-alert.env` (mode 0600; `levo-alert.env.example` is
+  the file to copy):
 
   ```sh
   NTFY_TOPIC=<a name nobody guesses>        # required; subscribe at https://ntfy.sh/<it>
