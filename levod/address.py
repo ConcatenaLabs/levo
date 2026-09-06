@@ -12,6 +12,8 @@ outputs must be explicit, because the covenant reads them with introspection and
 refuses anything it cannot read.
 """
 
+import hashlib
+
 CHARSET = "qpzry9x8gf2tvdw0s3jn54khce6mua7l"
 BECH32M_CONST = 0x2bc830a3
 
@@ -87,6 +89,37 @@ CONFIDENTIAL_HRPS = ("tsqb", "sqb", "el", "lq", "tlq")
 UNBLINDED_FOR = {"tsqb": "tb", "sqb": "bc", "el": "ert", "lq": "ex", "tlq": "tex"}
 
 
+_B58 = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
+
+
+def _is_base58check(a):
+    """Whether this is a base58check payload with a good checksum: the legacy
+    address form. Only the shape is judged here, never the chain."""
+    if not 25 <= len(a) <= 40 or any(c not in _B58 for c in a):
+        return False
+    n = 0
+    for c in a:
+        n = n * 58 + _B58.index(c)
+    raw = n.to_bytes((n.bit_length() + 7) // 8, "big")
+    raw = b"\x00" * (len(a) - len(a.lstrip("1"))) + raw
+    if len(raw) < 25:
+        return False
+    body, check = raw[:-4], raw[-4:]
+    return hashlib.sha256(hashlib.sha256(body).digest()).digest()[:4] == check
+
+
+def _plain_hint(a):
+    """The unblinded witness prefix a legacy address's wallet also has, by
+    the legacy version byte where it tells the chains apart: Bitcoin-style
+    testnet and regtest bytes say tb/ert, the mainnet ones bc."""
+    first = a[0]
+    if first in "mn2":
+        return "tb"
+    if first in "13":
+        return "bc"
+    return "tb"
+
+
 def decode(addr):
     """(hrp, witness version, program bytes) for a bech32 or bech32m address.
 
@@ -97,10 +130,28 @@ def decode(addr):
     a = str(addr or "").strip()
     if not a:
         raise ValueError("no address given")
+    if _is_base58check(a):
+        # A legacy address decodes, so it is an address; it is just not one
+        # a witness program can be read out of, and saying "mixed case" about
+        # it sends the person looking for a typo that is not there.
+        raise ValueError(
+            "%s is a legacy address. A sale pays witness addresses only, so ask "
+            "your wallet for one beginning %s1" % (addr, _plain_hint(a)))
     if a != a.lower() and a != a.upper():
         raise ValueError("an address is all lowercase or all uppercase, not mixed")
     a = a.lower()
     pos = a.rfind("1")
+    # A confidential address is longer than bech32 allows, so it is named
+    # before the length is judged; otherwise it would be called "not an
+    # address", which sends nobody to the unblinded one their wallet has.
+    if pos >= 1 and a[:pos] in CONFIDENTIAL_HRPS:
+        hrp = a[:pos]
+        plain = UNBLINDED_FOR.get(hrp)
+        raise ValueError(
+            "%s is a confidential address. Everything a sale covenant touches "
+            "has to be explicit, so use an unblinded address%s" %
+            (addr, (" -- the same wallet has one, beginning %s1" % plain)
+             if plain else ", which the same wallet also has"))
     if pos < 1 or pos + 7 > len(a) or len(a) > 90:
         raise ValueError("%r is not a bech32 address" % addr)
     hrp, body = a[:pos], a[pos + 1:]
