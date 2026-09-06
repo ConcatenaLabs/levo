@@ -39,8 +39,9 @@ merge only on a green run. The three that need a chain run on a machine that
 has one, and `test_node.py` is the only suite that proves anything about
 consensus: run it whenever `covenant.py`, `tx.py`, `pset.py` or `watcher.py`
 change. The web suite carries guards that walk the sources -- unused imports,
-free identifiers, markup in prose, decisions made on raw atom strings -- so a
-white screen or a truthy `"0"` fails a test rather than a reader.
+free identifiers, markup in prose, decisions made on raw atom strings, a
+resource loaded from another origin -- so a white screen, a truthy `"0"` or a
+font the proxy's policy would block fails a test rather than a reader.
 
 ## The custody line
 
