@@ -811,8 +811,11 @@ def cmd_lock(args):
     # Levo reads its own node, which is not the node the lock was broadcast
     # to, so for a few seconds after the send it has not heard of it. The
     # tokens are at the address either way; only the confirmation waits.
+    # A minute of asking: two nodes that are not peers of each other can take
+    # longer than a few seconds to share a transaction, and giving up early
+    # leaves the sale a draft with its tokens already at the address.
     last = None
-    for attempt in range(6):
+    for attempt in range(12):
         try:
             api("POST", "/api/projects/%s/lock" % args.slug,
                 {"txid": txid, "vout": int(vout)}, tok)
@@ -820,10 +823,10 @@ def cmd_lock(args):
             break
         except SystemExit as e:
             last = str(e)
-            if "has not seen" not in last or attempt == 5:
+            if "has not seen" not in last or attempt == 11:
                 break
             print("levod's node has not seen the lock yet; asking again in a moment")
-            time.sleep(3)
+            time.sleep(5)
     if last is not None:
         raise Fail("%s\n\nThe tokens are locked at %s:%d. Once levod's node has "
                    "seen the transaction, confirm it with:\n  levo lock %s --txid %s --vout %d"
