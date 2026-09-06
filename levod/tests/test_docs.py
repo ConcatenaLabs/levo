@@ -332,3 +332,20 @@ def test_the_server_knows_every_route_the_app_draws(t):
     plain = {r for r in routes if r not in ("*", "/p/:slug")}
     t.eq(plain, set(SV.APP_ROUTES), "APP_ROUTES in levod/server.py is the router's list of pages")
     t.ok(set(SV.ROUTE_HEADS) <= plain, "and every route with its own head is one of them")
+
+
+def test_the_cli_help_names_every_setting_the_readme_does(t):
+    """`levo --help` used to leave out LEVO_TRACE, which the README's table
+    of the CLI's settings had. Both lists are read from source here, so a
+    setting added to one without the other fails before it ships."""
+    import subprocess
+    readme = (ROOT / "README.md").read_text()
+    m = re.search(r"\| `LEVO_URL` \|.*?(?=\n\n)", readme, re.S)
+    t.ok(m, "the README's table of the CLI's settings is where it was")
+    in_readme = set(re.findall(r"^\| `([A-Z_]+)` \|", m.group(0), re.M))
+    r = subprocess.run([sys.executable, str(ROOT / "bin" / "levo"), "--help"],
+                       capture_output=True, text=True, timeout=30)
+    block = r.stdout.split("Environment:", 1)[1].split("\n\n", 1)[0]
+    in_help = set(re.findall(r"^\s+([A-Z_]+)\s{2,}", block, re.M))
+    t.eq(in_help, in_readme, "levo --help and the README name the same settings")
+    t.ok("LEVO_TRACE" in in_help, "and LEVO_TRACE is one of them")
