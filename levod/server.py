@@ -595,7 +595,9 @@ class Handler(BaseHTTPRequestHandler):
         # all need a parsed request, so the refusal is written as bytes and the
         # connection closed.
         if not self._take_peer_slot():
-            body = b'{"error": "too many connections from this address"}'
+            # Written before the request is parsed, so by hand -- and with the
+            # code the document promises every refusal carries.
+            body = b'{"code": "rate_limited", "error": "too many connections from this address"}'
             try:
                 self.wfile.write(b"HTTP/1.1 429 Too Many Requests\r\n"
                                  b"Content-Type: application/json\r\n"
@@ -609,7 +611,7 @@ class Handler(BaseHTTPRequestHandler):
         acquired = self.app.handlers.acquire(timeout=BUSY_WAIT_SECONDS) if self.app else True
         if not acquired:
             self._drop_peer_slot()
-            body = b'{"error": "levod is busy; try again in a moment"}'
+            body = b'{"code": "busy", "error": "levod is busy; try again in a moment"}'
             try:
                 self.wfile.write(b"HTTP/1.1 503 Service Unavailable\r\n"
                                  b"Content-Type: application/json\r\n"

@@ -83,3 +83,23 @@ def test_every_setting_is_in_the_readme(t):
     named = set(re.findall(r"`((?:LEVOD|LEVO|SEQUENTIA)_[A-Z_]+)`", readme))
     t.eq(sorted(levod - named), [], "every levod setting is in the README")
     t.eq(sorted(cli_vars - named), [], "every variable the command line reads is in the README")
+
+
+
+# --- error codes: what the document lists is what the server emits ---------
+
+def test_the_documented_error_codes_are_the_ones_the_server_emits(t):
+    """doc/api.md lists the codes a client may branch on. Each has to be one
+    the server actually sends -- the two refusals written by hand before a
+    request is parsed once carried none -- and the server must send none
+    the document does not name."""
+    doc = DOC.read_text(encoding="utf-8")
+    m = re.search(r"The codes are (.*?)\. New codes may appear", doc, re.S)
+    t.ok(m, "the document lists its codes")
+    listed = set(re.findall(r"`([a-z_]+)`", m.group(1))) - {"allowance_atoms"}   # a field named beside a code
+    src = (ROOT / "levod" / "server.py").read_text(encoding="utf-8")
+    emitted = set(re.findall(r'"code":\s*"([a-z_]+)"', src))
+    for a, b in re.findall(r'"([a-z_]+)" if [^\n]*? else "([a-z_]+)"', src):
+        emitted |= {a, b}
+    t.eq(sorted(listed - emitted), [], "every documented code is one the server emits")
+    t.eq(sorted(emitted - listed), [], "and the server emits no code the document does not name")
