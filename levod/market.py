@@ -1073,6 +1073,7 @@ class Platform:
         self.check_fee_asset(fee_asset, buyer.get("fee_atoms"))
         self.check_fee_atoms(p.sale, buyer.get("fee_atoms"),
                              n_inputs=len(buyer["inputs"]), fee_asset=fee_asset)
+        buyer["fee_atoms"] = S._atoms(buyer.get("fee_atoms"), "fee")
         # A purchase whose treasury credit is below the node's dust rule is
         # refused here rather than at the node, which would be after the buyer
         # had signed it.
@@ -1652,12 +1653,18 @@ class Platform:
         is rejected by every node it is offered to -- after the payer has
         signed it and gone looking for why nothing happened.
         """
-        if fee_atoms is None or isinstance(fee_atoms, bool) or not isinstance(fee_atoms, int):
+        # A string or a number, as the API document promises of every atom
+        # count on the way in; this one refused the string.
+        try:
+            fee_atoms = S._atoms(fee_atoms, "fee") if fee_atoms is not None else None
+        except S.SaleError:
+            fee_atoms = None
+        if fee_atoms is None:
             raise PlatformError(
-                "fee_atoms must be a whole number of atoms of the fee asset")
+                "the fee must be a whole number of atoms of the fee asset")
         if fee_atoms <= 0:
             raise PlatformError(
-                "a transaction pays a fee: fee_atoms must be more than 0. Ask "
+                "a transaction pays a fee: the fee must be more than 0. Ask "
                 "for the current figure and use its suggested_atoms")
         advice = self.fee_advice(sale, n_inputs=n_inputs, fee_asset=fee_asset,
                                  vsize=vsize, kind=kind)

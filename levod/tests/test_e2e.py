@@ -264,7 +264,7 @@ def run(d):
     ok.eq(r["first_tier_is_chain_floor"], True, "the default first tier is the chain floor")
     code, r = req("GET", "/api/tiers")
     ok.ok("40,000 tSEQ" in r["note"], "the tiers note is built from the table", r["note"])
-    ok.eq(r["staking_floor_atoms"], 4_000_000_000_000, "the floor comes from the node")
+    ok.eq(int(r["staking_floor_atoms"]), 4_000_000_000_000, "the floor comes from the node")
     ok.eq(r["staking_floor_from_chain"], True, "and says that it did")
     ok.ok("consensus ignores" in r["note"],
           "so the note may say what consensus does", r["note"])
@@ -580,7 +580,7 @@ def run(d):
     ok.eq(plan["required_outputs"][1]["script_pubkey"], spk, "remainder returns to the identical covenant")
     ok.eq(plan["cap"]["enforced_by"], "levo", "caps are labelled as policy")
     ok.eq(len(plan["covenant"]["witness"]), 2, "sell witness is leaf + control block")
-    ok.ok(plan["fee"]["suggested_atoms"] and plan["fee"]["suggested_atoms"] > plan["fee"]["min_atoms"] > 0,
+    ok.ok(int(plan["fee"]["suggested_atoms"]) > int(plan["fee"]["min_atoms"]) > 0,
           "a fee is suggested from the node's floor", plan["fee"])
     code, plan_s = req("POST", "/api/projects/helios/buy", {"token_atoms": str(1_000 * 100_000_000)}, token=buyer_tok)
     ok.eq(plan_s["payment_atoms"], plan["payment_atoms"], "an atom count as a decimal string is accepted")
@@ -609,8 +609,11 @@ def run(d):
     code, planned = req("POST", "/api/projects/helios/buy",
                         {"token_atoms": 100 * 100_000_000}, token=buyer_tok)
     fee_atoms = planned["fee"]["suggested_atoms"]
-    ok.ok(fee_atoms and fee_atoms >= planned["fee"]["min_atoms"],
+    ok.ok(int(fee_atoms) >= int(planned["fee"]["min_atoms"]) > 0,
           "the plan advises a fee at or above the node's floor")
+    # And the string the plan hands back is what a client sends on: the
+    # document promises either form is taken, and the fee check refused this one.
+    ok.ok(isinstance(fee_atoms, str), "the suggested fee arrives as a string")
     body = {"token_atoms": 100 * 100_000_000,
             "buyer": {"token_address": buyer_addr, "change_address": buyer_addr,
                       "inputs": [{"txid": "77" * 32, "vout": 0}], "fee_atoms": fee_atoms}}
@@ -698,7 +701,7 @@ def run(d):
     ok.eq(code, 200, "purchase recorded")
     ok.eq(r["recorded"], True, "the allocation ledger took it")
     ok.eq(r["treasury_payment_verified"], True, "and checked that the transaction really paid this sale's treasury")
-    ok.eq(r["committed_atoms"], 250 * 100_000_000, "the account's commitment")
+    ok.eq(int(r["committed_atoms"]), 250 * 100_000_000, "the account's commitment")
     code, r = req("POST", "/api/projects/helios/buy", {"payment_atoms": 800 * 100_000_000}, token=buyer_tok)
     ok.eq(code, 409, "the tier cap is cumulative across purchases")
     code, r = req("POST", "/api/projects/helios/buy", {"payment_atoms": 750 * 100_000_000}, token=buyer_tok)
@@ -711,7 +714,7 @@ def run(d):
         code, r = req("POST", "/api/projects/helios/confirm", bad, token=buyer_tok)
         ok.eq(code, 400, "%s is refused" % what)
     code, r = req("GET", "/api/me/positions", token=buyer_tok)
-    ok.eq(r["positions"][0]["committed_atoms"], 250 * 100_000_000, "the ledger never went down")
+    ok.eq(int(r["positions"][0]["committed_atoms"]), 250 * 100_000_000, "the ledger never went down")
     node.utxos[("cc" * 32, 0)] = {"scriptPubKey": {"hex": "5120" + "99" * 32}, "asset": USDX, "valueatoms": 1}
     code, r = req("POST", "/api/projects/helios/confirm", {"txid": "cc" * 32, "token_atoms": 1, "payment_atoms": 1},
                   token=buyer_tok)
@@ -732,7 +735,7 @@ def run(d):
                   {"txid": "e1" * 32, "token_atoms": 100_000, "payment_atoms": 1}, token=buyer_tok)
     ok.eq(code, 200, "an unverifiable purchase the node knows is still recorded")
     ok.eq(r["treasury_payment_verified"], None, "and says it could not be checked")
-    ok.eq(r["purchase"]["payment_atoms"], 25_000, "but never for less than the covenant's price for the tokens")
+    ok.eq(int(r["purchase"]["payment_atoms"]), 25_000, "but never for less than the covenant's price for the tokens")
     code, r = req("POST", "/api/projects/helios/confirm",
                   {"txid": "e1" * 32, "token_atoms": 100_000, "payment_atoms": 1}, token=buyer_tok)
     ok.eq(code, 200, "recording the same purchase again is accepted")
@@ -743,7 +746,7 @@ def run(d):
     pos = r["positions"][0]
     ok.eq(pos["slug"], "helios", "positions list the sale")
     ok.eq(len(pos["purchases"]), 2, "with both purchases")
-    ok.eq(pos["tokens_atoms"], 1_000 * 100_000_000 + 100_000, "and the tokens bought")
+    ok.eq(int(pos["tokens_atoms"]), 1_000 * 100_000_000 + 100_000, "and the tokens bought")
     code, r = req("GET", "/api/projects/helios")
     ok.eq(r["sale"]["buyers"], 1, "the sale counts its buyers")
 
@@ -1291,6 +1294,40 @@ def run(d):
     ok.ok(any(p["slug"] == "helios" for p in r["projects"]), "so does a prefix of it, in either case")
     code, r = req("GET", "/api/projects?status=all&q=" + "f" * 32)
     ok.eq([p["slug"] for p in r["projects"]], [], "and an id nobody sells finds nothing")
+
+    # --- the promise every answer keeps -----------------------------------
+    #
+    # doc/api.md: every field ending in _atoms, plus min_lot and total_atoms,
+    # is a decimal string on the way out. A walk over the public answers found
+    # four stake figures that were not. This walks every answer a client reads
+    # and fails on the first number where a string was promised.
+    ok.section("wire")
+    def walk(o, path, found):
+        if isinstance(o, dict):
+            for k, v in o.items():
+                if (k.endswith("_atoms") or k in ("min_lot", "total_atoms")) and v is not None:
+                    if isinstance(v, dict):
+                        if any(not isinstance(vv, str) for vv in v.values()):
+                            found.append("%s.%s holds a non-string" % (path, k))
+                    elif not isinstance(v, str):
+                        found.append("%s.%s is %s" % (path, k, type(v).__name__))
+                walk(v, path + "." + k, found)
+        elif isinstance(o, list):
+            for i, v in enumerate(o[:50]):
+                walk(v, "%s[%d]" % (path, i), found)
+    found = []
+    for ep, tok in (("/api/config", None), ("/api/tiers", None), ("/api/rails", None),
+                    ("/api/health", None), ("/api/watcher", None),
+                    ("/api/projects?status=all&limit=50", None), ("/api/projects/helios", None),
+                    ("/api/projects/helios/fee?kind=buy&inputs=1", None),
+                    ("/api/me", buyer_tok), ("/api/me/positions", buyer_tok),
+                    ("/api/me/projects", issuer_tok), ("/api/projects/helios/purchases", issuer_tok)):
+        code, r = req("GET", ep, token=tok)
+        ok.eq(code, 200, "wire walk reaches %s" % ep.split("?")[0])
+        walk(r, ep.split("?")[0], found)
+    code, r = req("POST", "/api/projects/helios/buy", {"token_atoms": 100 * 100_000_000}, token=buyer_tok)
+    walk(r, "/buy", found)
+    ok.eq(found, [], "every atom count leaves as a decimal string")
 
     # --- the statement a wallet is asked to sign ---------------------------
     ok.section("login")

@@ -721,7 +721,7 @@ class Handler(BaseHTTPRequestHandler):
                 pass                    # the client left; nothing to report
 
     def _json(self, code, payload, cache="no-store", headers=None):
-        body = json.dumps(payload, indent=2, sort_keys=True).encode()
+        body = json.dumps(_wire(payload), indent=2, sort_keys=True).encode()
         self._send(code, body, "application/json", cache=cache, headers=headers)
 
     def _body(self):
@@ -1179,7 +1179,7 @@ class Handler(BaseHTTPRequestHandler):
                 status=key[3], q=key[4], sort=key[5], limit=key[6], offset=key[7],
                 operator=operator)
             page["node_reachable"] = height is not None
-            body = json.dumps(page, indent=2, sort_keys=True).encode()
+            body = json.dumps(_wire(page), indent=2, sort_keys=True).encode()
             if len(app.board_cache) >= BOARD_CACHE_ENTRIES or \
                     any(k[0] != key[0] for k in list(app.board_cache)[:1]):
                 app.board_cache.clear()          # a new version, or too many queries
@@ -1441,6 +1441,38 @@ def _check_pubkey(pk):
     if len(pk) != 66 or not pk.startswith(("02", "03")) \
             or any(c not in "0123456789abcdef" for c in pk):
         raise ValueError("the staking key must be a 33-byte compressed public key in hex")
+
+
+# The one promise every response keeps: an atom count is a decimal string.
+#
+# The API document says so of every field ending in `_atoms`, plus `min_lot`
+# and `total_atoms`, and most of the code honours it at the source with
+# `atoms_out`. Four stake figures did not -- they are ints inside levod
+# because the tier arithmetic needs them to be -- and a walk over every public
+# answer found them. Rather than remember it at every site, the boundary
+# keeps the promise: what leaves as JSON is converted here, and nothing that
+# reads the value inside levod sees a string.
+ATOM_KEYS = ("min_lot", "total_atoms")
+
+
+def _wire(value):
+    if isinstance(value, dict):
+        out = {}
+        for k, v in value.items():
+            counted = isinstance(k, str) and (k.endswith("_atoms") or k in ATOM_KEYS)
+            if counted and isinstance(v, int) and not isinstance(v, bool):
+                out[k] = str(v)
+            elif counted and isinstance(v, dict):
+                # A map of accounts to what each committed: the values are
+                # the counts, and the keys are keys.
+                out[k] = {kk: (str(vv) if isinstance(vv, int) and not isinstance(vv, bool) else _wire(vv))
+                          for kk, vv in v.items()}
+            else:
+                out[k] = _wire(v)
+        return out
+    if isinstance(value, list):
+        return [_wire(v) for v in value]
+    return value
 
 
 # systemd reads a <N> prefix on a line as its syslog priority, so an operator's
