@@ -302,10 +302,27 @@ def _mixed_script_word(text):
     return None
 
 
+def _whole(v):
+    """A whole number given as an int or as a string of digits, or None.
+
+    Every count the API takes is accepted either way -- an atom count has to
+    be, and an index or a place count is the same shape to a client -- so a
+    body that sends "0" where the form sends 0 is not refused for it.
+    """
+    if isinstance(v, bool):
+        return None
+    if isinstance(v, int):
+        return v
+    if isinstance(v, str) and re.fullmatch(r"[0-9]+", v.strip()):
+        return int(v.strip())
+    return None
+
+
 def _decimals(v):
     if v is None:
         return 8
-    if isinstance(v, bool) or not isinstance(v, int) or not 0 <= v <= 8:
+    v = _whole(v)
+    if v is None or not 0 <= v <= 8:
         raise PlatformError("decimals is the number of decimal places the token "
                             "is shown with, 0 to 8")
     return v
@@ -818,7 +835,8 @@ class Platform:
         txid = str(txid).lower()
         if not TXID_RE.match(txid):
             raise PlatformError("txid must be 64 hex characters")
-        if isinstance(vout, bool) or not isinstance(vout, int) or vout < 0:
+        vout = _whole(vout)
+        if vout is None or vout < 0:
             raise PlatformError("vout is the output's index in the transaction, 0 or more")
         out = self.rpc.txout(txid, vout)
         if out is None:
@@ -841,7 +859,8 @@ class Platform:
         txid = str(txid).lower()
         if not TXID_RE.match(txid):
             raise PlatformError("txid must be 64 hex characters")
-        if isinstance(vout, bool) or not isinstance(vout, int) or vout < 0:
+        vout = _whole(vout)
+        if vout is None or vout < 0:
             raise PlatformError("vout is the output's index in the transaction, 0 or more")
         spk = (out.get("scriptPubKey") or {}).get("hex")
         asset = out.get("asset") or out.get("assetlabel")
