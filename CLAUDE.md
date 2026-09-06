@@ -32,6 +32,7 @@ python3 levod/tests/test_node.py    # against a real sequentiad; skipped without
 python3 levod/tests/test_cli.py     # bin/levo against a real sequentiad; skipped without one
 python3 levod/tests/test_browser.py # a purchase in a browser with a wallet; skipped without both
 python3 levod/demo.py               # the whole platform, no chain needed
+python3 tools/smoke.py <url>        # a deployed Levo, from the outside; after every deploy
 ```
 
 The first four run on every push and pull request (`.github/workflows/gate.yml`);
