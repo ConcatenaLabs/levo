@@ -114,7 +114,11 @@ floor: `{asset, vsize_estimate, min_atoms, suggested_atoms, rate_atoms_per_kvb}`
 `project`: `slug`, `name`, `ticker`, `decimals`, `summary`, `description`,
 `links`, and optionally `issuance_txid` -- the transaction that created the
 token, published as a link so a reader can look up whether the supply can grow.
-Levo does not check it, and says so on the page.
+Levo does not check it, and says so on the page. A name is text a person can
+search for and say: it needs at least two letters or digits, every character
+in it has to draw something, and a word that mixes Latin letters with Cyrillic
+or Greek ones is refused, naming the letter, because that is how one listing
+is dressed up as another. A name in one alphabet, any alphabet, is fine.
 
 Where the deployment reads an asset registry (`LEVOD_REGISTRY_URL`, published in
 `/api/config`), the token is looked up there when the listing is made. A listing

@@ -395,7 +395,7 @@ def test_closing_soonest_survives_a_node_that_cannot_be_reached(t):
     p = _platform(d / "state.json")
     p.height = lambda strict=False: None
     pr = p.list_project("02" + "11" * 32,
-                        {"slug": "height-close", "name": "H", "ticker": "HH"},
+                        {"slug": "height-close", "name": "Height close", "ticker": "HH"},
                         {"token_asset": "aa" * 32, "payment_asset": USDX,
                          "price_num": 1, "price_den": 4, "min_lot": 100,
                          "treasury_prog": TREASURY_PROG, "close_locktime": 700_000,
@@ -526,6 +526,29 @@ def test_a_name_has_to_be_made_of_characters_that_draw_something(t):
     t.eq(M._text("a\u00adb", "description", 80), "ab",
          "prose loses what a paste brought and keeps the listing")
 
+    # A listing dressed up as another: a word mixing Latin with Cyrillic or
+    # Greek letters is refused, naming the letter; a name in one alphabet,
+    # any alphabet, is fine.
+    for bad, letter in (("H\u0435lios Grid", "\u0435"), ("Helios Gr\u03b9d", "\u03b9"), ("US\u0414X", "\u0414")):
+        try:
+            M._text(bad, "name", 80, required=True, oneline=True, must_ink=True)
+            t.ok(False, "a look-alike name is refused: %r" % bad)
+        except M.PlatformError as e:
+            t.ok("mixes alphabets" in str(e) and repr(letter) in str(e),
+                 "a look-alike name is refused, naming the letter", str(e))
+    for fine in ("\u041f\u0440\u0438\u0432\u0435\u0442 \u043c\u0438\u0440", "\u0391\u03b8\u03ae\u03bd\u03b1", "Helios \u041c\u0438\u0440"):
+        t.eq(M._text(fine, "name", 80, required=True, oneline=True, must_ink=True), fine,
+             "a name in one alphabet per word is fine: %r" % fine)
+    # And a name is something a person can search for or say.
+    for bad in ("x", "\U0001f680\U0001f680\U0001f680", "- -", "1"):
+        try:
+            M._text(bad, "name", 80, required=True, oneline=True, must_ink=True)
+            t.ok(False, "a name with fewer than two letters or digits is refused: %r" % bad)
+        except M.PlatformError as e:
+            t.ok("two letters or digits" in str(e), "refused: %r" % bad, str(e))
+    t.eq(M._text("ab", "name", 80, required=True, oneline=True, must_ink=True), "ab", "two is enough")
+    t.eq(M._text("\U0001f680 Go", "name", 80, required=True, oneline=True, must_ink=True), "\U0001f680 Go",
+         "and an emoji beside a word is fine")
 
 def test_a_url_is_judged_on_what_it_carries_not_on_its_normal_form(t):
     """A URL that merely arrived in another Unicode normalisation form is a

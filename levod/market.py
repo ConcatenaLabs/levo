@@ -260,9 +260,46 @@ def _text(v, name, limit, required=False, oneline=False, must_ink=False):
             "the %s has nothing visible in it: every character in it draws "
             "nothing, so the listing would show a blank where its %s should be"
             % (name, name))
+    if must_ink and v:
+        # A name is what a listing is found and told apart by. Two rules
+        # follow from that, both aimed at a listing dressed up as another.
+        # A word that mixes Latin letters with Cyrillic or Greek ones is the
+        # look-alike trick -- "Hеlios" with a Cyrillic е reads as "Helios" and
+        # is a different string -- so the word is refused, naming the letter.
+        # A name in one script, any script, is fine. And a name needs at
+        # least two letters or digits: one character, or a row of emoji, is
+        # not a name a person can search for or say.
+        clash = _mixed_script_word(v)
+        if clash:
+            word, ch = clash
+            raise PlatformError(
+                "the %s mixes alphabets inside one word: %r in %r is %s. A word "
+                "in one alphabet reads as itself; one that mixes them reads as "
+                "another listing's name"
+                % (name, ch, word, unicodedata.name(ch, "an unnamed letter").lower()))
+        if sum(1 for ch in v if ch.isalnum()) < 2:
+            raise PlatformError("the %s needs at least two letters or digits" % name)
     if len(v) > limit:
         raise PlatformError("the %s is limited to %d characters" % (name, limit))
     return v
+
+
+def _mixed_script_word(text):
+    """The first word that mixes Latin letters with Cyrillic or Greek ones,
+    as (word, the first letter from the other alphabet), or None."""
+    for word in text.split():
+        scripts = {}
+        for ch in word:
+            if not ch.isalpha():
+                continue
+            label = unicodedata.name(ch, "")
+            for script in ("LATIN", "CYRILLIC", "GREEK"):
+                if label.startswith(script):
+                    scripts.setdefault(script, ch)
+        if "LATIN" in scripts and ("CYRILLIC" in scripts or "GREEK" in scripts):
+            other = scripts.get("CYRILLIC") or scripts.get("GREEK")
+            return word, other
+    return None
 
 
 def _decimals(v):
