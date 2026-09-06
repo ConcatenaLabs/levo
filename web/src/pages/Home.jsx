@@ -172,7 +172,7 @@ export default function Home() {
                   click{extension ? <> (<a href={extension} target="_blank" rel="noopener noreferrer">where to get it</a>)</> : ''};
                   any wallet that signs a message the way{' '}
                   <span className="mono">sequentia-cli signmessage</span> does works
-                  too, by pasting the signature{wallet ? <>, which <a href={wallet} target="_blank" rel="noopener noreferrer">the web wallet</a>&rsquo;s Sign tab makes with your staking key</> : ''}.
+                  too, by pasting the signature{wallet ? <>, which <a href={wallet} target="_blank" rel="noopener noreferrer">the web wallet</a>&rsquo;s Sign tab makes with your staking key, as does Ambra&rsquo;s Sign screen on a phone</> : ''}.
                 </li>
                 {config.testnet && faucet && (
                   <li>Get testnet {stake.label} and {payment.label} from <a href={faucet} target="_blank" rel="noopener noreferrer">the faucet</a>.</li>
