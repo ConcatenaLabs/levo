@@ -153,7 +153,7 @@ own; after the close, `bin/levo reclaim` sweeps what did not sell.
 | `levod/tests/cdp.py` | A small Chrome DevTools client, so the browser suite can press the buttons rather than only look at the pixels. |
 | `web/` | The single-page app: Vite and React, plain CSS, fonts served from the app itself. |
 | `contrib/` | The deploy script, the systemd units (sandboxed), an environment file to fill in, a backup timer for the state file, a five-minute health check, and an alert hook that tells a person when a unit fails, with the restore drill in its README. |
-| `doc/` | The HTTP API (`api.md`), how a sale settles, why tier caps are policy, and why delegated stake counts for its owner. |
+| `doc/` | The HTTP API ([`api.md`](doc/api.md)), how a sale settles, why tier caps are policy, and why delegated stake counts for its owner. |
 
 ## Running it
 
@@ -381,7 +381,7 @@ put a notice on its page, from the sale's own page or with `bin/levo flag`.
 That reaches the page and nothing else: the sale is a covenant on a public
 chain, and anyone holding its terms can still buy from it.
 
-`contrib/README.md` carries the upgrade and the restore, both as commands. The
+[`contrib/README.md`](contrib/README.md) carries the upgrade and the restore, both as commands. The
 upgrade reinstalls the systemd units, because a unit change in this repo
 reaches the box nowhere else.
 
