@@ -41,10 +41,19 @@ die() { printf 'deploy: %s\n' "$*" >&2; exit 1; }
 cd "$DIR"
 
 say "== fetching"
+BEFORE=$(git rev-parse HEAD:contrib/deploy.sh)
 git fetch origin --quiet || die "could not fetch"
 git reset --hard origin/main --quiet || die "could not check out origin/main"
 COMMIT=$(git rev-parse --short HEAD)
 say "   at $COMMIT $(git log --format=%s -1)"
+
+# A deployment that changes this script would otherwise finish under the old
+# one, since bash read it before the fetch. Hand over to the fetched copy,
+# once: the second run fetches nothing new and carries on.
+if [ "$BEFORE" != "$(git rev-parse HEAD:contrib/deploy.sh)" ] && [ -z "${LEVO_DEPLOY_HANDOVER:-}" ]; then
+  say "   this script changed; continuing with the new one"
+  LEVO_DEPLOY_HANDOVER=1 exec bash contrib/deploy.sh "$@"
+fi
 
 # The bundler needs a Node inside vite's engine range, and the system Node on a
 # box that runs other services is usually not it -- upgrading /usr/bin/node
