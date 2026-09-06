@@ -103,3 +103,18 @@ def test_the_documented_error_codes_are_the_ones_the_server_emits(t):
         emitted |= {a, b}
     t.eq(sorted(listed - emitted), [], "every documented code is one the server emits")
     t.eq(sorted(emitted - listed), [], "and the server emits no code the document does not name")
+
+
+# --- the command line: what the README lists is what levo has ---------------
+
+def test_the_readme_lists_every_levo_command(t):
+    """The README says `levo --help` lists every command and names them. The
+    parser is what answers; the sentence has to match it both ways."""
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    m = re.search(r"`levo --help` lists every command: (.*?)\.", readme, re.S)
+    t.ok(m, "the README names the commands")
+    listed = set(re.findall(r"`([a-z]+)`", m.group(1)))
+    cli = (ROOT / "bin" / "levo").read_text(encoding="utf-8")
+    have = set(re.findall(r'sub\.add_parser\("([a-z]+)"', cli))
+    t.eq(sorted(listed - have), [], "the README lists no command levo lacks")
+    t.eq(sorted(have - listed), [], "and every command levo has is listed")
