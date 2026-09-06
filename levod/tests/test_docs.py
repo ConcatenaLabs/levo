@@ -49,3 +49,37 @@ def test_the_doc_names_no_route_the_router_lacks(t):
     router, doc = routes_in_the_router(), routes_in_the_doc()
     extra = sorted(doc - router)
     t.eq(extra, [], "doc/api.md names no route the router does not have")
+
+
+# --- settings: what the code reads, the example file, and the README --------
+
+ROOT = HERE.parent.parent
+
+
+def _settings_read():
+    code = "".join(f.read_text(encoding="utf-8") for f in (ROOT / "levod").glob("*.py"))
+    cli = (ROOT / "bin" / "levo").read_text(encoding="utf-8")
+    levod = set(re.findall(r"[\"']((?:LEVOD)_[A-Z_]+)[\"']", code + cli))
+    cli_vars = set(re.findall(r"[\"']((?:LEVO|SEQUENTIA)_[A-Z_]+)[\"']", cli))
+    return levod, cli_vars
+
+
+def test_every_setting_levod_reads_is_in_the_example_file_and_nowhere_else(t):
+    """contrib/levod.env.example claims to list every setting. A setting the
+    code reads and the file lacks is one an operator cannot know to set; a
+    line in the file nothing reads is one they set for nothing."""
+    levod, _ = _settings_read()
+    example = set(re.findall(r"^#?(LEVOD?_[A-Z_]+)=", (ROOT / "contrib" / "levod.env.example").read_text(encoding="utf-8"), re.M))
+    backup_only = {"LEVO_BACKUP_DIR", "LEVO_BACKUP_KEEP"}     # read by levo-backup.sh
+    t.eq(sorted(levod - example), [], "every setting levod reads is in the example file")
+    t.eq(sorted(example - levod - backup_only), [], "and the file names nothing that is not read")
+
+
+def test_every_setting_is_in_the_readme(t):
+    """The README's two tables -- levod's settings and the command line's
+    environment -- are what a reader arrives at; the code is what runs."""
+    levod, cli_vars = _settings_read()
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    named = set(re.findall(r"`((?:LEVOD|LEVO|SEQUENTIA)_[A-Z_]+)`", readme))
+    t.eq(sorted(levod - named), [], "every levod setting is in the README")
+    t.eq(sorted(cli_vars - named), [], "every variable the command line reads is in the README")
