@@ -358,6 +358,29 @@ def main():
         else:
             failed.append("the app shell declares no touch icon")
 
+        # --- the pane a keyboard opens is where the keyboard lands ------------
+        #
+        # "Sign a message to continue" is replaced by the pane it opens, so
+        # focus fell to the document body and the pane was a whole page of
+        # Tab away. Enter on the button, then the challenge must hold focus.
+        page = cdp.Page(chromium)
+        try:
+            page.go(demo.base + "/account", settle=1.5)
+            page.eval("(function(){const b=[...document.querySelectorAll('button')]"
+                      ".find(b=>b.innerText.includes('Sign a message to continue')); b.focus(); return !!b})()")
+            page.send("Input.dispatchKeyEvent", type="keyDown", key="Enter", code="Enter",
+                      windowsVirtualKeyCode=13, text="\r", unmodifiedText="\r")
+            page.send("Input.dispatchKeyEvent", type="keyUp", key="Enter", code="Enter", windowsVirtualKeyCode=13)
+            page.wait_for("!!document.querySelector('#challenge')", timeout=10)
+            time.sleep(0.5)
+            active = page.eval("(document.activeElement && document.activeElement.id) || ''")
+            if active == "challenge":
+                passed += 1
+            else:
+                failed.append("the sign-in pane opened by keyboard did not take focus (active: %r)" % active)
+        finally:
+            page.stop()
+
         # --- every page can be read by everyone -----------------------------
         #
         # Signed out and signed in, since the forms -- the listing, the buy

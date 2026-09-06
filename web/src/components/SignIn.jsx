@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { api, setToken } from '../lib/api'
 import { hasProvider, signMessage, signStakerMessage, supportsStakerSigning, connect,
          noStakingKey, friendly } from '../lib/wallet'
@@ -18,6 +18,11 @@ export default function SignIn({ onDone, label = 'Sign in with your wallet' }) {
   const [manual, setManual] = useState(null)   // { message } when pasting a signature
   const [pasted, setPasted] = useState('')
   const [address, setAddress] = useState('')
+  // The button that opens the paste pane is gone once it has: without this a
+  // keyboard or screen-reader user's focus fell to the top of the document,
+  // and the pane they had just asked for was a whole page of Tab away.
+  const challengeRef = useRef(null)
+  useEffect(() => { if (manual && challengeRef.current) challengeRef.current.focus() }, [manual])
 
   async function withWallet() {
     setError(null); setBusy(true)
@@ -94,7 +99,7 @@ export default function SignIn({ onDone, label = 'Sign in with your wallet' }) {
         <div className="field">
           <label htmlFor="challenge">Message to sign</label>
           <Copy value={manual.message} label="Copy the message to sign" />
-          <textarea id="challenge" className="mono fit" readOnly value={manual.message} rows={rows}
+          <textarea id="challenge" ref={challengeRef} className="mono fit" readOnly value={manual.message} rows={rows}
                     onFocus={(e) => e.target.select()} />
           <div className="hint">
             With a node: save the text above to a file, say{' '}
