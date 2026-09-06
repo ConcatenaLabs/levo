@@ -121,6 +121,41 @@ or is failing every poll, the state file cannot be written, or the built app is
 missing. levod serves the app and the API from one origin, so an empty
 `web/dist` is a site that 404s every page while every other check passes.
 
+## When an alert arrives
+
+The push names a unit, or says the check failed and quotes its first faults.
+Read before acting:
+
+```sh
+journalctl -u levod -n 50 --no-pager          # or the unit the alert named
+contrib/levo-check.sh                         # the board, field by field
+curl -fsS http://127.0.0.1:8099/api/health | python3 -m json.tool
+```
+
+Then the move is one of these:
+
+- **levod is not running and stays down** with exit 78 in the journal: the
+  state file cannot be read, another levod holds it, or a setting in
+  `/etc/sequentia/levod.env` is not readable. The journal's last lines say
+  which. A damaged state file is the restore drill below.
+- **The node is not reachable**: levod is fine and the chain is not; nothing
+  about any sale changes while it waits. Look at the node, not at levod.
+- **The state file cannot be written**: a full or read-only disk. Free the
+  space or fix the mount; levod keeps the ledger in memory and the watcher
+  tries the save again on every poll, and health says `unsaved_changes`
+  until one succeeds. Until then the ledger exists nowhere but in memory, so
+  do not restart levod to fix a disk.
+- **The watcher has died or stalled**: `systemctl restart levod`, then watch
+  the next poll land in health. A watcher that dies again is a bug; the
+  traceback is in the journal.
+- **The bundle is older than the source**: a deploy pulled and did not finish
+  its build. Run `contrib/deploy.sh` again and read what it prints.
+- **The backup failed**: `journalctl -u levo-backup` says why; the copies
+  already taken are untouched.
+
+The check pages again when it passes, so a fault that fixed itself says so
+too; an alert with no "passes again" after it is still live.
+
 ## Restoring the state file
 
 Stop levod first. A restore under a running levod is overwritten by its next
