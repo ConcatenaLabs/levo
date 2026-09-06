@@ -43,7 +43,7 @@ CHROMIUM_CANDIDATES = [
 # still has no console errors, so what is checked is that it PAINTED: the
 # fraction of the screenshot that is not the colour of its own corner.
 ROUTES = ["/", "/projects", "/how-it-works", "/launch", "/account",
-          "/p/helios-grid", "/p/no-such-sale", "/nothing-here-at-all"]
+          "/p/helios-grid", "/p/meridian-salt", "/p/no-such-sale", "/nothing-here-at-all"]
 
 # The emptiest real page here is the 404, which is a heading, a line and a
 # button on a dark ground. Anything below this painted nothing.
@@ -232,6 +232,23 @@ def main():
         # made elsewhere never appeared. It reads again every half minute now,
         # so an edit made through the API shows up on a page that was opened
         # before it, without a reload.
+        # --- a sale that holds nothing says so, in the past tense -----------
+        page = cdp.Page(chromium)
+        try:
+            page.go(demo.base + "/p/meridian-salt", settle=1.5)
+            text = page.text()
+            for want in ("Last rested at", "Reclaimed in", "Nothing rests at the address now",
+                         "taken back what did not sell"):
+                if want in text:
+                    passed += 1
+                else:
+                    failed.append("the reclaimed sale's page does not say %r" % want)
+            if "sits now" in text or "are locked under exactly these terms" in text:
+                failed.append("the reclaimed sale's page still speaks of the covenant in the present")
+            else:
+                passed += 1
+        finally:
+            page.stop()
         # --- the board answers to the name the site gives it ----------------
         page = cdp.Page(chromium)
         try:
