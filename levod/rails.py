@@ -160,7 +160,9 @@ class Rails:
                           "same transaction that hands you your tokens"],
             }
         if rail != BTC:
-            raise RailUnavailable("unknown rail %r" % rail)
+            shown = "".join(c for c in str(rail or "") if c.isalnum() or c in "-_")[:24]
+            raise RailUnavailable("this Levo offers no rail called %s; the ones it "
+                                  "offers are listed at /api/rails" % (shown or "nothing"))
         ok, why = self._btc_ready()
         if not ok:
             raise RailUnavailable("the BTC rail is unavailable: %s" % why)
