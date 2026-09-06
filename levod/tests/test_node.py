@@ -294,6 +294,23 @@ def run(ok, rig):
           "and the block at that height, which is what a reorg changes")
     ok.eq(plat.verify_buyer_inputs([]), [], "no inputs is an empty list")
 
+    # --- a lock nobody confirms is found by the watcher itself --------------
+    # The tokens are sent and the issuer says nothing: no confirm_lock. On a
+    # scanning round the watcher walks the draft's address and opens the
+    # sale through the same checks the issuer's confirmation would run.
+    # A close one block on: the same terms as alpha would derive alpha's
+    # address, and Levo refuses two sales sharing one covenant.
+    plat.list_project(issuer, {"slug": "unspoken", "name": "Unspoken", "ticker": "UNS",
+                               "summary": "s", "description": "d"}, terms(h + 501))
+    U, unspoken_txid = fund("unspoken")
+    rig.mine()
+    ok.eq(U.sale.status, S.DRAFT, "a lock the issuer never confirmed leaves the sale a draft")
+    watch._round = W.STRAY_SCAN_EVERY - 1
+    watch.poll()
+    ok.eq(U.sale.status, S.LIVE, "the watcher finds the lock on a scanning round and opens the sale")
+    ok.eq(U.sale.funding["txid"], unspoken_txid, "at the funding transaction it found")
+    ok.ok(U.sale.funding.get("block"), "dated with the block it was mined in")
+
     # A browser wallet's purchase: PSET signed and finalised by the wallet.
     plan = A.sale.plan_buy("buyer", tier, token_atoms=1_000 * COIN, height=node.chain_height())
     ins = pay_input(plan.payment_atoms + 5_000)
