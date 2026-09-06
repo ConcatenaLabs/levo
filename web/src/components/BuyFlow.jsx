@@ -726,7 +726,7 @@ export default function BuyFlow({ project, tier, onSettled }) {
           {/* A sale is one resting output, so losing the race for it is an
               ordinary event with an ordinary answer: price it again. Saying so
               without offering the button is a dead end at the worst moment. */}
-          {/lost|no longer there|moved|rests now/i.test(error) && (
+          {/lost|no longer there|moved|rests now|missingorspent|missing inputs|mempool.conflict/i.test(error) && (
             <div style={{ marginTop: '.5rem' }}>
               <button type="button" className="btn btn-sm" onClick={startOver}
                       aria-disabled={busy}>

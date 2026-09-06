@@ -434,6 +434,16 @@ def run(ok, rig, levod, env):
           "the listing is untouched by the attempt")
 
 
+    # --- a lost race is a lost race whichever way the node names it ---------
+    import importlib.machinery
+    cli = importlib.machinery.SourceFileLoader("levo_cli", str(ROOT / "bin" / "levo")).load_module()
+    for why in ("bad-txns-inputs-missingorspent", "Missing inputs", "txn-mempool-conflict",
+                "insufficient fee, rejecting replacement: txn-mempool-conflict"):
+        ok.ok(cli.lost_the_race(why), "%r is a lost race" % why)
+    ok.ok(not cli.lost_the_race("bad-txns-in-ne-out"), "an unbalanced transaction is not")
+    ok.ok("Nothing was paid" in cli.RACE_LOST and "rests now" in cli.RACE_LOST,
+          "and the sentence says nothing was paid and what to do")
+
     # --- what it says to a person who gets it wrong -------------------------
     #
     # The three raw errors a newcomer met first: no node client on the PATH
