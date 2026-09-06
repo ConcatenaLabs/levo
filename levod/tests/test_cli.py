@@ -261,6 +261,18 @@ def run(ok, rig, levod, env):
                expect_failure=True)
     ok.ok("dumpassetlabels" in out,
           "an unknown fee asset names where the labels come from", out[-160:])
+    # A fee in another asset has its own floor, so the suggestion has to be
+    # asked for in that asset rather than carried over from the payment one.
+    # The wallet holds its bitcoin confidentially by now, so the third asset
+    # is issued explicit here and priced into the node's table.
+    third = w("issueasset", assetamount=1_000, tokenamount=0, blind=False,
+              fee_asset="bitcoin")["asset"]
+    rig.mine()
+    pay_id = json.loads(levo("show", "cli-sale"))["sale"]["terms"]["payment_asset"]
+    rig.n("setfeeexchangerates", {"bitcoin": COIN, pay_id: COIN, third: COIN})
+    out = levo("buy", "cli-sale", "--tokens", "100", "--fee-asset", third, "--dry-run")
+    ok.ok("would broadcast" in out and "below what this node will relay" not in out,
+          "a purchase whose fee is paid in a third asset is priced at that asset's floor", out[-200:])
 
     # --- what survives Levo itself -----------------------------------------
     #

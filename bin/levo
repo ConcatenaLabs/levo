@@ -923,8 +923,17 @@ def cmd_buy(args):
     # A person types a label, because that is what a wallet shows them. levod
     # resolves one too, but the input selection below needs the id.
     fee_asset = resolve_asset(args.fee_asset) if args.fee_asset else pay_asset
-    fee_atoms = int(args.fee) if args.fee is not None else int(
-        plan.get("fee", {}).get("suggested_atoms") or 0)
+    if args.fee is not None:
+        fee_atoms = int(args.fee)
+    elif fee_asset == pay_asset:
+        fee_atoms = int(plan.get("fee", {}).get("suggested_atoms") or 0)
+    else:
+        # The plan's suggestion is in the payment asset. A fee in another
+        # asset has its own floor -- the node prices each through its own
+        # rate -- so the suggestion is asked for in that asset, for the shape
+        # this purchase takes: the payment inputs, the fee inputs and change.
+        fee_atoms = int((api("GET", "/api/projects/%s/fee?kind=buy&inputs=3&asset=%s"
+                             % (args.slug, fee_asset)) or {}).get("suggested_atoms") or 0)
     if fee_atoms <= 0:
         raise Fail("this levod could not suggest a fee (its node did not answer "
                    "with an exchange rate); pass --fee with a number of atoms")
@@ -1261,14 +1270,13 @@ def cmd_reclaim(args):
     dest = args.to or node("getnewaddress", "levo-reclaim")
     # The reclaim's own shape decides the floor, and levod measures it. A
     # figure typed here was only ever a guess at what the node would relay.
+    fee_asset = resolve_asset(args.fee_asset) if args.fee_asset else p["sale"]["terms"]["payment_asset"]
     fee_atoms = int(args.fee) if args.fee is not None else int(
-        (api("GET", "/api/projects/%s/fee?kind=reclaim&inputs=2" % args.slug) or {})
+        (api("GET", "/api/projects/%s/fee?kind=reclaim&inputs=2&asset=%s" % (args.slug, fee_asset)) or {})
         .get("suggested_atoms") or 0)
     if fee_atoms <= 0:
         raise Fail("this levod could not suggest a fee (its node did not answer "
                    "with an exchange rate); pass --fee with a number of atoms")
-    fee_asset = (resolve_asset(args.fee_asset) if args.fee_asset
-                 else sale["terms"]["payment_asset"])
     ins, _ = unblinded_inputs(fee_asset, fee_atoms)
     # Whatever the fee inputs bring above the fee comes back here, rather than
     # following the tokens to --to, which may be a wallet that credits only the
