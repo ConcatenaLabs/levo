@@ -89,6 +89,13 @@ def main():
         href = m.group(1).decode()
         status, _, png = get(href if href.startswith("http") else base.split("/", 3)[0] + "//" + base.split("/", 3)[2] + href)
         ok(status == 200 and png[:8] == b"\x89PNG\r\n\x1a\n", "and the touch icon answers as a PNG")
+    m = re.search(rb'<link rel="manifest" href="([^"]+)"', home)
+    ok(m is not None, "the app shell declares a web manifest")
+    if m:
+        href = m.group(1).decode()
+        status, hdrs, _ = get(href if href.startswith("http") else base.split("/", 3)[0] + "//" + base.split("/", 3)[2] + href)
+        ok(status == 200 and hdrs.get("Content-Type", "").startswith("application/manifest+json"),
+           "and the manifest answers as a manifest")
     status, _, how = get(base + "/how-it-works")
     ok(b"<title>How it works \xc2\xb7 Levo</title>" in how, "a page of the app carries its own title for a previewer")
     if public:

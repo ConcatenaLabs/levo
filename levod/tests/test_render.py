@@ -401,6 +401,37 @@ def main():
         finally:
             page.stop()
 
+        # --- and an Android launcher reads the manifest for its icon --------
+        #
+        # Chrome on Android takes a home-screen shortcut's name and icon from
+        # the web manifest, not from the touch icon. Its addresses are
+        # relative, so it works under any base the app is served from.
+        m = re.search(r'<link rel="manifest" href="([^"]+)"', shell)
+        if m:
+            passed += 1
+            with _url.urlopen(demo.base + m.group(1), timeout=10) as r:
+                ctype = r.headers.get("Content-Type", "")
+                manifest = _json.loads(r.read().decode("utf-8"))
+            if ctype.startswith("application/manifest+json"):
+                passed += 1
+            else:
+                failed.append("the manifest is served as %r" % ctype)
+            base_url = demo.base + m.group(1).rsplit("/", 1)[0] + "/"
+            for icon in manifest.get("icons", []):
+                with _url.urlopen(base_url + icon["src"].lstrip("./"), timeout=10) as r:
+                    png = r.read()
+                side = int(icon["sizes"].split("x")[0])
+                if png[:8] == b"\x89PNG\r\n\x1a\n" and png[16:24] == side.to_bytes(4, "big") * 2:
+                    passed += 1
+                else:
+                    failed.append("manifest icon %s is not a %d-pixel PNG" % (icon["src"], side))
+            if manifest.get("name") == "Levo" and manifest.get("start_url") == "./":
+                passed += 1
+            else:
+                failed.append("the manifest does not name Levo with a relative start: %r" % manifest)
+        else:
+            failed.append("the app shell declares no manifest")
+
         # --- every page can be read by everyone -----------------------------
         #
         # Signed out and signed in, since the forms -- the listing, the buy
