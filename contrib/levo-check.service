@@ -1,0 +1,27 @@
+[Unit]
+Description=Levo service check
+Documentation=https://github.com/ConcatenaLabs/levo
+After=network-online.target levod.service
+
+# Reads levod's health document and says, once, when the verdict changes.
+# No OnFailure= here: the check announces its own verdict, and a crash before
+# one is announced by the script's own trap.
+[Service]
+Type=oneshot
+User=root
+EnvironmentFile=-/etc/sequentia/levod.env
+Environment=LEVO_ALERT_ENV=/etc/sequentia/levo-alert.env
+ExecStart=/root/sequentia/levo/contrib/levo-check.sh
+StateDirectory=levo-check
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=read-only
+ProtectKernelTunables=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+LockPersonality=yes
+RestrictRealtime=yes
+
+[Install]
+WantedBy=multi-user.target

@@ -93,8 +93,10 @@ cd ..
 # copy is idempotent, and daemon-reload is what makes systemd read it.
 say "== installing the units"
 install -m 644 contrib/levod.service contrib/levo-backup.service contrib/levo-backup.timer \
+  contrib/levo-alert@.service contrib/levo-check.service contrib/levo-check.timer \
   /etc/systemd/system/ || die "could not install the units"
 systemctl daemon-reload || die "daemon-reload failed"
+systemctl enable --now levo-backup.timer levo-check.timer >/dev/null 2>&1 || die "could not enable the timers"
 
 say "== restarting $UNIT"
 systemctl restart "$UNIT" || die "could not restart $UNIT"

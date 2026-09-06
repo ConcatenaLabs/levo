@@ -15,6 +15,27 @@
   nobody. Copy `/var/backups/levo` off the box on whatever schedule the rest of
   the deployment uses -- the file holds an allocation ledger, so treat it as
   private -- and run the restore drill below against one of those copies once.
+- `levo-alert.sh` and `levo-alert@.service` tell a person when a unit fails:
+  `levod.service` and `levo-backup.service` name it in `OnFailure=`, and one
+  line goes to a push topic a phone or a browser subscribes to. Put the topic
+  in `/etc/sequentia/levo-alert.env` (mode 0600):
+
+  ```sh
+  NTFY_TOPIC=<a name nobody guesses>        # required; subscribe at https://ntfy.sh/<it>
+  NTFY_URL=https://ntfy.sh                   # optional; a self-hosted ntfy
+  ALERT_PREFIX=levo                          # optional; the message's title
+  ```
+
+  Without the file the line goes to the journal and nowhere else, and nothing
+  else changes.
+- `levo-check.sh`, `levo-check.service` and `levo-check.timer` ask every five
+  minutes whether levod is doing its job, which `systemctl` cannot: a levod
+  whose node has gone away, whose state file has gone read-only, or whose
+  watcher has stopped goes on answering every page. The check reads the health
+  document and names each field that is wrong; it tells a person on the first
+  failing run and on the run that passes again, not every five minutes. Run it
+  by hand to see the board; only the timer's runs record a verdict and page
+  anyone.
 
 ```sh
 # Build the app FIRST. levod serves the app and the API from one origin, so
@@ -26,8 +47,9 @@ PATH=/opt/node24/bin:$PATH LEVO_BASE=/levo/ npm --prefix web run build
 
 install -m 644 contrib/levod.service contrib/levo-backup.service contrib/levo-backup.timer /etc/systemd/system/
 systemctl daemon-reload
-systemctl enable --now levod.service levo-backup.timer
+systemctl enable --now levod.service levo-backup.timer levo-check.timer
 contrib/levo-backup.sh                      # take the first copy now, not in six hours
+contrib/levo-check.sh                       # the board the timer reads every five minutes
 curl -fsS http://127.0.0.1:8099/api/health | head -20
 ```
 

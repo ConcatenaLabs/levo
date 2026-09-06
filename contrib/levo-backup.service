@@ -6,9 +6,9 @@ Type=oneshot
 EnvironmentFile=-/etc/sequentia/levod.env
 ExecStart=/root/sequentia/levo/contrib/levo-backup.sh
 SyslogLevelPrefix=yes
-# A backup that stops working is silent until it is needed. Point this at
-# whatever this deployment uses to tell someone.
-#OnFailure=levod-failed.service
+# A backup that stops working is silent until it is needed, so a failure
+# tells a person: see contrib/levo-alert.sh for the push topic.
+OnFailure=levo-alert@%n.service
 # The same fence as levod's, for a script that reads one file and writes one
 # directory.
 NoNewPrivileges=yes

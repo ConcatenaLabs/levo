@@ -152,7 +152,7 @@ own; after the close, `bin/levo reclaim` sweeps what did not sell.
 | `bin/levo` | A CLI that runs the whole flow against your own node. |
 | `levod/tests/cdp.py` | A small Chrome DevTools client, so the browser suite can press the buttons rather than only look at the pixels. |
 | `web/` | The single-page app: Vite and React, plain CSS, fonts served from the app itself. |
-| `contrib/` | The deploy script, the systemd units (sandboxed), an environment file to fill in, and a backup timer for the state file, with the restore drill in its README. |
+| `contrib/` | The deploy script, the systemd units (sandboxed), an environment file to fill in, a backup timer for the state file, a five-minute health check, and an alert hook that tells a person when a unit fails, with the restore drill in its README. |
 | `doc/` | The HTTP API (`api.md`), how a sale settles, why tier caps are policy, and why delegated stake counts for its owner. |
 
 ## Running it

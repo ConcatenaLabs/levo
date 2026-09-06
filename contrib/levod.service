@@ -23,10 +23,8 @@ StandardError=journal
 # levod prefixes its own lines with a syslog priority, so `journalctl -u levod
 # -p err` shows what went wrong and nothing else.
 SyslogLevelPrefix=yes
-# Something to run when levod fails. Fill in the unit for this deployment --
-# an email, a push, a page -- or drop the line if the journal is watched
-# another way.
-#OnFailure=levod-failed.service
+# A failure tells a person: see contrib/levo-alert.sh for the push topic.
+OnFailure=levo-alert@%n.service
 
 # What levod may touch. It is a Python process serving HTTP that reads a
 # checkout, an environment file and a node's RPC, and writes one directory. It

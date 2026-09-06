@@ -331,6 +331,46 @@ def run(d):
     ok.eq(h.get("X-Content-Type-Options"), "nosniff", "security headers are sent")
     ok.eq(h.get("Server"), "levod", "the Server header names no interpreter version")
 
+    # --- the check that runs on the box every five minutes ------------------
+    #
+    # systemd can say whether levod is up; only the health document says
+    # whether it is doing its job. The check reads it against this demo, then
+    # against a port nothing listens on, and records a verdict only when told
+    # where to; the alert it calls goes to the journal when no topic is set
+    # and never fails the caller.
+    import subprocess as _sp
+    import tempfile as _tf
+    check = str(HERE.parent.parent / "contrib" / "levo-check.sh")
+    # A CI runner is itself a systemd service, so its environment carries the
+    # INVOCATION_ID that marks a timer's run; without this the check records
+    # a verdict where it cannot and says nothing about running by hand.
+    env = dict(os.environ, LEVO_HEALTH_URL=d.base + "/api/health", LEVO_ALERT_ENV="/nonexistent")
+    env.pop("INVOCATION_ID", None)
+    r = _sp.run(["bash", check], capture_output=True, text=True, timeout=60, env=env)
+    ok.ok(r.returncode == 0, "the check passes against a healthy levod", r.stdout + r.stderr)
+    ok.ok("levo check passed" in r.stdout and "run by hand" in r.stdout,
+          "and says so, and that a run by hand records nothing", r.stdout[-300:])
+    with _tf.TemporaryDirectory() as tmp:
+        state = os.path.join(tmp, "last")
+        env2 = dict(env, LEVO_CHECK_STATE=state)
+        r = _sp.run(["bash", check], capture_output=True, text=True, timeout=60, env=env2)
+        ok.eq(open(state).read().strip(), "ok", "told where to, it records the verdict")
+        ok.ok("alert:" not in r.stderr, "and a first passing verdict pages nobody", r.stderr)
+        dead = dict(env2, LEVO_HEALTH_URL="http://127.0.0.1:1/api/health")
+        r = _sp.run(["bash", check], capture_output=True, text=True, timeout=60, env=dead)
+        ok.eq(r.returncode, 1, "against nothing it fails")
+        ok.ok("did not answer" in r.stdout, "naming the fault", r.stdout[-300:])
+        ok.eq(open(state).read().strip(), "fail", "records the change")
+        ok.ok("alert: levo check FAILED" in r.stderr, "and tells a person once, through the alert script", r.stderr)
+        ok.ok("no NTFY_TOPIC" in r.stderr, "which says the journal is the only record when no topic is set", r.stderr)
+        r = _sp.run(["bash", check], capture_output=True, text=True, timeout=60, env=dead)
+        ok.ok("alert: levo check FAILED" not in r.stderr, "the same verdict again pages nobody", r.stderr)
+        r = _sp.run(["bash", check], capture_output=True, text=True, timeout=60, env=env2)
+        ok.ok("passes again" in r.stderr, "and the run that passes again says so", r.stderr)
+    r = _sp.run(["bash", str(HERE.parent.parent / "contrib" / "levo-alert.sh"), "a test line"],
+                capture_output=True, text=True, timeout=30, env=dict(os.environ, LEVO_ALERT_ENV="/nonexistent"))
+    ok.eq(r.returncode, 0, "the alert script exits 0 without a topic")
+
     # --- the app ------------------------------------------------------------
     ok.section("static")
     (d.webroot / "assets").mkdir()
