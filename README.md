@@ -205,7 +205,7 @@ bin/levo buy helios-grid --tokens 40                 # picks unblinded inputs, b
 | Variable | Meaning |
 |---|---|
 | `LEVO_URL` | The levod to talk to. Default `http://127.0.0.1:8099`. |
-| `LEVO_SESSION` | Where the signed-in session is kept. Default `~/.levo-session`. |
+| `LEVO_SESSION` | Where the signed-in session is kept. Default `~/.levo-session`. Delete it to sign out; a session is good for twelve hours, after which the next command asks you to sign in again. |
 | `SEQUENTIA_CLI` | The node's CLI binary. Default `sequentia-cli` on `PATH`. |
 | `SEQUENTIA_DATADIR` | Passed as `-datadir`, for a node in a non-default place. |
 | `SEQUENTIA_WALLET` | Passed as `-rpcwallet`, when several wallets are loaded. |

@@ -97,6 +97,22 @@ def test_sessions_reject_a_malformed_pubkey_claim(t):
     t.eq(s.verify(body + "." + mac), None, "a token whose pubkey is not a key is refused")
 
 
+def test_an_expired_session_is_told_apart_from_junk(t):
+    """A token this server issued whose time has run out is expired; a forged
+    or garbled one is nothing. The distinction is what lets the refusal say
+    "sign in again" to the right person."""
+    clock = [1000.0]
+    s = auth.Sessions(secret="s", ttl=100, now=lambda: clock[0])
+    tok = s.issue("02" + "ab" * 32)
+    t.eq(s.expired(tok), False, "a fresh token has not expired")
+    clock[0] = 1101.0
+    t.eq(s.verify(tok), None, "past its time it no longer verifies")
+    t.eq(s.expired(tok), True, "and is expired")
+    t.eq(s.expired(tok[:-1] + ("0" if tok[-1] != "0" else "1")), False, "a token with a wrong mac is not expired, it is nothing")
+    t.eq(s.expired("junk"), False, "nor is junk")
+    t.eq(auth.Sessions(secret="other", now=lambda: clock[0]).expired(tok), False, "nor is another server's token")
+
+
 def test_rate_limit_is_a_token_bucket_per_client(t):
     import server
     rl = server.RateLimit(per_minute=6)
