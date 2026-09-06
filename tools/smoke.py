@@ -69,6 +69,9 @@ def main():
     status, _, smap = get(base + "/sitemap.xml")
     ok(status == 200 and b"/projects</loc>" in smap, "the sitemap lists the board")
     slugs = re.findall(rb"/p/([a-z0-9-]+)</loc>", smap)
+    status, hdrs, feed = get(base + "/feed.xml")
+    ok(status == 200 and hdrs.get("Content-Type", "").startswith("application/atom+xml") and b"<entry>" in feed,
+       "the feed answers as Atom with entries")
     status, _, board = get(base + "/api/projects?status=all&limit=50")
     public = [p["slug"].encode() for p in json.loads(board)["projects"] if not p.get("hidden")]
     ok(set(slugs) == set(public), "and every public sale, and nothing else",

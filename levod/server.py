@@ -855,7 +855,7 @@ class Handler(BaseHTTPRequestHandler):
                 return self._api(method, path, query)
             if method != "GET":
                 return self._method_not_allowed()
-            if path in ("/sitemap.xml", "/robots.txt"):
+            if path in ("/sitemap.xml", "/robots.txt", "/feed.xml"):
                 return self._site_files(path)
             return self._static(path)
         except Unsupported as e:
@@ -1383,11 +1383,14 @@ class Handler(BaseHTTPRequestHandler):
         with market.lock:
             listings = [(slug, p) for slug, p in market.projects.items()
                         if not getattr(p, "hidden", False)]
+        listings.sort(key=lambda kv: -(getattr(kv[1], "created_at", 0) or 0))
+        if path == "/feed.xml":
+            return self._feed(origin, listings)
         lines = ['<?xml version="1.0" encoding="UTF-8"?>',
                  '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">']
         for rel in ("/", "/projects", "/how-it-works"):
             lines.append("  <url><loc>%s</loc></url>" % html.escape(origin + rel, quote=True))
-        for slug, p in sorted(listings, key=lambda kv: -(getattr(kv[1], "created_at", 0) or 0)):
+        for slug, p in listings:
             when = M.last_changed(p)
             stamp = ("<lastmod>%s</lastmod>" % time.strftime("%Y-%m-%d", time.gmtime(when))) if when else ""
             lines.append("  <url><loc>%s</loc>%s</url>"
@@ -1395,6 +1398,40 @@ class Handler(BaseHTTPRequestHandler):
         lines.append("</urlset>")
         return self._send(200, ("\n".join(lines) + "\n").encode("utf-8"),
                           "application/xml; charset=utf-8", cache="no-cache")
+
+    def _feed(self, origin, listings):
+        """The public sales as an Atom feed, newest listing first: what a
+        follower's reader asks for, built from the same listings the board
+        and the sitemap show. An entry is dated by the last thing that
+        happened to its sale, so a reader shows a sale again when it sells or
+        is reclaimed, and its title carries the status for the same reason."""
+        def rfc3339(t):
+            return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(int(t)))
+        stamps = [M.last_changed(p) for _, p in listings]
+        latest = max([s for s in stamps if s] or [int(time.time())])
+        esc = lambda t: html.escape(str(t or ""), quote=True)
+        lines = ['<?xml version="1.0" encoding="UTF-8"?>',
+                 '<feed xmlns="http://www.w3.org/2005/Atom">',
+                 "  <title>Levo sales</title>",
+                 "  <subtitle>Token sales on Levo, a launchpad on Sequentia</subtitle>",
+                 '  <link href="%s/" />' % esc(origin),
+                 '  <link rel="self" href="%s/feed.xml" />' % esc(origin),
+                 "  <id>%s/feed.xml</id>" % esc(origin),
+                 "  <updated>%s</updated>" % rfc3339(latest)]
+        for slug, p in listings:
+            sale = getattr(p, "sale", None)
+            status = str(getattr(sale, "status", "") or "draft").replace("_", " ")
+            url = "%s/p/%s" % (origin, slug)
+            lines += ["  <entry>",
+                      "    <title>%s (%s) \u00b7 %s</title>" % (esc(p.name), esc(p.ticker), esc(status)),
+                      '    <link href="%s" />' % esc(url),
+                      "    <id>%s</id>" % esc(url),
+                      "    <updated>%s</updated>" % rfc3339(M.last_changed(p) or latest),
+                      "    <summary>%s</summary>" % esc(getattr(p, "summary", "")),
+                      "  </entry>"]
+        lines.append("</feed>")
+        return self._send(200, ("\n".join(lines) + "\n").encode("utf-8"),
+                          "application/atom+xml; charset=utf-8", cache="no-cache")
 
     def _absolute_card(self, body):
         """The social card's image with an absolute address. The bundle writes
