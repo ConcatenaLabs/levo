@@ -230,3 +230,21 @@ def test_levod_imports_the_standard_library_and_its_own_modules_only(t):
                     foreign.append("%s imports %s" % (f.name, name))
     t.eq(sorted(set(foreign)), [], "levod imports only the standard library and itself")
     t.eq(sorted(set(signing)), [], "and nothing but the demo reaches the test-only signer")
+
+
+def test_the_entry_points_answer_help_and_refuse_arguments(t):
+    """python3 levod/server.py --help used to START the server, and so did
+    the demo: the one question a newcomer asks first got a listening socket
+    for an answer. Both say what they are and where the settings live, and
+    refuse an argument rather than ignore it."""
+    import subprocess
+    for script, needle in (("levod/server.py", "Configuration table"), ("levod/demo.py", "stub node")):
+        r = subprocess.run([sys.executable, str(ROOT / script), "--help"],
+                           capture_output=True, text=True, timeout=30)
+        t.eq(r.returncode, 0, "%s --help exits 0" % script)
+        t.ok("takes no arguments" in r.stdout and needle in r.stdout,
+             "and says what it is and where its settings are", r.stdout[:200])
+        r = subprocess.run([sys.executable, str(ROOT / script), "--port=1"],
+                           capture_output=True, text=True, timeout=30)
+        t.eq(r.returncode, 2, "%s refuses an argument" % script)
+        t.ok("no arguments" in r.stderr, "with a sentence", r.stderr[:200])

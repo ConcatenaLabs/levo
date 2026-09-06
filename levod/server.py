@@ -1759,7 +1759,33 @@ def _read_settings():
     Handler.timeout = _setting("LEVOD_CLIENT_TIMEOUT", 10.0, float, least=1)
 
 
+USAGE = """levod -- the Levo backend: the API and the built app, from one process.
+
+    python3 levod/server.py
+
+It takes no arguments. Every setting comes from the environment: the
+variables, their defaults and what each one means are in the README's
+Configuration table, and contrib/levod.env.example lists them all with room
+to fill in. LEVOD_RPC_URL and a credential are what a real chain needs;
+python3 levod/demo.py runs the same server over a stub node with nothing set.
+"""
+
+
+def _only_help(argv, usage):
+    """Answer -h/--help and refuse anything else: a server that starts when
+    asked for help is the wrong answer to the one question a newcomer asks
+    first, and an argument it ignores is a setting they think they made."""
+    if any(a in ("-h", "--help") for a in argv):
+        sys.stdout.write(usage)
+        sys.exit(0)
+    if argv:
+        sys.stderr.write("this program takes no arguments; its settings come from the "
+                         "environment (--help says where they are listed)\n")
+        sys.exit(2)
+
+
 def main():
+    _only_help(sys.argv[1:], USAGE)
     _read_settings()
     host = os.environ.get("LEVOD_HOST", "127.0.0.1")
     port = _setting("LEVOD_PORT", 8099, int, least=1)

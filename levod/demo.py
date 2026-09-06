@@ -210,7 +210,26 @@ def build(app, node):
     return issuer
 
 
+USAGE = """levod demo -- the whole platform over a stub node, no chain needed.
+
+    python3 levod/demo.py                 # then open http://127.0.0.1:8099
+
+It takes no arguments. It seeds three sales -- one open, one not yet funded,
+one reclaimed -- and a buyer's wallet, and keeps its state in a file of its
+own under the temp directory unless LEVOD_STATE names one. LEVOD_HOST and
+LEVOD_PORT move it; the rest of levod's settings apply as the README says.
+"""
+
+
 def main():
+    # Before anything else, the server module included: help is answered
+    # and a stray argument refused without starting a thing.
+    if any(a in ("-h", "--help") for a in sys.argv[1:]):
+        sys.stdout.write(USAGE)
+        return
+    if sys.argv[1:]:
+        sys.stderr.write("the demo takes no arguments; --help says what it does\n")
+        sys.exit(2)
     # A demo is throwaway: left to itself it starts from nothing every time,
     # in a file of its own under the temp directory. Told where to keep its
     # state, it keeps it there and touches nothing else -- two demos at once,
