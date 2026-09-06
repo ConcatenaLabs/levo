@@ -222,6 +222,11 @@ the platform holds: `watcher.unverified_sales` names at most twenty sales with
 `watcher.unverified_total` beside it, and the errors it quotes are cut. The
 whole list is on `GET /api/watcher`.
 
+**The board is cached** for a few seconds per distinct query, keyed by the
+platform's own state version, so a burst of readers costs one rendering rather
+than one each; any write moves the version and the next request renders afresh,
+so nothing stale is served after a change. `X-Board-Cache` says `hit` or `miss`.
+
 `app` says which build is being served: `bundle` is the hashed entry script,
 `built_at` when it was written, and `source_newer_than_bundle` whether the
 checkout beside it has moved on. That last one is for a deploy to check rather

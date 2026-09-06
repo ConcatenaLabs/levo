@@ -1531,7 +1531,25 @@ class Platform:
         return {"positions": out, "total": seen, "offset": offset, "limit": limit}
 
     def sale_address(self, sale):
-        return ADDR.from_script_pubkey(sale.script_pubkey, self.hrp)
+        # The address is a pure function of the script and the prefix, and a
+        # board of fifty listings encoded fifty of them on every request; the
+        # bech32 arithmetic was most of what a board request cost.
+        cached = getattr(sale, "_address", None)
+        if cached and cached[0] == self.hrp:
+            return cached[1]
+        addr = ADDR.from_script_pubkey(sale.script_pubkey, self.hrp)
+        sale._address = (self.hrp, addr)
+        return addr
+
+    @property
+    def version(self):
+        """A number that changes whenever the platform's state does.
+
+        Every mutation saves, and the store numbers each snapshot it builds, so
+        this moves on every listing, lock, purchase, flag and watcher change --
+        which is what makes it safe to key a cache on.
+        """
+        return getattr(self.store, "_version", 0)
 
     def resolve_asset(self, asset, what="fee_asset"):
         """A 64-hex asset id from what the caller wrote.
