@@ -15,6 +15,10 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 sys.path.insert(0, str(HERE.parent))
 
+# The suites that run on their own, each against something this runner does
+# not have: a real node, a browser, a wallet, or the HTTP surface end to end.
+STANDALONE = {"test_e2e", "test_node", "test_cli", "test_render", "test_browser"}
+
 MODULES = ["test_crypto", "test_auth", "test_covenant", "test_address", "test_pset",
            "test_tiers", "test_precision", "test_rails", "test_rpc", "test_store",
            "test_tx", "test_watcher", "test_bundle", "test_handler", "test_docs"]
@@ -36,6 +40,16 @@ class T:
 
 
 def main():
+    # A unit module that is on disk and in neither list is a suite nobody runs,
+    # and nothing else would say so: it would pass by never being asked.
+    here = Path(__file__).resolve().parent
+    on_disk = {f.stem for f in here.glob("test_*.py")}
+    unlisted = sorted(on_disk - set(MODULES) - STANDALONE)
+    if unlisted:
+        print("these test modules exist and nothing runs them: %s\n"
+              "add each to MODULES in run.py, or to STANDALONE if it runs on its own"
+              % ", ".join(unlisted))
+        return 1
     t = T()
     for name in MODULES:
         mod = importlib.import_module(name)
