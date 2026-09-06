@@ -97,11 +97,12 @@ it against your own wallet before swapping.
 ## Who does what
 
 **A buyer** needs a Levo account (a key that can sign a message: the browser
-extension, or any wallet that signs a message the way `sequentia-cli signmessage`
-does), staked Sequence under a key they can prove they control, and unblinded
-USDX. A browser wallet signs and
-broadcasts the purchase in place: Levo hands it a PSET whose covenant input
-already carries its witness, and the wallet signs only the buyer's own inputs.
+extension in one click, or by pasting a signature the web wallet's Sign tab,
+Ambra's Sign screen, or any wallet that signs a message the way
+`sequentia-cli signmessage` does), staked Sequence under a key they can prove
+they control, and unblinded USDX. A browser wallet signs and broadcasts the
+purchase in place: Levo hands it a PSET whose covenant input already carries
+its witness, and the wallet signs only the buyer's own inputs.
 That needs a wallet that fills in its own key origins before signing, which it
 announces as the `pset-site-built` capability; where the wallet cannot, Levo
 offers the node path instead and says so. A node signs the same purchase with
