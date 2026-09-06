@@ -175,11 +175,11 @@ export default function Home() {
                   <li>Get testnet {stake.label} and {payment.label} from <a href={faucet} target="_blank" rel="noopener noreferrer">the faucet</a>.</li>
                 )}
                 <li>
-                  Stake {compact(firstAtoms, stake.decimals)} {stake.label}. From a
-                  node that holds them:{' '}
+                  Stake {compact(firstAtoms, stake.decimals)} {stake.label}, from a
+                  wallet&rsquo;s staking screen or from a node that holds them:{' '}
                   <span className="mono">sequentia-cli registerstake &lt;staking pubkey&gt; &lt;amount&gt;</span>{' '}
                   bonds the coins to that key and locks them for the unbonding
-                  delay; that key is the one you sign in with below.
+                  delay. That key is the one you sign in with below.
                   {pools ? <> Delegating it to <a href={pools} target="_blank" rel="noopener noreferrer">a pool</a> afterwards
                     lends the block-signing rights and not the coins, so it still counts for you.</> : ''}
                 </li>
