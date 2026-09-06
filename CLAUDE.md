@@ -152,7 +152,9 @@ supplied through the environment on the server, never through the repo.
   `GracedEternalKingCabbageMan <151803062+GracedEternalKingCabbageMan@users.noreply.github.com>`
 - **Always open a pull request, then merge it yourself immediately.** The PR
   records the change and its reasoning; nobody is waiting to review it. Wait
-  for the gate to go green first. One change at a time in one checkout: a
+  for the gate to go green first: `main` requires the `gate` check, admins
+  included, so GitHub refuses the merge until it is, and refuses a force-push
+  or a deletion of `main` outright. One change at a time in one checkout: a
   second ship chain running concurrently switched the working tree under the
   first between its push and its `gh pr create`.
 - Deployment is pull-only: the server pulls from GitHub and builds there. Never
