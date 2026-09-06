@@ -248,3 +248,15 @@ def test_the_entry_points_answer_help_and_refuse_arguments(t):
                            capture_output=True, text=True, timeout=30)
         t.eq(r.returncode, 2, "%s refuses an argument" % script)
         t.ok("no arguments" in r.stderr, "with a sentence", r.stderr[:200])
+    # The vectors generator is the one whose accidental run is a migration:
+    # --help and a stray argument must leave levod/vectors.json untouched.
+    vectors = ROOT / "levod" / "vectors.json"
+    before = vectors.read_bytes()
+    r = subprocess.run([sys.executable, str(ROOT / "tools" / "gen_vectors.py"), "--help"],
+                       capture_output=True, text=True, timeout=30)
+    t.eq(r.returncode, 0, "gen_vectors --help exits 0")
+    t.ok("migration" in r.stdout, "and says that running it is a migration", r.stdout[:200])
+    r = subprocess.run([sys.executable, str(ROOT / "tools" / "gen_vectors.py"), "--force"],
+                       capture_output=True, text=True, timeout=30)
+    t.eq(r.returncode, 2, "and it refuses an argument")
+    t.eq(vectors.read_bytes(), before, "with the frozen vectors untouched either way")

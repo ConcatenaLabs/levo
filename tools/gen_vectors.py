@@ -69,10 +69,20 @@ def build(cases=CASES):
 
 
 def main():
+    # Regenerating the vectors is a migration, so the one thing this must
+    # never do is regenerate them by accident: --help answers with the
+    # docstring above and writes nothing, and any other argument is refused.
+    argv = sys.argv[1:]
+    if any(a in ("-h", "--help") for a in argv):
+        sys.stdout.write(__doc__.strip() + "\n\n    python3 tools/gen_vectors.py    # no arguments; rewrites levod/vectors.json\n")
+        return
+    if argv:
+        sys.stderr.write("gen_vectors takes no arguments; --help says what running it means\n")
+        sys.exit(2)
     out = build()
     dest = Path(__file__).resolve().parent.parent / "levod" / "vectors.json"
     dest.write_text(json.dumps(out, indent=2) + "\n")
-    print("wrote %s (%d cases)" % (dest, len(out["cases"])))
+    print("wrote %s (%d cases) -- a migration if the bytes moved; see CLAUDE.md" % (dest, len(out["cases"])))
 
 
 if __name__ == "__main__":
