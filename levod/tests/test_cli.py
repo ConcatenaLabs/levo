@@ -400,6 +400,30 @@ def run(ok, rig, levod, env):
           "the listing is untouched by the attempt")
 
 
+    # --- what it says to a person who gets it wrong -------------------------
+    #
+    # The three raw errors a newcomer met first: no node client on the PATH
+    # (a FileNotFoundError with a traceback hint), a page name with a space (an
+    # InvalidURL from the HTTP library), and a listing file that is not there.
+    def cold(*args, **extra):
+        e = dict(env, **extra)
+        r = subprocess.run([sys.executable, str(ROOT / "bin" / "levo")] + list(args),
+                           capture_output=True, text=True, env=e, timeout=60)
+        return r.returncode, (r.stdout + r.stderr).strip()
+    code, out = cold("whoami", SEQUENTIA_CLI="/nonexistent/sequentia-cli",
+                     LEVO_SESSION=os.path.join(tempfile.mkdtemp(), "s.json"))
+    ok.ok(code != 0 and "was not found" in out and "SEQUENTIA_CLI" in out and "Traceback" not in out,
+          "a missing node client is a sentence naming both remedies", out[-200:])
+    code, out = cold("show", "Helios Grid")
+    ok.ok(code == 2 and "is not a page name" in out and "helios-grid" in out,
+          "a page name with a space is refused with the rule", out[-200:])
+    code, out = cold("create", "/nonexistent/listing.json")
+    ok.ok(code != 0 and out.endswith("no such file: /nonexistent/listing.json"),
+          "a listing file that is not there is said so, before signing in", out[-120:])
+    code, out = cold("rescue", "--terms", "/nonexistent/sale.json")
+    ok.ok(code != 0 and "no such file" in out, "and so is a terms file", out[-120:])
+
+
 def main():
     binary = find_node()
     if not binary:
