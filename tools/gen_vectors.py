@@ -82,7 +82,7 @@ def main():
     out = build()
     dest = Path(__file__).resolve().parent.parent / "levod" / "vectors.json"
     dest.write_text(json.dumps(out, indent=2) + "\n")
-    print("wrote %s (%d cases) -- a migration if the bytes moved; see CLAUDE.md" % (dest, len(out["cases"])))
+    print("wrote %s (%d cases) -- a migration if the bytes moved; see CONTRIBUTING.md" % (dest, len(out["cases"])))
 
 
 if __name__ == "__main__":
