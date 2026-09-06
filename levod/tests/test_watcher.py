@@ -1335,5 +1335,8 @@ def test_a_hint_that_pointed_where_the_sale_now_rests_is_dropped(t):
     w.poll()
     t.eq(s.funding["txid"], "f9" * 32, "the sale moved to the hinted remainder")
     t.eq(s.candidates, [], "and the hint that pointed there is gone")
+    saved = w.market.saved
+    s.expect_remainder_at("f9" * 32, 1)         # the hint arrives again, late
     w.poll()
-    t.eq(s.candidates, [], "and stays gone")
+    t.eq(s.candidates, [], "dropped again")
+    t.ok(w.market.saved > saved, "and dropping it is a change the poll saves")
