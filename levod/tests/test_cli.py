@@ -222,6 +222,10 @@ def run(ok, rig, levod, env):
     out = levo("positions")
     ok.ok("cli-sale" in out and "bought" in out, "positions lists the sale just bought into",
           out[:300])
+    # The issuer's side of the same ledger: who bought, and how much.
+    bout = levo("buyers", "cli-sale")
+    ok.ok("1 buyer" in bout and "100 " in bout, "buyers lists the purchase for the issuer", bout[:300])
+    ok.ok("committed" in bout and "not checked" not in bout, "with the ledger's total, checked on chain", bout[:300])
     ok.ok("100 " in out, "with the tokens bought", out[:300])
     ok.ok("not checked" not in out, "and the purchase's payment was checked on chain",
           out[:300])
