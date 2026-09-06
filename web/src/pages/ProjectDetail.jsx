@@ -208,9 +208,9 @@ function EditPanel({ project, onSaved }) {
     <form id="edit-panel" onSubmit={save} className="card" style={{ marginTop: '1rem' }}>
       <h3>Edit the listing</h3>
       <p className="small dim">The name, summary, description and links. Not the terms: those are compiled into the sale address, and changing one would be a different sale. Not the page name either, which every link to this sale is made of.</p>
-      <div className="field"><label htmlFor="en">Name</label><input id="en" value={form.name} required onChange={(e) => setForm({ ...form, name: e.target.value })} /></div>
-      <div className="field"><label htmlFor="es">One line</label><input id="es" value={form.summary} onChange={(e) => setForm({ ...form, summary: e.target.value })} /></div>
-      <div className="field"><label htmlFor="ed">Description</label><textarea id="ed" value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} /></div>
+      <div className="field"><label htmlFor="en">Name</label><input id="en" value={form.name} required maxLength={80} onChange={(e) => setForm({ ...form, name: e.target.value })} /></div>
+      <div className="field"><label htmlFor="es">One line</label><input id="es" value={form.summary} maxLength={200} onChange={(e) => setForm({ ...form, summary: e.target.value })} /></div>
+      <div className="field"><label htmlFor="ed">Description</label><textarea id="ed" value={form.description} maxLength={8000} onChange={(e) => setForm({ ...form, description: e.target.value })} /></div>
       <div className="field">
         <label htmlFor="el">Links</label>
         <textarea id="el" className="mono" rows={3} value={form.links} onChange={(e) => setForm({ ...form, links: e.target.value })}
