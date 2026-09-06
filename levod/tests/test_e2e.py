@@ -1207,6 +1207,39 @@ def run(d):
           int(planned["allowance_after_atoms"]) - int(planned["payment_atoms"]),
           "measured against a cap the recorded purchase has already used")
 
+    # --- a shared link to a sale shows the sale --------------------------
+    #
+    # A crawler making a preview card runs no JavaScript and reads the head,
+    # and the app is one file. levod fills the head in for a sale's own page
+    # from what the board publishes, escaped, and for no other page.
+    ok.section("head")
+    shell = ('<!doctype html><html><head><title>Levo</title>'
+             '<meta name="description" content="generic" />'
+             '<meta property="og:type" content="website" />'
+             '<meta property="og:title" content="Levo" />'
+             '<meta property="og:description" content="generic" />'
+             '</head><body><div id="root"></div></body></html>')
+    (d.webroot / "index.html").write_text(shell, encoding="utf-8")
+    code, r = req("PATCH", "/api/projects/helios",
+                  {"summary": 'Solar <b>microgrids</b> & "tokens"'}, token=issuer_tok)
+    ok.eq(code, 200, "a summary with markup-looking characters is accepted as text")
+    code, page, h = _req(d.base, "GET", "/p/helios")
+    ok.eq(code, 200, "the sale's page answers")
+    text = page.decode("utf-8", "replace") if isinstance(page, bytes) else str(page)
+    ok.ok("<title>Helios Grid (HLX) \u00b7 Levo</title>" in text, "with the sale's name in the title", text[:160])
+    ok.ok('content="Solar &lt;b&gt;microgrids&lt;/b&gt; &amp; &quot;tokens&quot;"' in text,
+          "and its one-liner, escaped, as the description", text[:400])
+    ok.ok('property="og:title" content="Helios Grid (HLX) \u00b7 Levo"' in text, "and in the social card")
+    ok.ok("og:url" in text and "/p/helios" in text.split("og:url", 1)[1][:120], "with the page's own address")
+    etag_sale = h.get("ETag")
+    code, generic, h2 = _req(d.base, "GET", "/p/nope-not-here")
+    gtext = generic.decode("utf-8", "replace") if isinstance(generic, bytes) else str(generic)
+    ok.ok("<title>Levo</title>" in gtext, "a page for no sale keeps the generic head")
+    ok.ok(etag_sale and etag_sale != h2.get("ETag"), "and the two are different entities to a cache")
+    code, _, h3 = _req(d.base, "GET", "/p/helios", headers={"If-None-Match": etag_sale})
+    ok.eq(code, 304, "a cache holding the sale's page is told it still holds it")
+    req("PATCH", "/api/projects/helios", {"summary": "Solar microgrids, tokenised."}, token=issuer_tok)
+
     # --- the statement a wallet is asked to sign ---------------------------
     ok.section("login")
     code, ch = req("POST", "/api/auth/challenge")
