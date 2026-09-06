@@ -95,8 +95,8 @@ it against your own wallet before swapping.
 
 **A buyer** needs a Levo account (a key that can sign a message: the browser
 extension, or any wallet that signs a message the way `sequentia-cli signmessage`
-does), staked Sequence under a key they
-can prove they control, and unblinded USDX. A browser wallet signs and
+does), staked Sequence under a key they can prove they control, and unblinded
+USDX. A browser wallet signs and
 broadcasts the purchase in place: Levo hands it a PSET whose covenant input
 already carries its witness, and the wallet signs only the buyer's own inputs.
 That needs a wallet that fills in its own key origins before signing, which it
@@ -104,10 +104,11 @@ announces as the `pset-site-built` capability; where the wallet cannot, Levo
 offers the node path instead and says so. A node signs the same purchase with
 `signrawtransactionwithwallet`, or lets `bin/levo buy` do the whole thing.
 
-**A project** needs a tier that may list, an issued asset (registered, so
-wallets show its name), the whole allocation in a wallet it can send from, an
-address for the treasury, and a reclaim key it can sign with outside a browser
-wallet, because reclaiming means signing a raw sighash. A second round of the
+**A project** needs a tier that may list, an issued asset (registered if it
+wants wallets to show its name), the whole allocation in a wallet it can send
+from, an address for the treasury, and a reclaim key it can sign with outside a
+browser wallet, because reclaiming means signing a raw sighash; `bin/levo
+keygen` makes one. A second round of the
 same token needs a fresh reclaim key: the amount for sale is not part of the
 sale address, so two rounds at the same price and close would otherwise derive
 one covenant, and Levo refuses that rather than let two sales share an
@@ -118,9 +119,10 @@ is the leaf the key spends through, so with the file, the key and any node,
 `bin/levo rescue --terms sale.json` sweeps what is left after the close whether
 or not Levo still exists, and `--outpoint <txid>:<vout>` sweeps any one output
 at that address whatever asset it holds, because the reclaim leaf checks a
-locktime and a signature and nothing else. `bin/levo keygen` makes one. The treasury may be any witness address the project's wallet hands out,
-taproot or version-0: the version is compiled into the leaf beside the program,
-so a wallet without taproot addresses can still run a sale. The project locks
+locktime and a signature and nothing else. The treasury may be any witness
+address the project's wallet hands out, taproot or version-0: the version is
+compiled into the leaf beside the program, so a wallet without taproot addresses
+can still run a sale. The project locks
 its tokens by sending them to the sale address, and Levo finds the lock on
 chain; after the close, `bin/levo reclaim` sweeps what did not sell.
 
@@ -206,15 +208,16 @@ bin/levo buy helios-grid --tokens 40                 # picks unblinded inputs, b
 
 `levo --help` lists every command: `sales`, `show`, `verify`, `whoami`,
 `positions`, `link`, `keygen`, `create`, `lock`, `buy`, `record`, `reclaim`, `terms`,
-`rescue`, `withdraw`, and `flag` for an operator. `record` exists for a purchase built
-somewhere other than Levo: one Levo built is recorded by Levo itself as soon as
-its node sees the treasury credit, in the mempool or in a block, since it knows
-the transaction's id before anything is signed. Levo reads its own node, which is not the node a purchase was
-broadcast to, so for a few seconds after a broadcast it has not heard of the
-transaction, and a record that did not go through then can be made whenever. Fees are
-never defaulted to the policy asset: `lock`, `buy` and `reclaim` pay them in the
-sale's payment asset unless told otherwise, and their size comes from the
-node's own relay floor rather than a figure typed in.
+`rescue`, `withdraw`, and `flag` for an operator. `record` exists for a
+purchase built somewhere other than Levo: one Levo built is recorded by Levo
+itself as soon as its node sees the treasury credit, in the mempool or in a
+block, since it knows the transaction's id before anything is signed. Levo
+reads its own node, which is not the node a purchase was broadcast to, so for a
+few seconds after a broadcast it has not heard of the transaction, and a record
+that did not go through then can be made whenever. Fees are never defaulted to
+the policy asset: `lock`, `buy` and `reclaim` pay them in the sale's payment
+asset unless told otherwise, and their size comes from the node's own relay
+floor rather than a figure typed in.
 
 Listing from the command line takes a JSON file holding `{"project": {...},
 "terms": {...}}`. `bin/levo create --example` prints one to start from, with a
@@ -276,7 +279,7 @@ treasury paid what the covenant demands, the remainder re-rested at the sale's
 own address, the ledger moved, and the account page showing it -- with no
 console error anywhere in the sequence. It needs the app built first.
 
-No CI and no framework. Those commands are the whole gate.
+No framework. Those commands are the whole gate, on a laptop and in CI alike.
 
 ## What the command line checks before it signs
 
@@ -313,6 +316,7 @@ explorer at `https://sequentiatestnet.com/explorer`. Those belong to this
 deployment: `contrib/levod.env.example` leaves them blank on purpose, because a
 fork that inherits them asks its users to sign statements naming somebody
 else's site.
+
 The box pulls this repo from GitHub and runs `levod/server.py` under systemd;
 `contrib/levod.service` is the unit, and `contrib/levod.env.example` lists every
 setting. `LEVOD_SECRET` and the node credentials are supplied through the
