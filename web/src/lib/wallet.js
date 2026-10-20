@@ -152,3 +152,37 @@ export async function signMessage(message) {
   if (!sig) throw new Error('the wallet returned no signature')
   return sig
 }
+
+// A capped sale's purchase, signed by this wallet's contract engine.
+//
+// The sale's program checks a signature by the buyer's key on the allocation
+// list over the whole transaction, so the transaction is the wallet's to
+// build. The wallet's key on the list is its contract key; levod hands the
+// wallet a request (the sale's template and state, the buyer's leaf and
+// proof, the outputs the covenant requires), and the wallet's engine checks
+// the cap, recomputes the sale's address, runs the program, shows the
+// purchase and signs only with that key, adding its own coins for the payment
+// and the fee.
+export async function supportsContractEngine() {
+  try {
+    const caps = await request('getCapabilities', {})
+    const list = (caps && (caps.methods || caps)) || []
+    return Array.isArray(list) && list.includes('getContractKey') && list.includes('signContractSpend')
+  } catch { return false }
+}
+
+export async function getContractKey() {
+  await connect()
+  const r = await request('getContractKey', {})
+  const key = r && r.contract_key
+  if (!key || typeof key !== 'string') throw new Error('the wallet returned no contract key')
+  return key.toLowerCase()
+}
+
+// Signs and broadcasts. Returns the transaction id.
+export async function signContractSpend(params) {
+  const r = await request('signContractSpend', params)
+  const txid = r && r.txid
+  if (!txid || typeof txid !== 'string') throw new Error('the wallet returned no transaction id')
+  return txid
+}

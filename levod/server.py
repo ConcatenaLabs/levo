@@ -1362,6 +1362,14 @@ class Handler(BaseHTTPRequestHandler):
                                            buyer_key=b.get("buyer_key"))
                 plan["quote"] = app.rails.quote(b.get("rail") or R.USDX, plan["payment_atoms"])
                 return self._json(200, plan)
+            if action == "wallet-purchase":
+                # A capped sale's purchase for the buyer's own wallet to build
+                # and sign. No account: the buyer is a key on the sale's list,
+                # and the cap is the chain's, not Levo's.
+                b = self._body()
+                return self._json(200, app.market.wallet_purchase(
+                    slug, buyer_key=b.get("buyer_key"), token_atoms=b.get("token_atoms"),
+                    token_address=b.get("token_address"), fee_asset=b.get("fee_asset")))
             if action == "transaction":
                 acct = self._require_account()
                 b = self._body()
@@ -1789,6 +1797,7 @@ API_METHODS = (
     (("projects", "*"), ["GET", "PATCH", "DELETE"]),
     (("projects", "*", "lock"), ["POST"]),
     (("projects", "*", "buy"), ["POST"]),
+    (("projects", "*", "wallet-purchase"), ["POST"]),
     (("projects", "*", "transaction"), ["POST"]),
     (("projects", "*", "finalize"), ["POST"]),
     (("projects", "*", "confirm"), ["POST"]),

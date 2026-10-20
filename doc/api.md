@@ -249,6 +249,25 @@ refuses a purchase the program refuses, with the program's reason. The
 transaction id is unchanged; the buyer's wallet then signs its own inputs and
 broadcasts.
 
+**`POST /api/projects/<slug>/wallet-purchase`** `{buyer_key, token_atoms,
+token_address, fee_asset?}` (no session) → what a browser wallet's contract
+engine needs to build, show and sign a capped purchase itself: `templateHash`
+(`sequentia/capped-sale`), the sale's `instance` in its current state, and a
+`request` for `signContractSpend`: the sale's coin, the buyer's leaf (`CAP`,
+`BOUGHT`, `AMOUNT`, `PROOF`) and key, the next state's root, and the outputs the
+covenant requires (the treasury at output 0, the rest at the next state's
+address at output 1, the tokens to `token_address`, the fee). The wallet adds
+its own coins for the payment and the fee (`fund: true`), checks the cap,
+recomputes the sale's address, runs the program, shows the purchase and signs
+only with its contract key, which must be `buyer_key`. No account is needed:
+the buyer is a key on the sale's list and the cap is the chain's. The fee is
+in the asset the sale is paid in when the node accepts it; when it does not,
+and `fee_asset` is not given, the answer is `{needs_fee_asset: true,
+fee_rates}`, every accepted asset's rate in its own atoms per 1,000 vB, and the
+wallet picks the accepted asset whose largest coin covers the most fees.
+levod signs nothing. The watcher follows the coin to its next state like any
+purchase it did not build.
+
 The `outputs` array is levod's description of what it built, and a client
 should not settle for it: decode `unsigned_tx_hex` and check the transaction
 itself. Output 0 must pay the treasury the terms name, in the payment asset,

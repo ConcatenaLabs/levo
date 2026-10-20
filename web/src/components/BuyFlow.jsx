@@ -8,6 +8,7 @@ import { outputsOf } from '../lib/eltx'
 import { scriptForAddress } from '../lib/bech32'
 import { Copy, Hex, Notice } from './ui'
 import SignIn from './SignIn'
+import CappedBuy from './CappedBuy'
 
 // What the buyer typed survives a session that ends mid-purchase, and a
 // reload. Nothing kept here is secret: an amount, two of the buyer's own
@@ -386,25 +387,7 @@ export default function BuyFlow({ project, tier, onSettled }) {
     )
   }
 
-  if (sale && sale.capped) {
-    return (
-      <div>
-        <p>
-          This sale's caps are in its address. It sells only to the keys on its
-          allocation list, each up to its own cap, and every buyer's running
-          total is carried in the sale itself, so the chain refuses a purchase
-          past a cap whoever builds it.
-        </p>
-        <p className="small dim">
-          A purchase here is signed by the buyer's key on that list, over the
-          whole transaction. A browser wallet cannot make that signature yet;
-          buy from your own node with the command line, which computes what it
-          signs on your machine:
-        </p>
-        <pre className="small">levo buy {project.slug} --tokens 100 --buyer-key {'<'}your key{'>'} --seqc {'<'}path to seqc{'>'}</pre>
-      </div>
-    )
-  }
+  if (sale && sale.capped) return <CappedBuy project={project} onBought={onSettled} />
 
   return (
     <div>

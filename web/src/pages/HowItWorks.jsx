@@ -155,7 +155,9 @@ export default function HowItWorks() {
         each buyer's key and the most that key may buy, and the list and every
         buyer's running total are in the sale's address. The chain then refuses
         a purchase past a cap, or by a key that is not on the list, whoever
-        builds it, and each purchase is signed by the buyer's own key.
+        builds it, and each purchase is signed by the buyer's own key: a browser
+        wallet whose contract key is on the list builds, shows and signs the
+        purchase itself, from the sale page.
       </p>
 
       <h2 className="section-h">Paying</h2>

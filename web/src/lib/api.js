@@ -96,6 +96,7 @@ export const api = {
   buy: (slug, payload) => call('POST', '/projects/' + slug + '/buy', payload),
   confirm: (slug, payload) => call('POST', '/projects/' + slug + '/confirm', payload),
   transaction: (slug, payload) => call('POST', '/projects/' + slug + '/transaction', payload),
+  walletPurchase: (slug, payload) => call('POST', '/projects/' + slug + '/wallet-purchase', payload),
   reclaim: (slug, payload) => call('POST', '/projects/' + slug + '/reclaim', payload),
   fee: (slug, params) => call('GET', '/projects/' + slug + '/fee' + query(params)),
   checkOutputs: (outputs) => call('POST', '/outputs/check', { outputs }),

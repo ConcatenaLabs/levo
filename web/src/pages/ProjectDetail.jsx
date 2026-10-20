@@ -8,6 +8,7 @@ import { Copy, Hex, Notice, usePageTitle, useReread } from '../components/ui'
 import SignIn from '../components/SignIn'
 import Beam from '../components/Beam'
 import BuyFlow from '../components/BuyFlow'
+import CappedBuy from '../components/CappedBuy'
 import Reclaim from '../components/Reclaim'
 import LockPanel from '../components/LockPanel'
 import { Status } from './Projects'
@@ -124,6 +125,16 @@ function BuyPanel({ project, onBought }) {
   const open = sale && (sale.status === 'live' || sale.status === 'partial')
 
   if (!open) return <NotOpen sale={sale} />
+  // A capped sale's buyer is a key on its allocation list, not a Levo account,
+  // and its cap is the chain's: no sign-in and no tier stand in front of it.
+  if (sale.capped) {
+    return (
+      <div className="card">
+        <h3>Take a position</h3>
+        <CappedBuy project={project} onBought={onBought} />
+      </div>
+    )
+  }
   if (loading) return <div className="card"><p className="dim" style={{ margin: 0 }}>Loading your account…</p></div>
 
   if (!signedIn) {
