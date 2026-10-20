@@ -59,6 +59,7 @@ TXID_RE = re.compile(r"^[0-9a-f]{64}$")
 ASSET_RE = re.compile(r"^[0-9a-fA-F]{64}$")
 MAX_LINKS = 8
 MAX_INPUTS = 32                  # more than any wallet needs for one purchase
+ADDR_HEX = re.compile(r"^[0-9a-f]{64}$")
 # How many of a claimed purchase's outputs are looked at when asking whether
 # the node has ever heard of it. A buy pays the treasury, re-rests the
 # remainder, and delivers the buyer's tokens, so anything real is in the first
@@ -1224,6 +1225,127 @@ class Platform:
                                        vsize=built.get("vsize_estimate"))
         built["fee"]["paying_atoms"] = int(buyer["fee_atoms"])
         return built
+
+    # A purchase from a capped sale signed by the buyer's wallet. The covenant
+    # input needs the buyer's signature over the whole transaction, so the
+    # transaction is the wallet's to build: levod hands its contract engine
+    # (the Sequentia Wallet Kit's lwk_contracts, behind signContractSpend) the
+    # template, the sale's instance in its current state, the coin, the
+    # buyer's leaf and proof, and the outputs the covenant requires. The
+    # engine recomputes the sale's address from the instance, checks the cap,
+    # runs the program against the final transaction, shows the purchase under
+    # the five-point rule, and signs only with the wallet's own contract key,
+    # which must be the buyer's key on the list. The wallet adds its own coins
+    # for the payment and the fee. levod signs nothing and sees nothing it
+    # could sign with.
+    WALLET_PURCHASE_VSIZE = 1300        # measured 1,233 vB (contracts harness c1), rounded up
+
+    def fee_rates(self):
+        """Every asset the node accepts for fees, by id, with the fee rate in
+        atoms of that asset per 1,000 vB at the node's relay floor."""
+        if self.rpc is None:
+            return {}
+        try:
+            floor = self.rpc.min_relay_fee_atoms_per_kvb()
+            rates = self.rpc.call("getfeeexchangerates") or {}
+        except Exception:
+            return {}
+        labels = self._labels()
+        out = {}
+        for k, rate in rates.items():
+            asset = str(labels.get(k, k)).lower()
+            if floor is None or not rate or not ADDR_HEX.match(asset):
+                continue
+            out[asset] = -(-floor * 100_000_000 // int(rate))
+        return out
+
+    def wallet_purchase(self, slug, buyer_key=None, token_atoms=None, token_address=None,
+                        fee_asset=None):
+        p = self._project(slug)
+        sale = p.sale
+        if sale is None:
+            raise PlatformError("this project has no sale")
+        if not sale.capped:
+            raise PlatformError("only a capped sale's purchase is signed by a wallet's contract engine; "
+                                "an ordinary sale's covenant input needs no signature")
+        if not sale.funding:
+            raise PlatformError("this sale is not funded")
+        height = self.height(strict=sale.close_is_height())
+        plan = sale.plan_buy(None, None, token_atoms=token_atoms, height=height, buyer_key=buyer_key)
+        if self.rpc is not None:
+            try:
+                out = self.rpc.txout(sale.funding["txid"], sale.funding["vout"])
+            except Exception as e:
+                raise PlatformError("the Sequentia node could not be asked whether the sale's tokens "
+                                    "are still resting: %s" % e)
+            if out is None:
+                self.on_stale()
+                raise PlatformError("the sale's tokens have just moved: another purchase is pending or "
+                                    "has confirmed. Price it again in a minute")
+        if not token_address:
+            raise PlatformError("token_address: where your tokens go, an address of your wallet")
+        try:
+            token_spk = ADDR.to_script_pubkey(str(token_address).strip(), self.hrp).hex()
+        except ValueError as e:
+            raise PlatformError("token_address: %s" % e)
+        rates = self.fee_rates()
+        pay = sale.terms.payment_asset.lower()
+        asset = self.resolve_asset(fee_asset).lower() if fee_asset else (pay if pay in rates else None)
+        if asset is None:
+            # The fee goes in the asset the buyer pays where the node accepts
+            # it. It does not here, so the wallet chooses by the same rule
+            # every wallet uses: the accepted asset whose largest coin covers
+            # the most fees, none preferred for what it is.
+            return {"needs_fee_asset": True, "fee_rates": {a: str(r) for a, r in rates.items()},
+                    "why": "the node does not accept fees in the asset this sale is paid in; name "
+                           "fee_asset, an asset it accepts"}
+        if rates and asset not in rates:
+            raise PlatformError("the node Levo reads does not accept fees in %s" % asset)
+        per_kvb = rates.get(asset)
+        fee = -(-self.WALLET_PURCHASE_VSIZE * per_kvb // 1000) * 2 if per_kvb else 0
+        if fee <= 0:
+            raise PlatformError("Levo cannot read the node's fee rate for %s" % asset)
+        cov = sale.cov
+        k = plan.position
+        bought = list(cov.bought)
+        nxt = cov.after(k, plan.token_atoms)
+        genesis = self._genesis()
+        token = sale.terms.token_asset.lower()
+        coin = {"txid": sale.funding["txid"], "vout": int(sale.funding["vout"]),
+                "script_pubkey": cov.spk(bought).hex(), "asset": token,
+                "amount": int(sale.locked_atoms)}
+        outputs = [{"to": "pay", "script": sale.terms.treasury_spk.hex(),
+                    "asset": pay, "amount": int(plan.payment_atoms)}]
+        if plan.remainder_atoms > 0:
+            outputs.append({"to": "contract", "script": cov.spk(nxt).hex(), "asset": token,
+                            "amount": int(plan.remainder_atoms)})
+        outputs.append({"to": "wallet", "script": token_spk, "asset": token, "amount": int(plan.token_atoms)})
+        outputs.append({"to": "fee", "asset": asset, "amount": int(fee)})
+        lit = "[" + ", ".join("(0x%s, %s)" % (sib.hex(), "true" if left else "false")
+                              for sib, left in cov.proof(k, bought)) + "]"
+        request = {
+            "path": "purchase", "coin": coin, "inputs": [{"is": "contract"}], "outputs": outputs,
+            "spender": {"BUYER_KEY": cov.keys[k], "CAP": "%016x" % cov.caps[k],
+                        "BOUGHT": "%016x" % bought[k], "AMOUNT": "%016x" % plan.token_atoms,
+                        "PROOF": lit},
+        }
+        if plan.remainder_atoms > 0:
+            request["next_slots"] = {"ALLOCATIONS": cov.root(nxt)}
+        return {
+            "templateHash": CAP.PIN["template_hash"],
+            "instance": {"instance": 2, "template_hash": CAP.PIN["template_hash"], "params": cov.params(),
+                         "slots": {"ALLOCATIONS": cov.root(bought)}, "genesis": genesis},
+            "request": request,
+            "fund": True,
+            "purchase": {"position": k, "buyer_key": cov.keys[k], "cap_atoms": str(cov.caps[k]),
+                         "bought_atoms": str(bought[k]), "token_atoms": str(plan.token_atoms),
+                         "payment_atoms": str(plan.payment_atoms),
+                         "remainder_atoms": str(plan.remainder_atoms),
+                         "next_state_root": cov.root(nxt) if plan.remainder_atoms > 0 else None},
+            "fee": {"asset": asset, "atoms": str(fee), "rate_atoms_per_kvb": str(per_kvb),
+                    "vsize_estimate": self.WALLET_PURCHASE_VSIZE},
+            "fee_rates": {a: str(r) for a, r in rates.items()},
+        }
 
     def _genesis(self):
         if self.rpc is None:

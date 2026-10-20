@@ -113,6 +113,9 @@ That needs a wallet that fills in its own key origins before signing, which it
 announces as the `pset-site-built` capability; where the wallet cannot, Levo
 offers the node path instead and says so. A node signs the same purchase with
 `signrawtransactionwithwallet`, or lets `bin/levo buy` do the whole thing.
+A capped sale's buyer needs no account: it is a key on the sale's list, and a
+browser wallet whose contract key is listed builds and signs the purchase
+itself ([doc/capped-sales.md](doc/capped-sales.md)).
 
 **A project** needs a tier that may list, an issued asset (registered if it
 wants wallets to show its name), the whole allocation in a wallet it can send

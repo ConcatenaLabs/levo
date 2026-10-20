@@ -48,7 +48,30 @@ address the rest landed at.
 
 ## Buying
 
-A purchase is signed by the buyer's key on the list, so the buyer runs it:
+A purchase is signed by the buyer's key on the list, so the buyer's wallet
+builds it.
+
+### From a browser wallet
+
+A browser wallet whose contract key is on the list buys from the sale page,
+with no Levo account: the buyer is the key, and the cap is the chain's. The
+page asks the wallet for its contract key (`getContractKey`), shows that key's
+cap and what it has bought, and asks levod for the purchase
+(`POST /api/projects/<slug>/wallet-purchase`). levod answers with what the
+wallet's contract engine needs: the `sequentia/capped-sale` template, the
+sale's instance in its current state, the coin, the buyer's leaf and its proof,
+and the outputs the covenant requires. The wallet (`signContractSpend`, the
+Sequentia Wallet Kit's engine) refuses a purchase past the cap before anything
+else, recomputes the sale's address, adds its own coins for the payment and
+the fee, runs the program against the final transaction, shows the purchase
+under its five-point approval, and signs with its contract key only, a
+signature over this purchase and no other. The fee is in the asset the sale is
+paid in where the network accepts it, and otherwise in the accepted asset
+whose largest coin in the wallet covers the most fees. Give the project the
+key the wallet's `getContractKey` returns to be listed.
+
+### From your own node
+
 
 ```sh
 bin/levo buy <sale> --tokens 100 --buyer-key <32-byte hex secret> --seqc <path to seqc>
@@ -60,8 +83,7 @@ your own node, recomputes the signature hash itself with `seqc` (the contracts
 toolchain's program runner, from the transaction and the outputs it spends as
 your node reads them), refuses if levod's differs, signs, has levod put the
 covenant witness around the signature, checks the transaction id is the one it
-signed, then signs your own inputs with your wallet and broadcasts. A browser
-wallet cannot make this signature yet, so the sale page sends a buyer here.
+signed, then signs your own inputs with your wallet and broadcasts.
 
 A purchase costs about 1,100 to 1,250 vB, most of it the program and its proof.
 

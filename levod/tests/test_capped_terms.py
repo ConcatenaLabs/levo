@@ -90,3 +90,84 @@ def test_a_purchase_is_followed_to_its_buyer(t):
         t.ok(False, "past the cap")
     except CAP.CappedError:
         t.ok(True, "past the cap is refused")
+
+
+def test_a_wallet_purchase_is_what_the_covenant_requires(t):
+    """POST /api/projects/<slug>/wallet-purchase: the request a wallet's
+    contract engine builds, shows and signs a capped purchase from."""
+    from types import SimpleNamespace
+    import market as M
+    import sale as S
+
+    terms = _terms([{"key": G1, "cap_atoms": "500000000"}, {"key": G2, "cap_atoms": "250000000"}])
+    sale = S.Sale("capped", terms, "issuer")
+    sale.cov = C.derive(terms)
+    sale.cov.bought = [120_000_000, 0]
+    sale.funding = {"txid": "ab" * 32, "vout": 1}
+    sale.locked_atoms = 480_000_000
+    sale.status = S.LIVE
+    pay = terms.payment_asset
+
+    class Stub:
+        WALLET_PURCHASE_VSIZE = M.Platform.WALLET_PURCHASE_VSIZE
+        rpc = None
+        hrp = "tb"
+        rates = {pay: 1000}
+
+        def _project(self, slug):
+            return SimpleNamespace(sale=sale)
+
+        def height(self, strict=False):
+            return 100
+
+        def fee_rates(self):
+            return dict(self.rates)
+
+        def resolve_asset(self, a, what="fee_asset"):
+            return a
+
+        def _genesis(self):
+            return "0f" * 32
+
+        def on_stale(self):
+            pass
+
+    me = Stub()
+    to = SA.segwit_v1_address("tb", bytes.fromhex(G3))
+    r = M.Platform.wallet_purchase(me, "capped", buyer_key=G2, token_atoms=100_000_000, token_address=to)
+    q = r["request"]
+    t.eq(r["templateHash"], CAP.PIN["template_hash"], "the request names the pinned template")
+    t.eq(q["path"], "purchase", "the purchase path")
+    t.eq(q["spender"]["BUYER_KEY"], G2, "the buyer's key is the one on the list")
+    t.eq((q["spender"]["CAP"], q["spender"]["BOUGHT"], q["spender"]["AMOUNT"]),
+         ("%016x" % 250_000_000, "%016x" % 0, "%016x" % 100_000_000), "cap, bought and amount as the program reads them")
+    t.ok(q["spender"]["PROOF"].startswith("[(0x") and q["spender"]["PROOF"].count("(0x") == CAP.DEPTH,
+         "a proof of the tree's depth", q["spender"]["PROOF"][:40])
+    derived = SA.derive(CAP.DESCRIPTOR, r["instance"]["params"], r["instance"]["slots"])
+    t.eq(derived["script_pubkey"], q["coin"]["script_pubkey"], "the instance derives the coin's script")
+    t.eq(q["coin"]["script_pubkey"], sale.cov.spk_hex, "which is the sale's current address")
+    nxt = sale.cov.after(1, 100_000_000)
+    t.eq(q["next_slots"]["ALLOCATIONS"], sale.cov.root(nxt), "the next state raises only this buyer's total")
+    outs = q["outputs"]
+    t.eq([o["to"] for o in outs], ["pay", "contract", "wallet", "fee"], "treasury, rest, tokens, fee")
+    t.eq(outs[0]["script"], terms.treasury_spk.hex(), "output 0 pays the treasury")
+    t.eq(outs[0]["amount"], 25_000_000, "at the covenant's price")
+    t.eq(outs[1]["script"], sale.cov.spk(nxt).hex(), "output 1 is the next state's address")
+    t.eq(outs[1]["amount"], 380_000_000, "holding the rest")
+    t.eq(outs[3]["asset"], pay, "the fee is in the asset paid, which the node accepts")
+    t.eq(r["fund"], True, "the wallet adds its own coins")
+
+    # Past the cap: refused here as the chain would.
+    try:
+        M.Platform.wallet_purchase(me, "capped", buyer_key=G2, token_atoms=250_000_001, token_address=to)
+        t.ok(False, "a purchase past the cap is refused")
+    except S.SaleError as e:
+        t.ok("refuses a purchase past it" in str(e), "a purchase past the cap is refused", str(e))
+    # A node that does not take fees in the asset paid: the wallet is told to choose.
+    me.rates = {"cc" * 32: 500}
+    r = M.Platform.wallet_purchase(me, "capped", buyer_key=G2, token_atoms=100_000_000, token_address=to)
+    t.eq(r.get("needs_fee_asset"), True, "the wallet is asked for a fee asset")
+    t.eq(r["fee_rates"], {"cc" * 32: "500"}, "with every accepted asset's rate")
+    r = M.Platform.wallet_purchase(me, "capped", buyer_key=G2, token_atoms=100_000_000, token_address=to,
+                                   fee_asset="cc" * 32)
+    t.eq(r["request"]["outputs"][-1]["asset"], "cc" * 32, "and pays in the one it chose")
