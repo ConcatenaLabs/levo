@@ -333,7 +333,7 @@ class SaleTerms:
 
     def __init__(self, token_asset, payment_asset, price_num, price_den,
                  treasury_prog, min_lot, close_locktime, reclaim_xonly,
-                 total_atoms=None, treasury_ver=1):
+                 total_atoms=None, treasury_ver=1, allocations=None):
         self.token_asset = _hex32(token_asset, "token_asset")
         self.payment_asset = _hex32(payment_asset, "payment_asset")
         self.price_num = _int(price_num, "price_num")
@@ -350,7 +350,22 @@ class SaleTerms:
         self.close_locktime = _int(close_locktime, "close_locktime")
         self.reclaim_xonly = _hex32(reclaim_xonly, "reclaim_xonly")
         self.total_atoms = _int(total_atoms, "total_atoms") if total_atoms is not None else None
+        # A capped sale: each buyer's x-only key and the most that key may buy,
+        # in token atoms. The list is committed in the address, through the
+        # capped-sale covenant's state (capped.py); without it the sale is the
+        # ordinary permissionless one, whose caps are Levo's policy.
+        self.allocations = None
+        if allocations is not None:
+            import capped as CAP
+            try:
+                self.allocations = CAP.check_allocations(allocations)
+            except CAP.CappedError as e:
+                raise ValueError(str(e))
         self._validate()
+
+    @property
+    def capped(self):
+        return self.allocations is not None
 
     @property
     def treasury_spk(self):
@@ -392,13 +407,21 @@ class SaleTerms:
                 raise ValueError("the amount for sale must be at least the minimum purchase, "
                                  "or the sale could never be bought")
             self.assert_no_overflow(self.total_atoms)
+        if self.allocations is not None:
+            short = [c for _, c in self.allocations if c < self.min_lot]
+            if short:
+                raise ValueError("%d of the allocation list's caps are below the minimum purchase, "
+                                 "so those buyers could never buy" % len(short))
 
     def assert_no_overflow(self, locked_atoms):
         """The leaf prices with OP_MUL64/OP_ADD64, which ABORT on signed 64-bit
         overflow. A sale that can overflow is one whose last buyers cannot buy,
         leaving tokens reclaimable but unsellable. Refuse it at listing time,
-        while it is still free to fix.
+        while it is still free to fix. A capped sale prices at 128 bits and
+        cannot overflow.
         """
+        if self.allocations is not None:
+            return
         bound = self.price_num * int(locked_atoms) + self.price_den - 1
         if bound >= (1 << 63):
             raise ValueError(
@@ -415,7 +438,7 @@ class SaleTerms:
         return (n * self.price_num + self.price_den - 1) // self.price_den
 
     def to_json(self):
-        return {
+        out = {
             "token_asset": self.token_asset,
             "payment_asset": self.payment_asset,
             "price_num": self.price_num,
@@ -427,6 +450,9 @@ class SaleTerms:
             "reclaim_xonly": self.reclaim_xonly,
             "total_atoms": atoms_out(self.total_atoms),
         }
+        if self.allocations is not None:
+            out["allocations"] = [{"key": k, "cap_atoms": atoms_out(c)} for k, c in self.allocations]
+        return out
 
     @classmethod
     def from_json(cls, d):
@@ -439,7 +465,7 @@ class SaleTerms:
         return cls(d["token_asset"], d["payment_asset"], d["price_num"],
                    d["price_den"], d["treasury_prog"], d["min_lot"],
                    d["close_locktime"], d["reclaim_xonly"], d.get("total_atoms"),
-                   treasury_ver=d.get("treasury_ver", 1))
+                   treasury_ver=d.get("treasury_ver", 1), allocations=d.get("allocations"))
 
 
 class SaleCovenant:
@@ -497,6 +523,11 @@ class SaleCovenant:
 
 
 def derive(terms, internal_key=NUMS):
+    if getattr(terms, "allocations", None) is not None:
+        if internal_key != NUMS:
+            raise ValueError("a Levo sale must use the NUMS internal key")
+        import capped as CAP
+        return CAP.CappedCovenant(terms)
     return SaleCovenant(terms, internal_key)
 
 

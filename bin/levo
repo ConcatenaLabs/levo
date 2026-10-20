@@ -41,6 +41,11 @@ Environment:
                         recognised at once; there is nothing to link.
     LEVO_RECLAIM_KEY    the 32-byte hex reclaim secret, for `levo reclaim`
                         (or pass --reclaim-key)
+    LEVO_BUYER_KEY      a capped sale's buyer: the 32-byte hex secret of a key on
+                        its allocation list, for `levo buy` (or --buyer-key)
+    LEVO_SEQC           the contracts toolchain's seqc, with which `levo buy`
+                        computes a capped purchase's signature hash here
+                        (or --seqc)
     LEVO_TRACE          set to 1 to print the full traceback when a command
                         fails, instead of the one-line sentence
 
@@ -547,14 +552,25 @@ def cmd_positions(args):
               % (shown, total, args.offset + shown))
 
 
+def _derive(sale):
+    """The covenant the published terms derive. A capped sale's address also
+    carries its state, so the running totals the sale shows are applied: the
+    address then has to match the coin, or nothing here proceeds."""
+    terms = C.SaleTerms.from_json(sale["terms"])
+    cov = C.derive(terms)
+    if getattr(cov, "capped", False):
+        cov.bought = [int(a["bought_atoms"])
+                      for a in (sale.get("capped") or {}).get("allocations") or []] or cov.bought
+    return terms, cov
+
+
 def cmd_verify(args):
     """The check every page asks the reader to make, done by this machine."""
     p = api("GET", "/api/projects/%s" % args.slug)
     sale = p.get("sale")
     if not sale:
         raise Fail("this project has no sale")
-    terms = C.SaleTerms.from_json(sale["terms"])
-    cov = C.derive(terms)
+    terms, cov = _derive(sale)
     hrp = p.get("address", "tb1")[:p.get("address", "tb1").rfind("1")] if p.get("address") else "tb"
     derived_addr = ADDR.from_script_pubkey(cov.spk_hex, hrp)
     okay = True
@@ -812,8 +828,7 @@ def cmd_lock(args):
     # because a server named it is the one thing this command must never do:
     # the covenant is the whole guarantee, and an address that is not the
     # covenant's is an address with no leaves behind it at all.
-    terms = C.SaleTerms.from_json(sale["terms"])
-    cov = C.derive(terms)
+    terms, cov = _derive(sale)
     if cov.spk_hex != sale["script_pubkey"]:
         raise Fail("the sale's published address is not what its terms derive "
                    "(%s, not %s). Do not lock into it; run `levo verify %s`"
@@ -956,6 +971,42 @@ def lost_the_race(why):
                                    "mempool conflict"))
 
 
+def _sign_capped(args, built, cov, buyer_xonly, buyer_secret, tok):
+    """The buyer's signature over a capped purchase, made over a hash this
+    machine computed itself, never over the one levod sent: the program's
+    sig_all_hash, from the transaction and the outputs it spends as this
+    node reads them, by a local `seqc` (--seqc, LEVO_SEQC). Then levod puts
+    the covenant witness around it, and the transaction it returns must be
+    the one that was signed."""
+    import capped as CAP
+    import secp256k1 as K
+    decoded = node("decoderawtransaction", built["unsigned_tx_hex"])
+    utxos = []
+    for vin in decoded.get("vin") or []:
+        o = node("gettxout", vin["txid"], int(vin["vout"]), True)
+        if not o or o.get("value") is None or not o.get("asset"):
+            raise Fail("input %s:%s is not an explicit unspent output on your node; nothing was "
+                       "signed" % (vin["txid"], vin["vout"]))
+        utxos.append(TXMOD.TxOut(o["asset"], atoms(o["value"]),
+                                 bytes.fromhex(o["scriptPubKey"]["hex"])).serialize().hex())
+    genesis = node("getblockhash", 0)
+    seqc = args.seqc or os.environ.get("LEVO_SEQC")
+    try:
+        mine = cov.sighash(built["unsigned_tx_hex"], utxos, 0, genesis, seqc=seqc)
+    except CAP.CappedError as e:
+        raise Fail("could not compute the purchase's signature hash here: %s" % e)
+    if mine != (built.get("covenant") or {}).get("sighash"):
+        raise Fail("the signature hash levod sent is not this transaction's; nothing was signed")
+    sig = K.schnorr_sign(bytes.fromhex(mine), buyer_secret).hex()
+    done = api("POST", "/api/projects/%s/finalize" % args.slug,
+               {"txid": built["txid"], "signature": sig}, tok)
+    after = node("decoderawtransaction", done["tx_hex"])
+    if after.get("txid") != decoded.get("txid") or after.get("txid") != built["txid"]:
+        raise Fail("levod returned a different transaction from the one that was signed; "
+                   "do NOT sign it")
+    return done["tx_hex"]
+
+
 def cmd_buy(args):
     tok = sign_in()
     p = api("GET", "/api/projects/%s" % args.slug)
@@ -978,7 +1029,21 @@ def cmd_buy(args):
                    "point before the decimals; a comma only groups thousands, as in 1,000"
                    % decimals)
 
-    plan = api("POST", "/api/projects/%s/buy" % args.slug, {"token_atoms": token_atoms}, tok)
+    # A capped sale sells only to the keys on its allocation list, and the
+    # buyer's key signs the purchase itself.
+    capped = bool((sale.get("terms") or {}).get("allocations"))
+    buyer_secret = buyer_xonly = None
+    if capped:
+        import secp256k1 as K
+        raw_key = (args.buyer_key or os.environ.get("LEVO_BUYER_KEY") or "").strip().lower()
+        if len(raw_key) != 64 or any(c not in "0123456789abcdef" for c in raw_key):
+            raise Fail("this sale is capped: it sells only to the keys on its allocation list, "
+                       "and the purchase is signed by one. Give its 32-byte hex secret with "
+                       "--buyer-key or LEVO_BUYER_KEY")
+        buyer_secret = int(raw_key, 16)
+        buyer_xonly = K.xonly_pubkey(buyer_secret).hex()
+    plan = api("POST", "/api/projects/%s/buy" % args.slug,
+               dict({"token_atoms": token_atoms}, **({"buyer_key": buyer_xonly} if capped else {})), tok)
     print("buying %s %s for %s"
           % (args.tokens, plain(p["ticker"]),
              U.fmt(int(plan["payment_atoms"]), _payment_decimals(p), _payment_label(p))))
@@ -1015,24 +1080,35 @@ def cmd_buy(args):
     dest = args.to or node("getnewaddress", "levo-buy")
     change = args.change or dest
 
-    built = api("POST", "/api/projects/%s/transaction" % args.slug, {
+    built = api("POST", "/api/projects/%s/transaction" % args.slug, dict({
         "token_atoms": token_atoms,
         "buyer": {"token_address": dest, "change_address": change,
-                  "inputs": ins, "fee_atoms": fee_atoms, "fee_asset": fee_asset}}, tok)
+                  "inputs": ins, "fee_atoms": fee_atoms, "fee_asset": fee_asset}},
+        **({"buyer_key": buyer_xonly} if capped else {})), tok)
 
     # Before a signature exists: is this the purchase that was asked for? The
     # covenant is rebuilt from the terms this sale published, and the
     # transaction is read with this node -- the buyer's own -- rather than
     # believed from the response that carried it.
-    terms = C.SaleTerms.from_json(sale["terms"])
-    cov = C.derive(terms)
+    terms, cov = _derive(sale)
+    rest_spk = None
+    if capped:
+        # The state Levo shows, checked against the coin on this node: the
+        # address it derives must be the one the sale's coin is at.
+        cov.bought = [int(a["bought_atoms"]) for a in (sale.get("capped") or {}).get("allocations") or []]
+        f = sale.get("funding") or {}
+        here = node("gettxout", f.get("txid"), int(f.get("vout", 0)), True) if f.get("txid") else None
+        if not here or ((here.get("scriptPubKey") or {}).get("hex") or "") != cov.spk_hex:
+            raise Fail("the state Levo shows for this capped sale does not derive the address its "
+                       "coin is at on your node; nothing was signed. Run `levo verify %s`" % args.slug)
+        rest_spk = cov.spk(cov.after(cov.position(buyer_xonly), token_atoms)).hex()
     if cov.spk_hex != sale["script_pubkey"]:
         raise Fail("this sale's published address is not what its terms derive; "
                    "nothing was signed. Run `levo verify %s`" % args.slug)
     hrp_here = (p.get("address") or "")[:(p.get("address") or "").rfind("1")] or "tb"
     _check_before_signing(built["unsigned_tx_hex"], {
         "treasury_spk": TXMOD.treasury_script_pubkey(terms).hex(),
-        "sale_spk": cov.spk_hex,
+        "sale_spk": rest_spk or cov.spk_hex,
         "payment_asset": terms.payment_asset,
         "token_asset": terms.token_asset,
         "payment_atoms": int(plan["payment_atoms"]),
@@ -1045,7 +1121,10 @@ def cmd_buy(args):
         if (sale.get("funding") or {}).get("txid") else None,
     }, lambda h: node("decoderawtransaction", h))
 
-    signed = node("signrawtransactionwithwallet", built["unsigned_tx_hex"])
+    to_sign = built["unsigned_tx_hex"]
+    if capped:
+        to_sign = _sign_capped(args, built, cov, buyer_xonly, buyer_secret, tok)
+    signed = node("signrawtransactionwithwallet", to_sign)
     if not signed.get("complete"):
         raise Fail("your wallet could not sign every input: %s" % signed.get("errors"))
     check = node("testmempoolaccept", [signed["hex"]])
@@ -1156,6 +1235,10 @@ def cmd_rescue(args):
     spec = _listing_file(args.terms)
     terms_json = spec.get("terms", spec)
     terms = C.SaleTerms.from_json(terms_json)
+    if terms.capped:
+        raise Fail("a capped sale's address moves with every purchase, because its running "
+                   "totals are in it, so its terms alone do not find it. Reclaim it with "
+                   "`levo reclaim` while a Levo follows it")
     cov = C.derive(terms)
     # The file remembers which chain the sale was on, in the address it was
     # written with. Defaulting to a testnet prefix instead produced an address
@@ -1370,8 +1453,7 @@ def cmd_reclaim(args):
     # response would have swept the whole unsold allocation to a stranger while
     # this printed "reclaimed." The reclaim leaf constrains no output at all,
     # so nothing downstream would have caught it either.
-    terms = C.SaleTerms.from_json(sale["terms"])
-    cov = C.derive(terms)
+    terms, cov = _derive(sale)
     if cov.spk_hex != sale["script_pubkey"]:
         raise Fail("this sale's published address is not what its terms derive; "
                    "nothing was signed. Run `levo verify %s`" % args.slug)
@@ -1389,6 +1471,7 @@ def cmd_reclaim(args):
         raise Fail("the outpoint this sale rests on is not at the address its "
                    "terms derive; nothing was signed")
     here = S_MOD.Sale("reclaim", terms, "reclaim")
+    here.cov = cov                       # with a capped sale's state, as checked above
     here.rest_on(funding["txid"], int(funding["vout"]), atoms(out_now.get("value", 0)))
     mine = TXMOD.build_reclaim(
         here,
@@ -1609,6 +1692,10 @@ def main():
     b.add_argument("--fee-asset", help="asset to pay the fee in (default: the sale's payment asset)")
     b.add_argument("--to", help="the address the tokens go to (default: a new wallet address)")
     b.add_argument("--change", help="where the change goes (default: the same address)")
+    b.add_argument("--buyer-key", help="a capped sale's buyer: the 32-byte hex secret of a key on "
+                                       "its allocation list (or LEVO_BUYER_KEY)")
+    b.add_argument("--seqc", help="the contracts toolchain's seqc, which computes a capped "
+                                  "purchase's signature hash on this machine (or LEVO_SEQC)")
     b.add_argument("--dry-run", action="store_true", help=DRY)
     b.set_defaults(fn=cmd_buy)
 

@@ -150,6 +150,13 @@ export default function HowItWorks() {
         allocation policy, applied to the purchases Levo plans. Nothing on chain
         enforces it, and a sale can be filled without Levo at all.
       </p>
+      <p>
+        A capped sale is the exception. It is listed with an allocation list,
+        each buyer's key and the most that key may buy, and the list and every
+        buyer's running total are in the sale's address. The chain then refuses
+        a purchase past a cap, or by a key that is not on the list, whoever
+        builds it, and each purchase is signed by the buyer's own key.
+      </p>
 
       <h2 className="section-h">Paying</h2>
       <p>

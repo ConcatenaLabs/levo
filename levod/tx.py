@@ -268,8 +268,11 @@ def build_buy(sale, plan, buyer, hrp="tb"):
 
     # Input 0 is the covenant. Its index decides the output map, and the leaf's
     # arithmetic here assumes k = 0, so it must be first.
+    # A capped sale's witness is built around the buyer's signature, once the
+    # transaction exists (capped.py); an ordinary sale's is already final.
+    capped = bool(getattr(sale, "capped", False))
     tx.vin.append(TxIn(funding["txid"], funding["vout"],
-                       witness=sale.cov.sell_witness()))
+                       witness=None if capped else sale.cov.sell_witness()))
     for i in ins:
         tx.vin.append(TxIn(i["txid"], i["vout"]))
 
@@ -312,8 +315,11 @@ def build_buy(sale, plan, buyer, hrp="tb"):
     # asset aborts the script. Every output Levo builds is explicit.
     non_token_change = [a for a in sorted(change) if a != terms.token_asset]
     if plan.remainder_atoms:
-        tx.vout.append(TxOut(terms.token_asset, plan.remainder_atoms,
-                             sale.cov.script_pubkey))
+        # A capped sale's rest goes to the address of its next state: the
+        # same covenant with only this buyer's running total raised.
+        rest_spk = (sale.cov.spk(sale.cov.after(plan.position, plan.token_atoms))
+                    if capped else sale.cov.script_pubkey)
+        tx.vout.append(TxOut(terms.token_asset, plan.remainder_atoms, rest_spk))
     elif non_token_change:
         asset = non_token_change[0]
         tx.vout.append(TxOut(asset, change.pop(asset), change_spk))
@@ -345,23 +351,32 @@ def build_buy(sale, plan, buyer, hrp="tb"):
     # script, which the node supplied when the inputs were verified; without
     # that there is no PSET, and the raw transaction still stands.
     pset_b64 = None
-    if all(i.get("script_pubkey") for i in ins):
+    if not capped and all(i.get("script_pubkey") for i in ins):
         spent = [{"asset": terms.token_asset, "atoms": sale.locked_atoms,
                   "script_pubkey": sale.cov.script_pubkey}]
         spent += [{"asset": str(i["asset"]).lower(), "atoms": int(i["value_atoms"]),
                    "script_pubkey": i["script_pubkey"]} for i in ins]
         pset_b64 = PSET.from_transaction(tx, spent)
 
+    spent_outputs = None
+    if all(i.get("script_pubkey") for i in ins):
+        spent_outputs = [TxOut(terms.token_asset, sale.locked_atoms, sale.cov.script_pubkey).serialize().hex()]
+        spent_outputs += [TxOut(str(i["asset"]).lower(), int(i["value_atoms"]),
+                                bytes.fromhex(i["script_pubkey"])).serialize().hex() for i in ins]
     return {
         "unsigned_tx_hex": tx.hex(),
+        "spent_outputs": spent_outputs,
         "pset": pset_b64,
         "txid": tx.txid(),
-        "vsize_estimate": _vsize(tx, ins),
+        "vsize_estimate": _vsize(tx, ins, _capped_witness_bytes() if capped else 0),
         "inputs": [
             {"index": 0, "role": "the sale covenant",
              "outpoint": "%s:%d" % (funding["txid"], funding["vout"]),
-             "signing": "none: the sell leaf is introspection-driven, and its "
-                        "witness is already in this transaction"},
+             "signing": ("the key on the allocation list signs the covenant's sighash; Levo "
+                         "then builds this input's witness around that signature")
+             if capped else
+             "none: the sell leaf is introspection-driven, and its "
+             "witness is already in this transaction"},
         ] + [
             {"index": n + 1, "role": "yours",
              "outpoint": "%s:%d" % (i["txid"], i["vout"]),
@@ -375,6 +390,11 @@ def build_buy(sale, plan, buyer, hrp="tb"):
             for n, o in enumerate(tx.vout)
         ],
     }
+
+
+def _capped_witness_bytes():
+    import capped as CAP
+    return CAP.WITNESS_BYTES
 
 
 def _role(n, o, sale, plan):
@@ -410,7 +430,7 @@ def _assert_balanced(tx, sale, plan, supplied):
         raise BuildError("transaction does not balance: %s" % detail)
 
 
-def _vsize(tx, buyer_inputs):
+def _vsize(tx, buyer_inputs, covenant_witness_bytes=0):
     """A weight estimate that accounts for the signatures still to be added.
 
     The covenant input's witness is already present; each buyer input still
@@ -423,6 +443,7 @@ def _vsize(tx, buyer_inputs):
     for i in buyer_inputs if isinstance(buyer_inputs, list) else [{}] * int(buyer_inputs):
         spk = str(i.get("script_pubkey") or "") if isinstance(i, dict) else ""
         total += 66 if spk.startswith("51") else 108
+    total += int(covenant_witness_bytes)
     weight = base * 3 + total
     return (weight + 3) // 4
 

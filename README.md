@@ -29,6 +29,11 @@ enforced by consensus:
   transaction unsigned; only the buyer's wallet can complete it.
   [doc/how-a-sale-settles.md](doc/how-a-sale-settles.md) walks that
   transaction output by output, and what the leaf does and does not check.
+- **Capped sales**, enforced by consensus. A sale listed with an allocation
+  list sells only to the keys on it, each up to its own cap: the list and every
+  buyer's running total are in the sale's address, and the chain refuses a
+  purchase past a cap, or by a key not on the list, whoever builds it. See
+  [doc/capped-sales.md](doc/capped-sales.md).
 - **Signed-message login**, a signature Levo checks. An account is a public key.
   Levo issues a challenge, a wallet signs it, and Levo recovers the key from the
   signature. The signed text has to be the issued challenge, word for word.
@@ -49,9 +54,10 @@ enforced by consensus:
   page.
 
 Two things are deliberately **not** consensus, and the code says so wherever
-they appear. **Per-buyer tier caps are Levo's allocation policy.** The sell leaf
-has a minimum purchase but no maximum, and it is permissionless by design; see
-[doc/tiers-are-policy.md](doc/tiers-are-policy.md). **The close date opens the
+they appear. **In an ordinary sale, per-buyer tier caps are Levo's allocation
+policy.** The sell leaf has a minimum purchase but no maximum, and it is
+permissionless by design; see [doc/tiers-are-policy.md](doc/tiers-are-policy.md).
+A capped sale is the exception, by construction. **The close date opens the
 reclaim path; it does not shut the sell path.** Levo stops planning purchases at
 the close, but a buyer who builds the transaction can still fill a sale until
 the project reclaims what is left.
@@ -149,6 +155,7 @@ fonts are served by the app itself. How it works says the same to visitors.
 | `levod/` | The backend. Pure Python, standard library only. Serves the API and the built app from one origin. |
 | `levod/server.py` | The service: the API under `/api/` and the built app, one origin. Every page is served with its own title and description in its head, a sale's page with the sale's name and one-liner, so a link previews as what it points at wherever it is shared. `levod/demo.py` is the same server over a stub node, with three seeded sales: one open, one not yet funded, one reclaimed. |
 | `levod/covenant.py` | The sale covenant, checked byte for byte against `levod/vectors.json` on every import. |
+| `levod/capped.py`, `levod/capped_sale/`, `levod/sequentia_address.py` | The capped sale: the `sequentia/capped-sale` covenant of sequentia-contracts, vendored and pinned (`capped_sale/PIN.json`, checked on every import), the compiler-free address code it is derived with, and the purchase witness built through `seqc`. |
 | `levod/sale.py`, `levod/market.py` | The sale lifecycle (lock, sell, reclaim) and the marketplace rules: listing, the settlement plan, the per-buyer caps, the ledger. |
 | `levod/tiers.py` | The tier policy, and the `LEVOD_TIERS` table it reads. |
 | `levod/rails.py` | The USDX and BTC payment rails and their quotes. |
@@ -165,7 +172,7 @@ fonts are served by the app itself. How it works says the same to visitors.
 | `levod/tests/cdp.py` | A small Chrome DevTools client, so the browser suite can press the buttons rather than only look at the pixels. |
 | `web/` | The single-page app: Vite and React, plain CSS, fonts served from the app itself. |
 | `contrib/` | The deploy script, the systemd units (sandboxed), an environment file to fill in, a backup timer for the state file, a five-minute health check, and an alert hook that tells a person when a unit fails, with the restore drill in its README. |
-| `doc/` | The HTTP API ([`api.md`](doc/api.md)), how a sale settles, why tier caps are policy, and why delegated stake counts for its owner. |
+| `doc/` | The HTTP API ([`api.md`](doc/api.md)), how a sale settles, capped sales, why tier caps are policy, and why delegated stake counts for its owner. |
 
 ## Running it
 
@@ -222,6 +229,8 @@ bin/levo buy helios-grid --tokens 40                 # picks unblinded inputs, b
 | `SEQUENTIA_WALLET` | Passed as `-rpcwallet`, when several wallets are loaded. |
 | `LEVO_SIGN_WIF` | Sign in with this key instead of a wallet address. A staker who signs in with the staking key's WIF is recognised at once; there is nothing to link. Without it, the first sign-in creates a legacy address labelled `levo-login` and every later sign-in reuses it, so the account stays the same key. The node's message signing works with legacy addresses only. |
 | `LEVO_RECLAIM_KEY` | The 32-byte hex reclaim secret, for `levo reclaim` (or pass `--reclaim-key`). |
+| `LEVO_BUYER_KEY` | A capped sale's buyer: the 32-byte hex secret of a key on its allocation list, for `levo buy` (or pass `--buyer-key`). |
+| `LEVO_SEQC` | The contracts toolchain's `seqc`, with which `levo buy` computes a capped purchase's signature hash on this machine (or pass `--seqc`). |
 | `LEVO_TRACE` | Set to `1` to print the full traceback when a command fails, instead of the one-line sentence. |
 
 `levo --help` lists every command: `sales`, `show`, `verify`, `whoami`,
@@ -251,6 +260,7 @@ python3 levod/tests/test_e2e.py   # the API end to end, against a stub node
 python3 levod/tests/test_node.py  # the whole life of a sale against a real sequentiad; skipped without one
 python3 levod/tests/test_render.py # every page, in a real browser; skipped without a chromium
 python3 levod/tests/test_cli.py   # bin/levo end to end against a real node; skipped without one
+python3 levod/tests/test_capped.py # a capped sale end to end: real node, levod, bin/levo; skipped without a node or seqc
 python3 levod/tests/test_browser.py # a purchase made in a browser, with a wallet; skipped without either
 npm --prefix web test             # the formatters, the parsers, and the guards that walk the sources
 npm --prefix web run build        # the frontend gate
@@ -274,7 +284,11 @@ funding and mines it again, a reorg that takes one away for good, a purchase
 whose fee is paid in a third asset -- neither the sale's nor bitcoin, which is
 what an open fee market means -- prices whose arithmetic does not come out even,
 where Levo's ceiling and the leaf's have to agree atom for atom, and every spend
-the covenant must refuse.
+the covenant must refuse. The capped-sale test runs the same kind of chain with
+Simplicity active and `LEVOD_SEQC` set: a capped sale listed and locked, two
+buyers through `bin/levo` (one up to exactly its cap, then refused one lot
+more), a key not on the list refused, a purchase built outside Levo that levod
+follows by finding which key made it, and the reclaim after the close.
 
 The render test starts the demo server and paints every route in a headless
 Chromium, failing on a console error or a page that painted nothing. It is
@@ -316,7 +330,10 @@ pays the treasury those terms derive exactly what was quoted, that any
 remainder goes back to the sale address, that the tokens arrive at the address
 that was asked for, and that nothing pays anywhere else; the reclaim rebuilds
 the sweep itself and refuses unless the sighash it is being asked to sign is
-the one that falls out of its own build. A signature is over a hash, and a hash
+the one that falls out of its own build. For a capped sale the buy also checks
+that the state the sale shows derives the address its coin is at on the node,
+and computes the signature hash it signs with its own `seqc`, refusing if
+levod's differs. A signature is over a hash, and a hash
 says nothing about what it hashes, so the only safe check is the one made
 before signing.
 
@@ -420,6 +437,7 @@ reaches the box nowhere else.
 | `LEVOD_LINKS` | — | JSON of label to URL for the rest of the deployment, shown in the footer. Four labels are also used in the text: `Extension` (where to get the browser extension, which is what signs in here in one click), `Wallet`, `Faucet` and `Staking pools`. |
 | `LEVOD_REGISTRY_URL` | — | An asset registry, read as `<url>/<asset id>`. A listing whose ticker or decimals contradict a registered contract is refused; an unregistered asset lists as it is. A registry that cannot be reached blocks nothing. |
 | `LEVOD_WATCH_SECONDS` | `60` | How often the watcher reconciles. |
+| `LEVOD_SEQC` | `seqc` on `PATH` | The contracts toolchain's `seqc`, which builds a capped sale's purchase witness ([doc/capped-sales.md](doc/capped-sales.md)). Without it capped sales are listed and watched, and their purchases cannot be built. |
 | `LEVOD_REQUEST_DEADLINE` | `20` | Seconds one request may take from its first byte to its last, head and body together. A socket timeout re-arms on every read and bounds nothing on its own; this is the wall clock. |
 | `LEVOD_PER_PEER` | `8` | Handler slots one address may hold at once. Addresses in `LEVOD_TRUSTED_PROXIES` are exempt, because every request behind a proxy arrives from the same address. Set it 0 to disable. |
 | `LEVOD_CLIENT_TIMEOUT` | `10` | Seconds one connection may take to send its request. A client that opens a socket and stops holds a handler slot for exactly this long. Raise it only where levod is exposed directly to slow links rather than through a reverse proxy. |

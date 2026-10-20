@@ -1,0 +1,12 @@
+{
+ "repository": "ConcatenaLabs/sequentia-contracts",
+ "commit": "e94ab989ee1d143a2806a3e0dd1fc59cb795570d",
+ "template": "templates/capped_sale",
+ "template_hash": "9406d4247e602c013533c273316c0ab319ed41019aac59d39b102e8710556692",
+ "cmr": "f0f4d36070868cddd059d538f188c27a79a0ce83e908ada7bf2b0be89d64532e",
+ "files": {
+  "capped_sale/descriptor.json": "d1b2d0497d701185073ec4f9493d3e6602fc86c7385f95622b919c5c93277fa1",
+  "capped_sale/capped_sale.simf": "e1ced324833b41a53117002c1fd6093c6a0cb1e9d7bedf058da5243b20da4dca",
+  "sequentia_address.py": "a4ac727c3f24efa5c14f774f79700a1c3908bfad44e0d907627708320f27e67e"
+ }
+}

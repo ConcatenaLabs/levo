@@ -1358,7 +1358,8 @@ class Handler(BaseHTTPRequestHandler):
                 b = self._body()
                 plan = app.market.plan_buy(acct, slug,
                                            token_atoms=b.get("token_atoms"),
-                                           payment_atoms=b.get("payment_atoms"))
+                                           payment_atoms=b.get("payment_atoms"),
+                                           buyer_key=b.get("buyer_key"))
                 plan["quote"] = app.rails.quote(b.get("rail") or R.USDX, plan["payment_atoms"])
                 return self._json(200, plan)
             if action == "transaction":
@@ -1366,6 +1367,11 @@ class Handler(BaseHTTPRequestHandler):
                 b = self._body()
                 built = app.market.build_buy(acct, slug, b, b.get("buyer") or {})
                 return self._json(200, built)
+            if action == "finalize":
+                acct = self._require_account()
+                b = self._body()
+                return self._json(200, app.market.finalize_buy(acct, slug, b.get("txid"),
+                                                               b.get("signature")))
             if action == "reclaim":
                 acct = self._require_account()
                 return self._json(200, app.market.build_reclaim(acct, slug, self._body()))
@@ -1784,6 +1790,7 @@ API_METHODS = (
     (("projects", "*", "lock"), ["POST"]),
     (("projects", "*", "buy"), ["POST"]),
     (("projects", "*", "transaction"), ["POST"]),
+    (("projects", "*", "finalize"), ["POST"]),
     (("projects", "*", "confirm"), ["POST"]),
     (("projects", "*", "reclaim"), ["POST"]),
     (("projects", "*", "withdraw"), ["POST"]),

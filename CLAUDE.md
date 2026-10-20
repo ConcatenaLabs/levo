@@ -6,7 +6,8 @@ holds the project's tokens from lock to delivery.
 `README.md`'s "What is real" section is the most important thing in the repo.
 The sale covenant is enforced by consensus; the signed-message login and the
 stake weights are real facts Levo checks against a signature and the chain.
-Per-buyer tier caps and the tier boundaries are Levo's policy. The close date
+Per-buyer tier caps and the tier boundaries are Levo's policy, except in a
+capped sale, whose allocation list and running totals are in its address. The close date
 opens the reclaim path and does not shut the sell path, and a project can
 always buy its own sale out at the published price. Never blur any of those
 lines, in code or in copy.
@@ -61,6 +62,17 @@ mislead but cannot rob.
   locked under the old bytes are not at the address the new bytes derive. Never
   regenerate the vectors to make a failing check pass; that is a migration, and
   existing sales must be closed out under the old bytes first.
+- **`levod/capped_sale/` is pinned.** The capped sale is sequentia-contracts'
+  `sequentia/capped-sale` template, vendored with its address code
+  (`levod/sequentia_address.py`) and checked against `capped_sale/PIN.json` on
+  every import. Update it only by copying a new commit's files and PIN
+  together; a changed program is a new template and moves every capped sale's
+  address. `capped.run_seqc` refuses a `seqc` that compiles another root.
+- **A capped sale's address moves with every purchase.** Its state is in the
+  address, so `sale.script_pubkey` is the CURRENT state's, the remainder of a
+  purchase goes to the next state's, and the watcher follows the coin
+  (`_follow_capped`) before anything reads the address. Never compare a capped
+  remainder with the current address.
 - **The internal key must be NUMS.** Any other internal key gives the project a
   taproot key path, and therefore a way to spend a live sale out from under its
   buyers. `SaleCovenant` refuses to build one; keep it that way.
