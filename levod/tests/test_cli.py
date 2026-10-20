@@ -57,7 +57,7 @@ class Checker:
 class Levod:
     """The real server, against the rig's node, on a port of its own."""
 
-    def __init__(self, rig, port, payment_asset, state=None, operator=None):
+    def __init__(self, rig, port, payment_asset, state=None, operator=None, extra_env=None):
         self.rig, self.port, self.payment_asset = rig, port, payment_asset
         self.state = state or Path(tempfile.mkdtemp()) / "state.json"
         env = dict(
@@ -78,6 +78,7 @@ class Levod:
         )
         if operator:
             env["LEVOD_OPERATORS"] = operator
+        env.update(extra_env or {})
         self.log = open(os.path.join(tempfile.mkdtemp(), "levod.log"), "w+")
         self.proc = subprocess.Popen([sys.executable, str(ROOT / "levod" / "server.py")],
                                      stdout=self.log, stderr=subprocess.STDOUT, env=env)

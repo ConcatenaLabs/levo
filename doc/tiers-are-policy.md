@@ -5,6 +5,10 @@ chain. Conflating them would be the most consequential lie the interface could
 tell, so this note states the split, and the code repeats it wherever a cap is
 returned.
 
+A **capped sale** is the exception: listed with an allocation list, its address
+commits to every buyer's key and cap, and the chain enforces them
+([capped-sales.md](capped-sales.md)). What follows is about the ordinary sale.
+
 ## What the covenant enforces
 
 A sale's sell leaf checks, on every spend:
@@ -66,7 +70,9 @@ censor. A platform signature in the sell leaf would let Levo block a purchase,
 which is exactly the power this design refuses to have.
 
 The honest trade is to keep the covenant permissionless and label the caps
-accurately.
+accurately. A capped sale makes the other trade without a platform signature:
+each buyer's own key signs their purchase, the list is fixed in the address
+before the sale is funded, and the sale still settles with nobody else online.
 
 ## Where this is stated in the code
 

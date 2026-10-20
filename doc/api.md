@@ -158,7 +158,11 @@ listed as it is, and the sale page says which of the two it is.
 `terms`: `token_asset`, `price_num`, `price_den`, `min_lot`, `total_atoms`,
 `close_locktime`, `reclaim_xonly`, and the treasury as either `treasury_address`
 or `treasury_prog` (+ `treasury_ver`). The price is stored in lowest terms, so
-the response is what the address was derived from.
+the response is what the address was derived from. `allocations`, a list of
+`{key, cap_atoms}` (an x-only public key in hex and the most that key may buy,
+in token atoms), makes the sale a capped sale: its address commits to the list
+and the chain enforces every cap ([capped-sales.md](capped-sales.md)). A key
+may appear once, and every cap is at least the minimum purchase.
 
 A listing whose terms derive an address another listing already has is refused:
 two sales sharing one covenant could not be told apart on chain, and a buy from
@@ -202,10 +206,13 @@ Levo's own ledger for that sale, newest first, with `limit`, `offset` and
 
 ## Buying
 
-**`POST /api/projects/<slug>/buy`** `{token_atoms | payment_atoms, rail?}`
-(session) → the plan: what it costs at the covenant's own ceiling price, what
-is left after it, the caller's cap, fee advice, and a quote when the rail is
-BTC.
+**`POST /api/projects/<slug>/buy`** `{token_atoms | payment_atoms, rail?,
+buyer_key?}` (session) → the plan: what it costs at the covenant's own ceiling
+price, what is left after it, the caller's cap, fee advice, and a quote when
+the rail is BTC. A capped sale needs `buyer_key`, the key on its allocation
+list that will sign; its plan's `cap` is that key's, with `enforced_by:
+"consensus"`, and a purchase past it is refused here as the chain would refuse
+it.
 
 **`POST /api/outputs/check`** `{outputs: [{txid, vout}]}` (session) → for each,
 whether a covenant purchase can spend it, with the asset and amount. A
@@ -225,6 +232,22 @@ the unsigned transaction as hex and as a PSET, with every output described.
 `change_address`, `inputs`, `fee_atoms` and optional `fee_asset`. levod signs
 nothing: the covenant input needs no signature and the buyer's inputs can only
 be signed by the buyer.
+
+For a capped sale the body also carries `buyer_key`, there is no PSET, and the
+response carries `covenant`: the `sighash` the buyer's key signs (BIP340, over
+the program's `sig_all_hash`, which commits to the whole transaction) and the
+`next_state_root` the purchase leaves. Output 1 re-rests the remainder at the
+address of that next state, not at the current one. A client recomputes the
+sighash itself before signing, from the transaction and the outputs it spends
+(`seqc run`, as `levo buy` does), and never signs the one it was sent.
+
+**`POST /api/projects/<slug>/finalize`** `{txid, signature}` (session, the
+account the purchase was built for) → `{txid, tx_hex}`: a capped purchase levod
+built, with its covenant input's witness in place. levod checks the signature
+against the buyer's key, runs the program against the transaction with it, and
+refuses a purchase the program refuses, with the program's reason. The
+transaction id is unchanged; the buyer's wallet then signs its own inputs and
+broadcasts.
 
 The `outputs` array is levod's description of what it built, and a client
 should not settle for it: decode `unsigned_tx_hex` and check the transaction

@@ -28,7 +28,9 @@ of the fee. It cannot take the tokens by any other route, and it cannot change
 the terms a buyer sees.
 
 What the covenant does NOT enforce, and therefore what Levo must not overstate:
-a per-buyer maximum. The sell leaf has a floor (`min_lot`) but no ceiling, and
+a per-buyer maximum -- in an ordinary sale. A capped sale (capped.py) is the
+exception: its allocation list and every buyer's running total are in its
+address, and the chain refuses a purchase past a cap. The sell leaf has a floor (`min_lot`) but no ceiling, and
 it is permissionless by design -- anybody who can build the transaction may buy,
 whether or not they came through Levo. Tier caps are a platform allocation
 policy, honestly enforced on every purchase Levo plans, and they are not a
@@ -140,6 +142,20 @@ class Sale:
     @property
     def script_pubkey(self):
         return self.cov.spk_hex
+
+    @property
+    def capped(self):
+        """Whether each buyer's cap is the chain's: a capped sale (capped.py)."""
+        return bool(getattr(self.cov, "capped", False))
+
+    def advance(self, bought):
+        """A capped sale's coin now holds this state (one `bought` per list
+        position). It only ever grows."""
+        bought = [int(b) for b in bought]
+        if len(bought) != len(self.cov.bought) or any(
+                b < a or b > c for a, b, c in zip(self.cov.bought, bought, self.cov.caps)):
+            raise SaleError("a capped sale's running totals only grow, and never past a cap")
+        self.cov.bought = bought
 
     def verify_funding_spk(self, onchain_spk):
         return self.cov.verify_funding(onchain_spk)
@@ -281,7 +297,7 @@ class Sale:
         return max(0, tier.cap_atoms - self.allocations.get(account, 0))
 
     def plan_buy(self, account, tier, token_atoms=None, payment_atoms=None,
-                 height=None, now=None):
+                 height=None, now=None, buyer_key=None):
         """Work out the exact purchase, or explain precisely why it cannot happen.
 
         Either ask for a number of tokens or offer an amount of payment; the
@@ -293,7 +309,20 @@ class Sale:
             shown = CLOSED if (self.status in (LIVE, PARTIAL)
                                and self.has_closed(height=height, now=now)) else self.status
             raise SaleError("this sale is not open (%s)" % shown.replace("_", " "))
-        if tier.cap_atoms <= 0:
+        position = None
+        if self.capped:
+            # The cap is the chain's: the allocation list in the sale's
+            # address and the running total in its state. Levo's tiers chose
+            # the list; they do not stand in front of it.
+            if not buyer_key:
+                raise SaleError("a capped sale sells only to the keys on its allocation list: "
+                                "say which key buys (buyer_key)")
+            import capped as CAP
+            try:
+                position = self.cov.position(buyer_key)
+            except CAP.CappedError as e:
+                raise SaleError(str(e))
+        elif tier.cap_atoms <= 0:
             raise SaleError("your tier cannot buy; stake Sequence to reach a tier "
                             "with a cap")
 
@@ -325,6 +354,17 @@ class Sale:
                    self.tokens(locked)))
 
         cost = self.terms.cost_for(token_atoms)
+
+        if position is not None:
+            left = self.cov.left_for(position)
+            if token_atoms > left:
+                raise CapExceeded(
+                    "this key may buy %s more from this sale, and the covenant refuses a purchase "
+                    "past it: the cap is in the sale's address, not Levo's ledger"
+                    % self.tokens(left), self.terms.cost_for(left) if left >= self.terms.min_lot else 0)
+            return BuyPlan(sale=self, account=account, token_atoms=token_atoms,
+                           payment_atoms=cost, remainder_atoms=remainder,
+                           covenant_input_index=0, position=position)
 
         allowance = self.allowance_for(account, tier)
         if cost > allowance:
@@ -412,7 +452,7 @@ class Sale:
         if cand not in self.candidates:
             self.candidates = (self.candidates + [cand])[-8:]
 
-    def note_build(self, txid, account, token_atoms, payment_atoms, spends):
+    def note_build(self, txid, account, token_atoms, payment_atoms, spends, capped=None):
         """Levo built this purchase, for this account, against this outpoint.
 
         The transaction id is known before anything is signed: a segwit id
@@ -433,6 +473,14 @@ class Sale:
                  "token_atoms": int(token_atoms), "payment_atoms": int(payment_atoms),
                  "spends": {"txid": str(spends["txid"]).lower(), "vout": int(spends["vout"])},
                  "at": int(time.time())}
+        if capped is not None:
+            # A capped sale's rest lands at a new address, the one this
+            # purchase's state derives; the watcher follows it from here
+            # rather than from an output-1 hint at the old address.
+            entry["capped"] = dict(capped)
+            kept = [b for b in self.builds if b.get("txid") != txid]
+            self.builds = (kept + [entry])[-MAX_BUILDS:]
+            return
         kept = [b for b in self.builds if b.get("txid") != txid]
         self.builds = (kept + [entry])[-MAX_BUILDS:]
         # And the watcher looks for its remainder at output 1 from now on,
@@ -466,6 +514,10 @@ class Sale:
         self.candidates = []
         self.builds = []           # built against an outpoint that no longer exists
         self.allocations = {}
+        if self.capped:
+            # The purchases went with the funding, and so did their totals: a
+            # sale locked again starts at its first address, every key at zero.
+            self.cov.bought = [0] * len(self.cov.bought)
         for entries in self.purchases.values():
             for e in entries:
                 e["voided"] = True
@@ -517,7 +569,17 @@ class Sale:
             "reclaim_txids": list(self.reclaim_txids),
             "strays": list(self.strays),
             "created_at": self.created_at,
+            **({"capped": self.capped_json()} if self.capped else {}),
         }
+
+    def capped_json(self):
+        """A capped sale's allocation list with each key's running total, as
+        the coin's state holds it, and what binds: the chain."""
+        cov = self.cov
+        return {"enforced_by": "consensus", "state_root": cov.root(),
+                "funding_script_pubkey": cov.first_spk_hex,
+                "allocations": [{"key": k, "cap_atoms": atoms_out(c), "bought_atoms": atoms_out(b)}
+                                for k, c, b in zip(cov.keys, cov.caps, cov.bought)]}
 
 
 def _atoms(v, name):
@@ -544,7 +606,8 @@ class BuyPlan:
     """
 
     def __init__(self, sale, account, token_atoms, payment_atoms,
-                 remainder_atoms, covenant_input_index=0):
+                 remainder_atoms, covenant_input_index=0, position=None):
+        self.position = position
         self.sale = sale
         self.account = account
         self.token_atoms = token_atoms
@@ -563,6 +626,8 @@ class BuyPlan:
             "why": "the sell leaf checks this output pays the project at least "
                    "the ceiling price for what you take",
         }]
+        if self.position is not None:
+            return self._capped_json(outputs)
         if self.remainder_atoms:
             outputs.append({
                 "index": 2 * self.k + 1,
@@ -594,5 +659,46 @@ class BuyPlan:
                 "atoms": self.token_atoms,
                 "why": "the tokens you bought; put them at any output the "
                        "covenant does not check (index 2 or later)",
+            },
+        }
+
+    def _capped_json(self, outputs):
+        t = self.sale.terms
+        cov = self.sale.cov
+        if self.remainder_atoms:
+            nxt = cov.after(self.position, self.token_atoms)
+            outputs.append({
+                "index": 2 * self.k + 1,
+                "role": "unsold remainder, re-rested in the next state",
+                "asset": t.token_asset,
+                "exact_atoms": atoms_out(self.remainder_atoms),
+                "script_pubkey": cov.spk(nxt).hex(),
+                "why": "the program requires the rest at the sale's address for the state in "
+                       "which only your running total has grown by this purchase",
+            })
+        return {
+            "sale": self.sale.project_id,
+            "buyer": self.account,
+            "token_atoms": atoms_out(self.token_atoms),
+            "payment_atoms": atoms_out(self.payment_atoms),
+            "remainder_atoms": atoms_out(self.remainder_atoms),
+            "covenant": {
+                "kind": "capped",
+                "input_index": self.k,
+                "outpoint": self.sale.funding,
+                "script_pubkey": self.sale.script_pubkey,
+                "buyer_key": cov.keys[self.position],
+                "position": self.position,
+                "cap_atoms": atoms_out(cov.caps[self.position]),
+                "bought_atoms": atoms_out(cov.bought[self.position]),
+                "note": "the buyer's key signs the whole purchase; the program checks the key is "
+                        "on the allocation list and its running total stays within its cap",
+            },
+            "required_outputs": outputs,
+            "your_tokens": {
+                "asset": t.token_asset,
+                "atoms": self.token_atoms,
+                "why": "the tokens you bought; put them at any output the covenant does not "
+                       "check (index 2 or later)",
             },
         }

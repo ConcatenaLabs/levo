@@ -23,6 +23,7 @@ import time
 from urllib.parse import urlparse
 
 import address as ADDR
+import capped as CAP
 import covenant as C
 import registry as REG
 import rpc as RPCMOD
@@ -540,6 +541,8 @@ class Platform:
                 sl.builds = list(sd.get("builds") or [])[-S.MAX_BUILDS:]
                 sl.reclaim_txids = list(sd.get("reclaim_txids") or [])
                 sl.strays = list(sd.get("strays") or [])[:MAX_STRAYS_KEPT]
+                if sl.capped and sd.get("capped_bought") is not None:
+                    sl.advance(sd["capped_bought"])
                 # The address is what everything about a sale rests on: the
                 # watcher reads it, buyers pay it, and the reclaim spends it.
                 # If the terms in this file derive an address other than the
@@ -610,6 +613,8 @@ class Platform:
                     d["sale"]["strays"] = [dict(x) for x in p.sale.strays]
                     d["sale"]["funding"] = dict(p.sale.funding) if p.sale.funding else None
                     d["sale"]["reclaim_txids"] = list(p.sale.reclaim_txids)
+                    if p.sale.capped:
+                        d["sale"]["capped_bought"] = [int(b) for b in p.sale.cov.bought]
                     d["sale"]["created_at"] = p.sale.created_at
                     # Written so a later load can check the terms still derive
                     # it. Nothing reads it but that check.
@@ -1043,7 +1048,7 @@ class Platform:
 
     # --- buying -------------------------------------------------------------
 
-    def plan_buy(self, account, slug, token_atoms=None, payment_atoms=None):
+    def plan_buy(self, account, slug, token_atoms=None, payment_atoms=None, buyer_key=None):
         p = self._project(slug)
         if p.sale is None:
             raise PlatformError("this project has no sale")
@@ -1051,8 +1056,22 @@ class Platform:
         tier = self.stake.policy.for_stake(standing["stake_atoms"])
         height = self.height(strict=p.sale.close_is_height())
         plan = p.sale.plan_buy(account, tier, token_atoms=token_atoms,
-                               payment_atoms=payment_atoms, height=height)
+                               payment_atoms=payment_atoms, height=height,
+                               buyer_key=buyer_key)
         out = plan.to_json()
+        if p.sale.capped:
+            cov = p.sale.cov
+            out["tier"] = tier.to_json()
+            out["sale_address"] = self.sale_address(p.sale)
+            out["cap"] = {
+                "per_sale_token_atoms": S.atoms_out(cov.caps[plan.position]),
+                "bought_token_atoms": S.atoms_out(cov.bought[plan.position]),
+                "enforced_by": "consensus",
+                "note": "this sale's caps are in its address: the covenant sells only to the keys "
+                        "on its allocation list, each up to its cap, whoever builds the purchase",
+            }
+            out["fee"] = self.fee_advice(p.sale, n_inputs=2)
+            return out
         out["tier"] = tier.to_json()
         out["allowance_after_atoms"] = p.sale.allowance_for(account, tier) - plan.payment_atoms
         out["sale_address"] = self.sale_address(p.sale)
@@ -1087,6 +1106,10 @@ class Platform:
         if vsize is None:
             base = RECLAIM_BASE_VSIZE if kind == "reclaim" else BUY_BASE_VSIZE
             vsize = base + PER_INPUT_VSIZE * max(1, int(n_inputs))
+            if kind == "buy" and getattr(sale, "capped", False):
+                # The capped sale's witness: its program, its proof and the
+                # buyer's signature, about 2.6 kB.
+                vsize += -(-CAP.WITNESS_BYTES // 4)
         vsize = int(vsize)
         out = {"asset": asset, "vsize_estimate": vsize,
                "min_atoms": None, "suggested_atoms": None, "rate_atoms_per_kvb": None}
@@ -1127,7 +1150,7 @@ class Platform:
         plan = p.sale.plan_buy(account, tier,
                                token_atoms=plan_json.get("token_atoms"),
                                payment_atoms=plan_json.get("payment_atoms"),
-                               height=height)
+                               height=height, buyer_key=plan_json.get("buyer_key"))
         # The outpoint the plan spends has to be unspent NOW, with the mempool
         # included. Between a buy being broadcast and the watcher noticing,
         # every transaction built against the old outpoint would be a double
@@ -1182,13 +1205,16 @@ class Platform:
                 "the fee in another asset"
                 % (p.sale.payment(plan.payment_atoms), p.sale.payment(floor)))
         built = TX.build_buy(p.sale, plan, buyer, hrp=self.hrp)
+        capped = None
+        if p.sale.capped:
+            built, capped = self._capped_build(p.sale, plan, built)
         # Remembered before it is handed over, so the watcher can attribute it
         # when it lands whether or not the buyer comes back to confirm. What is
         # remembered is the plan, not the buyer's inputs: the ledger takes the
         # treasury credit from the chain when it records.
         with self.lock:
             p.sale.note_build(built["txid"], account, plan.token_atoms, plan.payment_atoms,
-                              spends=p.sale.funding)
+                              spends=p.sale.funding, capped=capped)
         self.save()
         built["token_atoms"] = plan.token_atoms
         built["payment_atoms"] = plan.payment_atoms
@@ -1198,6 +1224,68 @@ class Platform:
                                        vsize=built.get("vsize_estimate"))
         built["fee"]["paying_atoms"] = int(buyer["fee_atoms"])
         return built
+
+    def _genesis(self):
+        if self.rpc is None:
+            raise PlatformError("a capped sale's purchase is built against the chain, and this "
+                                "levod has no node")
+        return self.rpc.call("getblockhash", 0)
+
+    def _capped_build(self, sale, plan, built):
+        """The signature hash a capped purchase's buyer signs, from the
+        program itself, and what `finalize_buy` needs later."""
+        cov = sale.cov
+        if not built.get("spent_outputs"):
+            raise PlatformError("a capped sale's purchase commits to every output it spends, so "
+                                "Levo needs each input's script; the node did not supply them")
+        try:
+            sighash = cov.sighash(built["unsigned_tx_hex"], built["spent_outputs"], 0, self._genesis())
+        except CAP.CappedError as e:
+            raise PlatformError(str(e))
+        capped = {"position": plan.position, "amount": plan.token_atoms,
+                  "bought": [int(b) for b in cov.bought],
+                  "unsigned_tx_hex": built["unsigned_tx_hex"],
+                  "spent_outputs": list(built["spent_outputs"])}
+        built["covenant"] = {
+            "kind": "capped", "input_index": 0, "sighash": sighash,
+            "buyer_key": cov.keys[plan.position],
+            "sign": "BIP340, with the key on the allocation list, over this sighash: the program's "
+                    "sig_all_hash, which commits to this whole transaction. Recompute it before "
+                    "signing (`seqc run` on the transaction), then send the signature to "
+                    "finalize, which returns the transaction with this input's witness",
+            "next_state_root": cov.root(cov.after(plan.position, plan.token_atoms)),
+        }
+        return built, capped
+
+    def finalize_buy(self, account, slug, txid, signature):
+        """A capped purchase Levo built, with the buyer's signature: the same
+        transaction, its covenant input's witness in place. Levo signs
+        nothing; the program is run against the transaction with that
+        signature, and a purchase the program refuses is refused here, with
+        its reason, before the buyer's wallet signs anything."""
+        p = self._project(slug)
+        if p.sale is None or not p.sale.capped:
+            raise PlatformError("only a capped sale's purchase is finalized; an ordinary sale's "
+                                "covenant witness is already in the transaction")
+        txid = str(txid or "").strip().lower()
+        with self.lock:
+            build = next((dict(b) for b in p.sale.builds if b.get("txid") == txid), None)
+        if build is None or not build.get("capped"):
+            raise PlatformError("Levo built no capped purchase with that id, or it has been "
+                                "dropped; build the purchase again")
+        if build.get("account") != account:
+            raise PlatformError("that purchase was built for another account")
+        c = build["capped"]
+        try:
+            stack = p.sale.cov.witness(c["unsigned_tx_hex"], c["spent_outputs"], 0, self._genesis(),
+                                       int(c["position"]), int(c["amount"]), signature,
+                                       bought=c["bought"])
+        except CAP.CappedError as e:
+            raise PlatformError(str(e))
+        tx_hex = TX.set_witness(c["unsigned_tx_hex"], 0, [bytes.fromhex(x) for x in stack])
+        return {"txid": txid, "tx_hex": tx_hex,
+                "next": "sign your own inputs (signrawtransactionwithwallet) and broadcast; the "
+                        "covenant input's witness is final and your wallet leaves it alone"}
 
     def _spk(self, body, spk_key, addr_key, what):
         addr = body.get(addr_key)
@@ -2035,6 +2123,23 @@ class Platform:
                 "internal_key": "NUMS -- there is no key path, so the project "
                                 "cannot spend the sale out from under buyers",
                 "sell_leaf": p.sale.cov.sell_leaf.hex(),
+                "reclaim_leaf": p.sale.cov.reclaim_leaf.hex(),
+            } if not p.sale.capped else {
+                "how": "rebuild the capped sale's address from these terms, its allocation list "
+                       "and the running totals shown, with the sequentia/capped-sale descriptor "
+                       "(levod/capped_sale), and compare it to the scriptPubKey of the coin; "
+                       "they must be identical",
+                "committed": list(C.COMMITTED_TERMS) + ["allocations"],
+                "published": list(C.PUBLISHED_TERMS),
+                "what_that_means": "the terms, every buyer's key and cap, and every buyer's "
+                                   "running total are in the address, so a purchase past a cap, "
+                                   "or by a key not on the list, cannot be mined",
+                "script_pubkey": p.sale.script_pubkey,
+                "internal_key": "NUMS -- there is no key path",
+                "template": {"name": "sequentia/capped-sale",
+                             "template_hash": CAP.PIN["template_hash"],
+                             "program_cmr": CAP.CMR, "contracts_commit": CAP.PIN["commit"]},
+                "state_root": p.sale.cov.root(),
                 "reclaim_leaf": p.sale.cov.reclaim_leaf.hex(),
             }
         return d

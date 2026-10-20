@@ -2,8 +2,8 @@
 #
 # Everything here needs no Sequentia node: the unit checks, the API drill over
 # a stub node, the app's own tests and build, and every page rendered in a
-# real browser. The suites that need a chain (test_node, test_cli, the browser
-# purchase) run on a machine that has one, and say so when they skip.
+# real browser. The suites that need a chain (test_node, test_cli, test_capped,
+# the browser purchase) run on a machine that has one, and say so when they skip.
 name: gate
 
 on:
@@ -49,4 +49,5 @@ jobs:
         run: |
           python3 levod/tests/test_node.py
           python3 levod/tests/test_cli.py
+          python3 levod/tests/test_capped.py
           python3 levod/tests/test_browser.py

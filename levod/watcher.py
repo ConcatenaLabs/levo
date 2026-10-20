@@ -73,6 +73,10 @@ BLOCK_SEARCH_LIMIT = 200
 # urgent enough to walk the UTXO set every minute.
 STRAY_SCAN_EVERY = 10
 
+# A capped sale spent by a purchase Levo did not build is followed by reading
+# the blocks since its coin was mined for the spender, this many a poll.
+CAPPED_BLOCKS_A_POLL = 50
+
 # How many foreign outputs a sale reports at its address. Anyone can pay dust
 # to one, and a hundred lines of dust say no more than twenty do.
 MAX_STRAYS = 20
@@ -80,6 +84,7 @@ MAX_STRAYS = 20
 
 class Watcher:
     def __init__(self, market, rpc, interval=60, hrp="tb", log=None, note=None):
+        self._capped_from = {}      # capped sale -> (outpoint, height its spender search reached)
         self.market = market
         self.rpc = rpc
         self.interval = interval
@@ -192,6 +197,17 @@ class Watcher:
         dirty = False
         errors = list(lock_errors)
         pending = []
+
+        # A capped sale's address moves with every purchase, because its state
+        # does: follow the coin to the output its spender rested it at, before
+        # anything below reads the sale's address. First of all, while the
+        # builds that say who bought are still on the sale.
+        for slug, p in sales:
+            if getattr(p.sale, "capped", False):
+                try:
+                    dirty = self._follow_capped(slug, p) or dirty
+                except Exception as e:
+                    errors.append("%s capped: %s" % (slug, e))
 
         # Purchases Levo built and has not yet seen. First, so that a buy the
         # watcher attributes this poll also moves the sale this poll: the
@@ -349,6 +365,117 @@ class Watcher:
                     sale.forget_build(b.get("txid"))
                 changed = True
         return changed
+
+    # --- the capped sale ------------------------------------------------------
+
+    def _follow_capped(self, slug, project):
+        """Move a capped sale to where its last purchase rested it, in the
+        state that purchase left: one buyer's running total raised. Returns
+        whether anything was learned.
+
+        The spender is found, cheapest first, among the purchases Levo built
+        against this outpoint, in the mempool, and in the blocks since the
+        sale's coin was mined. Which buyer bought is read from the chain: the
+        one list position whose next state derives the script the rest landed
+        at. A full buy leaves no rest, and is left to the ordinary path, which
+        ends the sale only on positive evidence.
+        """
+        sale = project.sale
+        f = sale.funding or {}
+        if not f.get("txid") or sale.status in S.FINAL or sale.status == S.GHOST:
+            return False
+        if self.rpc.txout(f["txid"], f["vout"]) is not None:
+            return False
+        cov = sale.cov
+        # Levo's own builds: the position and the amount are known.
+        for b in list(getattr(sale, "builds", None) or []):
+            c = b.get("capped")
+            spends = b.get("spends") or {}
+            if not c or spends.get("txid") != f["txid"] or spends.get("vout") != f["vout"]:
+                continue
+            if [int(x) for x in c.get("bought") or []] != list(cov.bought):
+                continue
+            rest = sale.locked_atoms - int(c["amount"])
+            if rest <= 0:
+                continue
+            nb = cov.after(int(c["position"]), int(c["amount"]))
+            out = self.rpc.txout(b["txid"], 1)
+            if out is None:
+                continue
+            spk = ((out.get("scriptPubKey") or {}).get("hex") or "").lower()
+            if spk == cov.spk(nb).hex() and self._is_token(out, sale):
+                return self._move_capped(sale, nb, b["txid"], 1, _out_atoms(out))
+        # Anyone else's purchase: find the transaction that spent the coin.
+        spender = self._capped_spender(slug, sale)
+        if spender is None:
+            return False
+        raw, k = spender
+        outs = raw.get("vout") or []
+        if len(outs) <= 2 * k + 1:
+            return False
+        o = outs[2 * k + 1]
+        if (o.get("asset") or "").lower() != sale.terms.token_asset or \
+                (o.get("value") is None and o.get("valueatoms") is None):
+            return False                      # no rest: a full buy, for the ordinary path
+        rest = _out_atoms(o)
+        amount = sale.locked_atoms - rest
+        if amount <= 0:
+            return False
+        spk = ((o.get("scriptPubKey") or {}).get("hex") or "").lower()
+        found = cov.follow(spk, amount)
+        if found is None:
+            self.log("watcher: %s: %s spent the capped sale's coin and rested %d atoms at %s…, "
+                     "which no buyer's next state derives; the sale is left where it was"
+                     % (slug, raw.get("txid", "")[:16], rest, spk[:20]))
+            return False
+        _, nb = found
+        return self._move_capped(sale, nb, raw.get("txid"), 2 * k + 1, rest)
+
+    def _move_capped(self, sale, bought, txid, vout, atoms):
+        with self._held():
+            sale.advance(bought)
+            self._rest_locked(sale, str(txid).lower(), int(vout), atoms)
+        self.note("watcher: %s: capped sale moved to %s:%d, its state root %s…"
+                  % (sale.project_id, str(txid)[:16], int(vout), sale.cov.root()[:16]))
+        return True
+
+    def _is_token(self, out, sale):
+        asset = (out.get("asset") or "").lower()
+        return (not asset or asset == sale.terms.token_asset) and not (
+            out.get("valuecommitment") or out.get("amountcommitment") or out.get("assetcommitment"))
+
+    def _capped_spender(self, slug, sale):
+        """(decoded transaction, input index) of the transaction spending the
+        sale's coin: from the mempool, else from the blocks since the coin
+        was mined, at most CAPPED_BLOCKS_A_POLL of them a poll."""
+        f = sale.funding
+        want = (f["txid"], int(f["vout"]))
+        hit = self._mempool_spender(*want)
+        if hit is not None:
+            try:
+                raw = self.rpc.call("getrawtransaction", hit[0], True) or {}
+            except Exception:
+                raw = {}
+            for k, vin in enumerate(raw.get("vin") or []):
+                if (vin.get("txid"), int(vin.get("vout", -1))) == want:
+                    return raw, k
+        tip = int((self.rpc.call("getblockchaininfo") or {}).get("blocks") or 0)
+        start = self._capped_from.get(slug)
+        if start is None or start[0] != want:
+            h = f.get("height") or f.get("ancestor_height") or max(0, tip - CAPPED_BLOCKS_A_POLL)
+            start = (want, int(h))
+        h = start[1]
+        last = min(tip, h + CAPPED_BLOCKS_A_POLL)
+        while h <= last:
+            block = self.rpc.call("getblock", self.rpc.call("getblockhash", h), 2) or {}
+            for raw in block.get("tx") or []:
+                for k, vin in enumerate(raw.get("vin") or []):
+                    if (vin.get("txid"), int(vin.get("vout", -1))) == want:
+                        self._capped_from.pop(slug, None)
+                        return raw, k
+            h += 1
+        self._capped_from[slug] = (want, max(start[1], last - 1))
+        return None
 
     def _announce(self, slug, sale, was):
         """Say what changed, and on what evidence.

@@ -1,5 +1,10 @@
 # How a sale settles
 
+This page is about the ordinary sale. A capped sale settles in the same one
+transaction with the same output map, through a different covenant: its
+purchase is signed by a key on its allocation list and its address moves with
+every purchase ([capped-sales.md](capped-sales.md)).
+
 One transaction. That is the whole design, and everything else here is a
 consequence of it.
 
