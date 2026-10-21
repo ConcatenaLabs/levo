@@ -102,5 +102,8 @@ export const api = {
   checkOutputs: (outputs) => call('POST', '/outputs/check', { outputs }),
   flag: (slug, payload) => call('POST', '/projects/' + slug + '/flag', payload),
   purchases: (slug, params) => call('GET', '/projects/' + slug + '/purchases' + query(params)),
+  leafOrder: (slug) => call('GET', '/projects/' + slug + '/order'),
+  noteTake: (slug, take) => call('POST', '/projects/' + slug + '/takes', { take }),
+  myTakes: (slug) => call('GET', '/projects/' + slug + '/takes'),
   watcher: () => call('GET', '/watcher'),
 }

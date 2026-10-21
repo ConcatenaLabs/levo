@@ -25,7 +25,36 @@ Deriving it per input rather than fixing it is what stops two covenants in one
 transaction from pointing at a single shared payment: input 0 credits output 0,
 input 1 credits output 2, and one payment can never settle two sales.
 
-Levo puts the covenant at input 0, so `k` is 0 in practice.
+Levo puts the covenant at input 0 in every purchase it builds, so `k` is 0
+there. Anyone else may put it elsewhere, and the watcher reads a purchase at
+whatever `k` it spends the sale: a purchase recorded by hand names its input
+(`confirm`'s `input`), and the treasury credit is read at `2k` and the
+remainder at `2k+1`.
+
+## Many buyers in one spend: a round that buys from leaves
+
+A sale whose treasury is a taproot (version-1) output is, opcode for opcode,
+the fill covenant an operator's round reads, so buyers who hold leaves of the
+operator's batches can buy from it without an on-chain coin
+([api.md](api.md), Buying from leaves). The operator's round spends the sale
+once, at its input `k`, for every buyer in it together: it fills the sale by
+the sum of their shares, pays the treasury at `2k` the sale's price for that
+sum (rounded up once, so never more than the shares' own prices together),
+rests the remainder at the sale address at `2k+1`, and pays each buyer a leaf
+of its own share in the round's batch, an output after every covenant's two.
+The covenant judges that spend as it judges any purchase; it reads the sum
+and nothing of the shares, so the minimum purchase of each buyer is the
+operator's to hold, and the operator refuses a share below it.
+
+The shares are leaves inside one batch output, which the chain does not show
+per buyer. levod reads each buyer's share from the operator's status of its
+take, and believes it only as far as the chain agrees: the round spends this
+sale at the input the operator names, pays its treasury at `2k` at least the
+price of the round's whole fill, rests what is left at `2k+1`, and fills at
+least the shares levod records in it together. A take counts against its
+buyer's allocation once its round is in a block, and stops counting when
+that block leaves the chain, as an anchor rollback takes it; it counts again
+when the round is mined again.
 
 ## Two forms of the same transaction
 

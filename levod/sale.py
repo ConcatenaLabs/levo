@@ -91,6 +91,28 @@ class SaleError(ValueError):
 
 MAX_BUILDS = 32
 
+# Takes from leaves a sale keeps: the ones still on their way and the ones a
+# round in the chain has filled. A void one is kept a while, so its buyer is
+# told why, then dropped.
+MAX_TAKES = 512
+MAX_VOID_TAKES = 64
+
+# Where a take from leaves stands, as Levo follows it. `pending`: the operator
+# holds it and no round of it is in the chain. `in_round`: its round is in the
+# node's mempool. `confirmed`: its round is in a block of the chain, and the
+# take counts against its buyer's allocation. `undone`: its round's block left
+# the chain (an anchor rollback), so it counts no longer, until the round is
+# mined again. `void`: the operator will never run it.
+TAKE_PENDING = "pending"
+TAKE_IN_ROUND = "in_round"
+TAKE_CONFIRMED = "confirmed"
+TAKE_UNDONE = "undone"
+TAKE_VOID = "void"
+# The states that still hold their buyer's headroom: a take on its way may yet
+# fill, so planning another purchase as though it had not would let one buyer
+# commit past its cap.
+TAKE_HOLDS = (TAKE_PENDING, TAKE_IN_ROUND, TAKE_UNDONE)
+
 
 class CapExceeded(SaleError):
     def __init__(self, msg, allowance_atoms):
@@ -121,6 +143,7 @@ class Sale:
         self.by_txid = {}
         self.candidates = []       # outpoints a recorded purchase said the remainder rests at
         self.builds = []           # purchases Levo built and has not yet seen on chain
+        self.takes = []            # takes from leaves, as Levo follows them (leaves.py)
         self.reclaim_txids = []    # reclaims Levo built for this sale, by txid
         self.strays = []           # other assets seen resting at the sale address
         # Labels for messages people read. Never used in arithmetic.
@@ -291,10 +314,13 @@ class Sale:
         return self.allowance_for(account, tier)
 
     def allowance_for(self, account, tier):
-        """Payment atoms this account may still commit to THIS sale."""
+        """Payment atoms this account may still commit to THIS sale: its cap,
+        less what it has committed and what its takes on their way hold."""
         if not tier.cap_atoms:
             return 0
-        return max(0, tier.cap_atoms - self.allocations.get(account, 0))
+        held = sum(int(t["payment_atoms"]) for t in self.takes
+                   if t.get("account") == account and t.get("state") in TAKE_HOLDS)
+        return max(0, tier.cap_atoms - self.allocations.get(account, 0) - held)
 
     def plan_buy(self, account, tier, token_atoms=None, payment_atoms=None,
                  height=None, now=None, buyer_key=None):
@@ -435,6 +461,93 @@ class Sale:
         """Which account recorded this transaction against this sale, if any."""
         return self.by_txid.get(str(txid or "").lower())
 
+    # --- takes from leaves (leaves.py) ---------------------------------------
+
+    def take(self, take_id):
+        take_id = str(take_id or "").lower()
+        return next((t for t in self.takes if t.get("take") == take_id), None)
+
+    def round_of(self, txid):
+        """The takes Levo follows in the round `txid`, if it is one."""
+        txid = str(txid or "").lower()
+        return [t for t in self.takes if t.get("round") == txid]
+
+    def note_take(self, take_id, account, token_atoms, payment_atoms, order, locked):
+        """A take from leaves of this sale, named by the account it buys for."""
+        take_id = str(take_id).lower()
+        entry = {"take": take_id, "account": account, "token_atoms": int(token_atoms),
+                 "payment_atoms": int(payment_atoms),
+                 "order": {"txid": str(order["txid"]).lower(), "vout": int(order["vout"])},
+                 "locked": int(locked), "state": TAKE_PENDING, "round": None, "input": None,
+                 "block": None, "height": None, "reason": None, "at": int(time.time())}
+        live = [t for t in self.takes if t.get("state") != TAKE_VOID]
+        void = [t for t in self.takes if t.get("state") == TAKE_VOID][-MAX_VOID_TAKES:]
+        if len(live) >= MAX_TAKES:
+            raise SaleError("this sale follows %d takes from leaves already, which is as many as it keeps" % MAX_TAKES)
+        self.takes = void + live + [entry]
+        return entry
+
+    def take_in_round(self, t, txid, k, filled=None):
+        """The take's round is in the mempool, not in a block."""
+        if t.get("state") == TAKE_CONFIRMED:
+            self._take_uncount(t)
+        t.update({"state": TAKE_IN_ROUND, "round": str(txid).lower(), "input": int(k), "block": None, "height": None,
+                  "round_filled": filled})
+
+    def take_pending(self, t, reason=None):
+        if t.get("state") == TAKE_CONFIRMED:
+            self._take_uncount(t)
+        t.update({"state": TAKE_UNDONE if t.get("was_confirmed") else TAKE_PENDING, "block": None, "height": None,
+                  "reason": reason})
+
+    def take_confirmed(self, t, txid, k, block, height, filled=None):
+        """The take's round is in the block `block` at `height` of the chain:
+        the purchase counts against its buyer's allocation, recorded as a
+        purchase made with the round's transaction."""
+        txid = str(txid).lower()
+        same = t.get("state") == TAKE_CONFIRMED and t.get("round") == txid and t.get("block") == block
+        if same:
+            return False
+        if t.get("state") == TAKE_CONFIRMED:
+            self._take_uncount(t)
+        t.update({"state": TAKE_CONFIRMED, "round": txid, "input": int(k), "block": block, "height": int(height),
+                  "reason": None, "was_confirmed": True, "round_filled": filled})
+        entry = next((e for e in self.purchases.get(t["account"], []) if e.get("take") == t["take"]), None)
+        if entry is None:
+            self.allocations[t["account"]] = self.allocations.get(t["account"], 0) + int(t["payment_atoms"])
+            self.purchases.setdefault(t["account"], []).append({
+                "txid": txid, "take": t["take"], "input": int(k), "token_atoms": int(t["token_atoms"]),
+                "payment_atoms": int(t["payment_atoms"]), "at": int(time.time()), "verified": True})
+        else:
+            if entry.get("undone"):
+                self.allocations[t["account"]] = self.allocations.get(t["account"], 0) + int(t["payment_atoms"])
+            entry.pop("undone", None)
+            entry.update({"txid": txid, "input": int(k)})
+        return True
+
+    def take_undone(self, t):
+        """The block the take's round was in left the chain: it counts no
+        longer, and waits for its round to be mined again."""
+        if t.get("state") != TAKE_CONFIRMED:
+            return False
+        self._take_uncount(t)
+        t.update({"state": TAKE_UNDONE, "block": None, "height": None,
+                  "reason": "its round's block left the chain; it counts again once the round is mined again"})
+        return True
+
+    def take_void(self, t, reason):
+        if t.get("state") == TAKE_CONFIRMED:
+            self._take_uncount(t)
+        changed = t.get("state") != TAKE_VOID
+        t.update({"state": TAKE_VOID, "reason": reason, "block": None, "height": None})
+        return changed
+
+    def _take_uncount(self, t):
+        entry = next((e for e in self.purchases.get(t["account"], []) if e.get("take") == t["take"]), None)
+        if entry is not None and not entry.get("undone"):
+            entry["undone"] = True
+            self.allocations[t["account"]] = max(0, self.allocations.get(t["account"], 0) - int(t["payment_atoms"]))
+
     def index_purchases(self):
         """Rebuild the transaction index from the ledger, after a load."""
         self.by_txid = {e["txid"]: acct
@@ -513,6 +626,9 @@ class Sale:
         self.sold_atoms = 0
         self.candidates = []
         self.builds = []           # built against an outpoint that no longer exists
+        for t in self.takes:
+            if t.get("state") != TAKE_VOID:
+                t.update({"state": TAKE_VOID, "reason": "the sale's funding was undone by a reorg"})
         self.allocations = {}
         if self.capped:
             # The purchases went with the funding, and so did their totals: a
@@ -565,7 +681,12 @@ class Sale:
             # should not be one anybody can raise by recording something
             # nobody verified.
             "buyers": len({a for a, rows in self.purchases.items()
-                           if any(e.get("verified") is True for e in rows)}),
+                           if any(e.get("verified") is True and not e.get("undone") and not e.get("voided")
+                                  for e in rows)}),
+            # Takes from leaves, by where they stand: only `confirmed` ones
+            # are purchases counted against a cap.
+            "takes": {st: sum(1 for t in self.takes if t.get("state") == st)
+                      for st in (TAKE_PENDING, TAKE_IN_ROUND, TAKE_CONFIRMED, TAKE_UNDONE, TAKE_VOID)},
             "reclaim_txids": list(self.reclaim_txids),
             "strays": list(self.strays),
             "created_at": self.created_at,

@@ -9,6 +9,7 @@ import SignIn from '../components/SignIn'
 import Beam from '../components/Beam'
 import BuyFlow from '../components/BuyFlow'
 import CappedBuy from '../components/CappedBuy'
+import LeafBuy from '../components/LeafBuy'
 import Reclaim from '../components/Reclaim'
 import LockPanel from '../components/LockPanel'
 import { Status } from './Projects'
@@ -176,7 +177,10 @@ function BuyPanel({ project, onBought }) {
           <Link className="btn btn-sm" to="/account">Link a staking key</Link>
         </>
       ) : (
-        <BuyFlow project={project} tier={tier} onSettled={onBought} />
+        <>
+          <BuyFlow project={project} tier={tier} onSettled={onBought} />
+          <LeafBuy project={project} onTaken={onBought} />
+        </>
       )}
     </div>
   )

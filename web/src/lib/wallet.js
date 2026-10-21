@@ -153,6 +153,26 @@ export async function signMessage(message) {
   return sig
 }
 
+// The wallet's mode. A wallet in developer mode holds leaves of an operator's
+// batches beside its on-chain coins, and can buy from a sale with them.
+export async function walletMode() {
+  try {
+    const r = await request('getWalletMode', {})
+    return (r && r.mode) || null
+  } catch { return null }
+}
+
+// A purchase from leaves: the wallet reads the sale as an order on its own
+// node, shows the fill, the price and the operator's fee, and asks its
+// operator to fill the sale in its next round. Returns the take, whose id
+// Levo records against the account.
+export async function takeOrder(order, atoms) {
+  await connect()
+  const r = await request('takeOrder', { order, amount: String(atoms) })
+  if (!r || !r.take) throw new Error('the wallet returned no take')
+  return r
+}
+
 // A capped sale's purchase, signed by this wallet's contract engine.
 //
 // The sale's program checks a signature by the buyer's key on the allocation
