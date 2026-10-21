@@ -25,6 +25,7 @@ from urllib.parse import urlparse
 import address as ADDR
 import capped as CAP
 import covenant as C
+import leaves as LV
 import registry as REG
 import rpc as RPCMOD
 import sale as S
@@ -451,7 +452,7 @@ class Platform:
     def __init__(self, store, stake_reader, rails=None, rpc=None, hrp="tb",
                  payment_asset=None, payment_label=None, stake_label="SEQ",
                  on_stale=None, operators=(), payment_decimals=8,
-                 registry_url=None):
+                 registry_url=None, leaf_operator=None):
         self.store = store
         self.stake = stake_reader
         self.rails = rails
@@ -477,6 +478,10 @@ class Platform:
         # be sold: an unregistered asset is an ordinary asset, and a registry
         # that is down must not stop a listing.
         self.registry_url = registry_url
+        # The leaf operator whose rounds fill sales for buyers paying from
+        # leaves (leaves.py), when this Levo follows one: its answers say which
+        # buyer took which share of a round, which the chain cannot.
+        self.leaf_operator = leaf_operator
         # Called when a purchase or lock changes what the chain holds, so the
         # watcher can look now rather than at its next interval.
         self.on_stale = on_stale or (lambda: None)
@@ -540,6 +545,7 @@ class Platform:
                 sl.index_purchases()
                 sl.candidates = list(sd.get("candidates") or [])
                 sl.builds = list(sd.get("builds") or [])[-S.MAX_BUILDS:]
+                sl.takes = [dict(t) for t in (sd.get("takes") or [])][-S.MAX_TAKES:]
                 sl.reclaim_txids = list(sd.get("reclaim_txids") or [])
                 sl.strays = list(sd.get("strays") or [])[:MAX_STRAYS_KEPT]
                 if sl.capped and sd.get("capped_bought") is not None:
@@ -611,6 +617,7 @@ class Platform:
                                               for k, v in p.sale.purchases.items()}
                     d["sale"]["candidates"] = [dict(c) for c in p.sale.candidates]
                     d["sale"]["builds"] = [dict(b) for b in p.sale.builds]
+                    d["sale"]["takes"] = [dict(t, order=dict(t.get("order") or {})) for t in p.sale.takes]
                     d["sale"]["strays"] = [dict(x) for x in p.sale.strays]
                     d["sale"]["funding"] = dict(p.sale.funding) if p.sale.funding else None
                     d["sale"]["reclaim_txids"] = list(p.sale.reclaim_txids)
@@ -1499,7 +1506,7 @@ class Platform:
         sale.note_reclaim(built["txid"])
         return built
 
-    def record_purchase(self, account, slug, txid, token_atoms, payment_atoms):
+    def record_purchase(self, account, slug, txid, token_atoms, payment_atoms, input_index=None):
         """Record a purchase against the account's allocation for this sale.
 
         This writes the ALLOCATION LEDGER and nothing else. The watcher owns
@@ -1517,7 +1524,7 @@ class Platform:
         """
         with self.lock:
             recorded = self._record_purchase(account, slug, txid, token_atoms,
-                                             payment_atoms)
+                                             payment_atoms, input_index=input_index)
         # The purchase is already in the ledger in memory, so a save that fails
         # here does not un-record it: `store.write_error` and `store.dirty`
         # carry that to the health endpoint and to the watcher's retry, and the
@@ -1545,8 +1552,98 @@ class Platform:
             self._project(slug).sale.forget_build(build["txid"])
         return True
 
+    # --- takes from leaves (leaves.py) -----------------------------------
+
+    def leaf_order(self, slug):
+        """The sale as an order a buyer's wallet takes from leaves, at the
+        outpoint it rests at, or why it cannot be bought that way here."""
+        p = self._project(slug)
+        with self.lock:
+            sale = p.sale
+            why = LV.fillable(sale)
+            if why is None and self.leaf_operator is None:
+                why = "this Levo follows no leaf operator, so it could not attribute a take to its buyer"
+            if why is None and not sale.is_open(height=self.height(), now=self.median_time()):
+                why = "the sale is not open"
+            if why:
+                return {"fillable": False, "why": why}
+            return {"fillable": True, "order": {"covenant": LV.order_form(sale)},
+                    "min_lot": S.atoms_out(sale.terms.min_lot),
+                    "locked_atoms": S.atoms_out(sale.locked_atoms)}
+
+    def note_take(self, account, slug, take_id):
+        """Records a take from leaves of this sale against the account that
+        names it, from the operator's own status of it.
+
+        The take is the buyer wallet's, made with the operator; Levo only reads
+        it, refuses one that is not a purchase from this sale at its price, and
+        follows it from then on (the watcher): it counts against the account's
+        allocation once its round is in a block, and holds the account's
+        headroom while it is on its way. A take counts once, for whoever named
+        it first."""
+        if self.leaf_operator is None:
+            raise PlatformError("this Levo follows no leaf operator, so it cannot read a take")
+        take_id = str(take_id or "").strip().lower()
+        if not LV.TAKE_ID.match(take_id):
+            raise PlatformError("take must be the 64-hex id the wallet answered for it")
+        p = self._project(slug)
+        sale = p.sale
+        why = LV.fillable(sale)
+        if why:
+            raise PlatformError("this sale cannot be bought from leaves: %s" % why)
+        standing = self.stake.standing(account)
+        tier = self.stake.policy.for_stake(standing["stake_atoms"])
+        if not tier.cap_atoms:
+            raise NotAuthorised(
+                "your tier has no allocation in a sale, so a take of it cannot be "
+                "recorded against you. The take itself is the operator's either way")
+        with self.lock:
+            known = sale.take(take_id)
+            if known is not None:
+                if known.get("account") != account:
+                    raise PlatformError("that take is already recorded against another account. "
+                                        "A take counts once, for whoever named it first")
+                return {"recorded": True, "already_recorded": True, "take": dict(known)}
+        try:
+            st = self.leaf_operator.take(take_id)
+            got = LV.read_take(st, sale)
+        except LV.LeafError as e:
+            raise PlatformError(str(e))
+        if got["state"] in ("void", "expired"):
+            raise PlatformError("the operator will not run that take: %s" % (got.get("reason") or got["state"]))
+        with self.lock:
+            known = sale.take(take_id)
+            if known is not None:
+                if known.get("account") != account:
+                    raise PlatformError("that take is already recorded against another account. "
+                                        "A take counts once, for whoever named it first")
+                return {"recorded": True, "already_recorded": True, "take": dict(known)}
+            try:
+                entry = sale.note_take(take_id, account, got["token_atoms"], got["payment_atoms"],
+                                       got["order"], got["locked"])
+            except S.SaleError as e:
+                raise PlatformError(str(e))
+            allowance = sale.allowance_for(account, tier)
+        self.save()
+        self.on_stale()
+        return {"recorded": True, "take": dict(entry),
+                "allowance_remaining_atoms": allowance,
+                "how_it_counts": "the take counts against your allocation once its round "
+                                 "is in a block of the chain, and holds that much of your "
+                                 "headroom until then; a round undone by an anchor rollback "
+                                 "counts again once it is mined again"}
+
+    def takes_of(self, account, slug):
+        p = self._project(slug)
+        with self.lock:
+            sale = p.sale
+            if sale is None:
+                raise NotFound("this project has no sale")
+            mine = [dict(t) for t in sale.takes if t.get("account") == account]
+        return {"slug": slug, "takes": mine[::-1]}
+
     def _record_purchase(self, account, slug, txid, token_atoms, payment_atoms,
-                         planned=False):
+                         planned=False, input_index=None):
         p = self._project(slug)
         sale = p.sale
         if sale is None:
@@ -1574,6 +1671,11 @@ class Platform:
                 "your tier has none. Stake to a tier that may buy, then record "
                 "it -- the purchase itself is on chain either way, and the "
                 "watcher reads the sale from there")
+        if sale.round_of(txid):
+            raise PlatformError(
+                "transaction %s is a round that fills this sale for buyers paying "
+                "from leaves; each of them is recorded by its take, not by the "
+                "round's transaction" % txid)
         owner = sale.recorded_by(txid)
         if owner is not None and owner != account:
             raise PlatformError(
@@ -1610,10 +1712,21 @@ class Platform:
         # way to consume less headroom than the purchase used.
         payment_atoms = max(payment_atoms, sale.terms.cost_for(token_atoms))
 
+        # The covenant spent at input k pays the treasury at output 2k and
+        # re-rests the remainder at 2k+1. Levo builds its purchases with the
+        # sale at input 0; one built elsewhere names its k.
+        k = 0
+        if input_index is not None:
+            try:
+                k = int(input_index)
+            except (TypeError, ValueError):
+                k = -1
+            if isinstance(input_index, bool) or k < 0 or k > 255:
+                raise PlatformError("input must be the index, 0 to 255, at which the purchase spends the sale")
         verified = None
         if self.rpc is not None:
             try:
-                out = self.rpc.txout(txid, 0)
+                out = self.rpc.txout(txid, 2 * k)
             except Exception:
                 out = None
             if out is None and not self._node_has_seen(txid):
@@ -1646,16 +1759,19 @@ class Platform:
                 if not verified:
                     raise PlatformError(
                         "transaction %s does not pay this sale's treasury at "
-                        "output 0, so it is not a purchase of this sale" % txid)
+                        "output %d, so it is not a purchase of this sale with "
+                        "the sale at input %d" % (txid, 2 * k, k))
 
         entry = sale.record_purchase(account, payment_atoms, token_atoms,
                                      txid=txid, verified=verified)
+        if k:
+            entry["input"] = k
         # Recorded by hand or seen by the watcher, once is enough.
         sale.forget_build(txid)
-        # A partial buy re-rests the remainder at this transaction's output 1.
-        # Telling the watcher where to look lets it see the remainder in the
-        # mempool, so the sale moves as soon as the buy is broadcast.
-        sale.expect_remainder_at(txid, 1)
+        # A partial buy re-rests the remainder at this transaction's output
+        # 2k+1. Telling the watcher where to look lets it see the remainder in
+        # the mempool, so the sale moves as soon as the buy is broadcast.
+        sale.expect_remainder_at(txid, 2 * k + 1)
         return {
             "recorded": True,
             "purchase": entry,
@@ -1849,8 +1965,10 @@ class Platform:
             if sale is None:
                 continue
             committed = sale.allocations.get(account, 0)
-            purchases = [e for e in sale.purchases.get(account, []) if not e.get("voided")]
-            if not committed and not purchases:
+            purchases = [e for e in sale.purchases.get(account, [])
+                         if not e.get("voided") and not e.get("undone")]
+            takes = [dict(t) for t in sale.takes if t.get("account") == account]
+            if not committed and not purchases and not takes:
                 continue
             seen += 1
             if seen <= offset:
@@ -1870,6 +1988,9 @@ class Platform:
                 # it stands, and the whole ledger for one sale is its own route.
                 "purchases": purchases[-PURCHASES_SHOWN:][::-1],
                 "purchases_total": len(purchases),
+                # Its takes from leaves, wherever they stand; only a confirmed
+                # one is among the purchases above.
+                "takes": takes[-PURCHASES_SHOWN:][::-1],
             })
         return {"positions": out, "total": seen, "offset": offset, "limit": limit}
 
@@ -2196,6 +2317,7 @@ class Platform:
         with self.lock:
             rows = [(acct, list(v)) for acct, v in sale.purchases.items()]
             committed = dict(sale.allocations)
+            takes = [dict(t) for t in sale.takes]
         entries = []
         for acct, purchases in rows:
             for e in purchases:
@@ -2211,7 +2333,13 @@ class Platform:
             "offset": offset,
             "limit": limit,
             "committed_atoms": committed,
-            "buyers": len([a for a, purchases in rows if purchases]),
+            "buyers": len([a for a, purchases in rows
+                           if any(not e.get("undone") and not e.get("voided") for e in purchases)]),
+            # Every take from leaves Levo follows for this sale, newest first.
+            # A confirmed one is also among the purchases, named by its round's
+            # transaction and its take; one whose round's block left the chain
+            # is marked undone there and counts for nothing until it is back.
+            "takes": sorted(takes, key=lambda t: t.get("at") or 0, reverse=True)[:MAX_PAGE],
             "what_this_is": "Levo's own record, which is what the per-buyer "
                             "caps are measured against. The chain is the "
                             "authority on what the sale holds: a purchase made "

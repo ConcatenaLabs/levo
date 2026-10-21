@@ -109,6 +109,17 @@ mislead but cannot rob.
   output 1 that was never a remainder, is a full buy and ends the sale on the
   poll that sees it. GHOST and SOLD_OUT are final; CLOSED-and-empty becomes
   RECLAIMED only on the reclaim's own output.
+- **A purchase is read at the input it spends the sale.** The covenant at
+  input k credits the treasury at 2k and re-rests at 2k+1. Levo builds with
+  k = 0; an operator's round that buys from leaves puts the sale wherever
+  its other orders leave it, for many buyers at once. Never read output 0 or
+  1 of a transaction Levo did not build.
+- **A take from leaves counts only while its round is in a block.** Its
+  share comes from the operator (the chain shows one batch output, not who
+  holds which leaf); the round is checked on the node, and the take is
+  undone when the round's block leaves the chain and counted again when it
+  is mined again. Do not count one from the mempool, and do not count one
+  the chain does not show filling at least the shares recorded in it.
 - **The ledger only grows, and only by named transactions.** `record_purchase`
   needs a txid, positive amounts, and never records less than the covenant's
   price for the tokens named. A repeat of the same txid is answered, not added.

@@ -300,6 +300,65 @@ first did, with `already_recorded: true`, and the ledger is not doubled. A
 client whose request timed out can simply send it again. A transaction another
 account has already recorded is refused, because a purchase counts once.
 
+## Buying from leaves
+
+A buyer whose wallet holds leaves of an operator's batches -- coins inside a
+round's tree rather than outputs on the chain -- can buy from a sale without
+an on-chain coin. The wallet asks the operator to take the sale (a *take*):
+it gives up leaves worth the purchase's price and the operator's fee, and
+wants a leaf of the tokens it buys. The operator's next round spends the sale
+once for every take of it together: the covenant at input `k` credits the
+treasury at output `2k` the sale's price for the round's whole fill, rests
+the remainder at the sale's address at `2k+1`, and each buyer gets a leaf of
+its own share in the round's batch. The covenant judges the round as it
+judges any purchase; it reads only that sum, so the operator holds each
+buyer's share to the sale's minimum purchase. A sale whose treasury is a
+version-0 address, and a capped sale, cannot be bought this way, because the
+covenant an operator's round fills credits a taproot treasury only.
+
+What the chain cannot say is which buyer took which share: the shares are
+leaves inside one batch output. levod reads that from the operator named by
+`LEVOD_LEAF_OPERATOR` (`/api/config` says `leaves: true` when there is one),
+and checks the rest on its own node: the round spends this sale at the input
+the operator names, pays its treasury at `2k` at least the price of the
+round's fill, rests what is left at `2k+1`, and fills at least the shares
+recorded in it together. A take counts against its buyer's allocation once
+its round is in a block of the chain, and holds that much of the buyer's
+headroom until then. When the block leaves the chain -- Sequentia follows
+its Bitcoin anchor -- the take counts for nothing again until the round is
+mined again.
+
+**`GET /api/projects/<slug>/order`** → `{fillable, order, min_lot,
+locked_atoms}`: the sale as an order a wallet takes from leaves, its
+`order.covenant` the order book's `CovenantTerms` in its JSON form at the
+outpoint the sale rests at (asset ids in the wire order the covenant pushes,
+the reverse of how they are shown elsewhere). A wallet rebuilds the sale's
+address from them and finds it on its own node before it takes anything.
+When the sale cannot be bought from leaves, `{fillable: false, why}`.
+
+**`POST /api/projects/<slug>/takes`** `{take}` (session) → `{recorded, take,
+allowance_remaining_atoms}`: records the take with that id, as the operator
+serves it, against the caller. levod refuses a take that is not of this
+sale's address, that prices its fill other than the covenant does, or that
+the operator will not run; a take counts once, for whoever names it first,
+and naming it again answers `already_recorded`. A take's `state` is
+`pending` (no round of it in the chain), `in_round` (its round is in the
+node's mempool), `confirmed` (its round is in a block, and it counts),
+`undone` (that block left the chain; it counts again once the round is mined
+again) or `void` (the operator will not run it, with its `reason`).
+
+**`GET /api/projects/<slug>/takes`** (session) → the caller's takes of this
+sale, newest first. A confirmed take is also one of the account's purchases
+(`/api/me/positions`, and the issuer's `/purchases`), named by its round's
+transaction and its `take`; while undone it is marked `undone` there. A
+position lists the account's takes beside its purchases, and a sale counts
+them under `sale.takes` by state.
+
+**`POST /api/projects/<slug>/confirm`** also takes `input`, the index at
+which a purchase built elsewhere spends the sale: its treasury credit is read
+at output `2·input` and its remainder at `2·input+1`. A round's transaction
+is refused there: each of its buyers is recorded by its take.
+
 ## Operating
 
 **`GET /api/health`** → `{ok, node, watcher, state_file, app}`. `ok` is false

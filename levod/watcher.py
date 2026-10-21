@@ -47,6 +47,7 @@ import threading
 import time
 from contextlib import contextmanager
 
+import leaves as LV
 import rpc as RPCMOD
 import sale as S
 import tx as TX
@@ -218,6 +219,17 @@ class Watcher:
             except Exception as e:
                 errors.append("%s builds: %s" % (slug, e))
 
+        # Takes from leaves: where the operator says each is, checked against
+        # the chain. Before the sale's own outpoint is read, so a round seen
+        # this poll leaves the hint the check below follows.
+        for slug, p in sales:
+            if not getattr(p.sale, "takes", None):
+                continue
+            try:
+                dirty = self._follow_takes(slug, p, chain) or dirty
+            except Exception as e:
+                errors.append("%s takes: %s" % (slug, e))
+
         # The outpoint each sale is known to rest at, with the mempool
         # included. In the steady state that answers for every sale and the
         # UTXO set is not walked at all.
@@ -365,6 +377,162 @@ class Watcher:
                     sale.forget_build(b.get("txid"))
                 changed = True
         return changed
+
+    # --- takes from leaves (leaves.py) ------------------------------------------
+
+    def _follow_takes(self, slug, project, chain=None):
+        """Follow the takes from leaves Levo records for this sale.
+
+        A take counts against its buyer once the round that fills it is in a
+        block of the chain, and stops counting when that block leaves it: the
+        chain follows its Bitcoin anchor, and a round undone by an anchor
+        rollback is a purchase undone until it is mined again. Which round a
+        take is in comes from the operator; whether that round is in the chain,
+        spends this sale, pays its treasury and fills at least the shares Levo
+        records of it, comes from the node.
+        """
+        sale = project.sale
+        with self._held():
+            takes = [dict(t) for t in sale.takes if t.get("state") != S.TAKE_VOID]
+        if not takes:
+            return False
+        operator = getattr(self.market, "leaf_operator", None)
+        changed = False
+        # A confirmed take whose block is still at its height has nothing more
+        # to say; the operator is asked about the rest.
+        ask = []
+        for t in takes:
+            if t.get("state") == S.TAKE_CONFIRMED:
+                try:
+                    here = self._block_at(t["height"])
+                except Exception:
+                    # A chain that no longer reaches the round's height has
+                    # lost its block, as a rollback leaves it; anything else
+                    # is a node that cannot say, and the take is left as it is.
+                    tip = (chain or {}).get("height")
+                    if tip is None or not (chain or {}).get("usable") or int(t["height"]) <= int(tip):
+                        continue
+                    here = None
+                if here == t.get("block"):
+                    continue
+                with self._held():
+                    live = sale.take(t["take"])
+                    if live is not None and sale.take_undone(live):
+                        changed = True
+                        self.note("watcher: %s: take %s undone: the block its round %s was in left the chain"
+                                  % (slug, t["take"][:16], str(t.get("round"))[:16]))
+                t["state"] = S.TAKE_UNDONE
+            ask.append(t)
+        if operator is None or not ask:
+            return changed
+        seen = []
+        for t in ask:
+            try:
+                got = LV.read_take(operator.take(t["take"]), sale)
+            except LV.LeafError as e:
+                self.log("watcher: %s: take %s: %s" % (slug, t["take"][:16], e))
+                continue
+            seen.append((t, got))
+        # Each round once: where it is, and whether it is what the operator
+        # says, for all the shares Levo records in it together.
+        rounds = {}
+        for t, got in seen:
+            if got["round"] and got["state"] not in ("void", "expired"):
+                key = (got["round"], got["input"])
+                rounds.setdefault(key, []).append((t, got))
+        verdict = {}
+        for (txid, k), members in rounds.items():
+            where = self._round_where(txid, k)
+            if where is None:
+                verdict[(txid, k)] = None
+                continue
+            raw, block, height = where
+            shares = sum(int(g["token_atoms"]) for _, g in members)
+            try:
+                LV.check_round(raw, sale, dict(members[0][1]), shares)
+            except LV.LeafError as e:
+                self.log("watcher: %s: round %s is not what the operator says it is: %s" % (slug, txid[:16], e))
+                verdict[(txid, k)] = False
+                continue
+            verdict[(txid, k)] = (block, height)
+        with self._held():
+            for t, got in seen:
+                live = sale.take(t["take"])
+                if live is None:
+                    continue
+                if got["state"] in ("void", "expired"):
+                    if sale.take_void(live, got.get("reason") or "the operator will not run it"):
+                        changed = True
+                        self.note("watcher: %s: take %s void: %s" % (slug, t["take"][:16], got.get("reason")))
+                    continue
+                v = verdict.get((got["round"], got["input"])) if got["round"] else None
+                if not got["round"] or v is None or v is False:
+                    # Not in the chain: no round yet, a round the operator
+                    # holds until every take in it hands its forfeits over, or
+                    # a round the node knows nothing of.
+                    if live.get("state") == S.TAKE_IN_ROUND or (live.get("state") == S.TAKE_PENDING and live.get("reason") != got.get("reason")):
+                        sale.take_pending(live, got.get("reason"))
+                        changed = True
+                    continue
+                block, height = v
+                if block is None:
+                    if live.get("state") != S.TAKE_IN_ROUND or live.get("round") != got["round"]:
+                        sale.take_in_round(live, got["round"], got["input"], got.get("round_filled"))
+                        changed = True
+                    sale.expect_remainder_at(got["round"], 2 * int(got["input"]) + 1)
+                    continue
+                if sale.take_confirmed(live, got["round"], got["input"], block, height, got.get("round_filled")):
+                    changed = True
+                    sale.expect_remainder_at(got["round"], 2 * int(got["input"]) + 1)
+                    self.note("watcher: %s: take %s of %s recorded against %s: round %s, the sale at its input %d, block %s"
+                              % (slug, t["take"][:16], t["token_atoms"], str(t["account"])[:16], got["round"][:16],
+                                 int(got["input"]), str(block)[:16]))
+        return changed
+
+    def _round_where(self, txid, k):
+        """(decoded transaction, block hash, height) for a round in a block of
+        the active chain, (decoded transaction, None, None) for one in the
+        mempool, or None when the node knows nothing of it."""
+        raw = None
+        try:
+            raw = self.rpc.call("getrawtransaction", txid, True)
+        except Exception:
+            raw = None
+        if raw:
+            bh = raw.get("blockhash")
+            if bh and int(raw.get("confirmations") or 0) > 0:
+                try:
+                    h = self._header_height(bh)
+                    if self._block_at(h) == bh:
+                        return raw, bh, h
+                except Exception:
+                    return None
+                return None
+            return raw, None, None
+        # A node without a transaction index finds a confirmed transaction
+        # only in a block it is told: the round's own outputs, while unspent,
+        # say how deep it is.
+        for vout in (2 * int(k) + 1, 2 * int(k)):
+            try:
+                out = self.rpc.txout(txid, vout)
+            except Exception:
+                out = None
+            if not out:
+                continue
+            conf = int(out.get("confirmations") or 0)
+            if conf < 1:
+                return None
+            try:
+                tip = self._header_height(out["bestblock"]) if out.get("bestblock") else None
+                if tip is None:
+                    return None
+                h = tip - conf + 1
+                bh = self._block_at(h)
+                raw = self.rpc.call("getrawtransaction", txid, True, bh)
+            except Exception:
+                return None
+            return (raw, bh, h) if raw else None
+        return None
 
     # --- the capped sale ------------------------------------------------------
 
@@ -995,7 +1163,7 @@ class Watcher:
                 if not self._spends_funding(txid, sale):
                     continue
                 try:
-                    out = self.rpc.txout(txid, 0)
+                    out = self.rpc.txout(txid, 2 * int(e.get("input") or 0))
                 except Exception:
                     continue
                 if not out:
@@ -1135,14 +1303,16 @@ class Watcher:
             raw = self.rpc.call("getrawtransaction", txid, True) or {}
         except Exception:
             return False
-        spends = any(vin.get("txid") == f["txid"] and int(vin.get("vout", -1)) == int(f["vout"])
-                     for vin in raw.get("vin") or [])
-        if not spends:
+        # The covenant at input k re-rests at 2k+1: k is 0 in a purchase Levo
+        # builds, anything in a round that fills several orders.
+        k = next((i for i, vin in enumerate(raw.get("vin") or [])
+                  if vin.get("txid") == f["txid"] and int(vin.get("vout", -1)) == int(f["vout"])), None)
+        if k is None:
             return False
         outs = raw.get("vout") or []
-        if len(outs) < 2:
+        if len(outs) < 2 * k + 2:
             return True
-        o = outs[1]
+        o = outs[2 * k + 1]
         spk = ((o.get("scriptPubKey") or {}).get("hex") or "").lower()
         asset = (o.get("asset") or "").lower()
         return not (spk == sale.script_pubkey.lower() and asset == sale.terms.token_asset)

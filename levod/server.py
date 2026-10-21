@@ -41,6 +41,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import checkout
 import address as ADDR    # noqa: E402
 import auth as A          # noqa: E402
+import leaves as LV       # noqa: E402
 import market as M        # noqa: E402
 import rails as R         # noqa: E402
 import rpc as RPC         # noqa: E402
@@ -308,6 +309,11 @@ class App:
         # An asset registry to check a listing's claims against, if this
         # deployment has one.
         self.registry_url = (os.environ.get("LEVOD_REGISTRY_URL") or "").rstrip("/") or None
+        # The leaf operator whose rounds fill sales for buyers paying from
+        # leaves, if this deployment follows one: what it serves of a take is
+        # how a share of a round is attributed to its buyer.
+        leaf_url = (os.environ.get("LEVOD_LEAF_OPERATOR") or "").strip().rstrip("/")
+        self.leaf_operator = LV.LeafOperator(leaf_url) if leaf_url else None
         self.market = M.Platform(self.store, self.reader, self.rails, self.node,
                                  hrp=lambda: self.hrp, payment_asset=payment_asset,
                                  payment_label=payment_label,
@@ -315,6 +321,7 @@ class App:
                                  payment_decimals=self.payment_decimals,
                                  operators=self.operators,
                                  registry_url=self.registry_url,
+                                 leaf_operator=self.leaf_operator,
                                  on_stale=lambda: self.watcher and self.watcher.nudge())
         self.board_cache = {}            # (version, height, query) -> (expires, body)
         watch_node = self.node.with_timeout(WATCHER_RPC_TIMEOUT) \
@@ -453,6 +460,9 @@ class App:
             "links": self.site_links,
             "source_url": self.source_url,
             "registry_url": self.registry_url,
+            # Whether this Levo follows takes from leaves, so a buyer paying
+            # from leaves is attributed (leaves.py).
+            "leaves": self.leaf_operator is not None,
         }
 
     def tiers_note(self):
@@ -1300,6 +1310,17 @@ class Handler(BaseHTTPRequestHandler):
                 offset=_int_param(query, "offset") or 0))
 
         if method == "GET" and len(parts) == 3 and parts[0] == "projects" \
+                and parts[2] == "order":
+            # The sale as an order a wallet holding leaves takes, at the
+            # outpoint it rests at, or why it cannot be bought that way.
+            return self._json(200, app.market.leaf_order(parts[1]))
+
+        if method == "GET" and len(parts) == 3 and parts[0] == "projects" \
+                and parts[2] == "takes":
+            acct = self._require_account()
+            return self._json(200, app.market.takes_of(acct, parts[1]))
+
+        if method == "GET" and len(parts) == 3 and parts[0] == "projects" \
                 and parts[2] == "fee":
             # What a fee should be for a transaction against this sale, before
             # there is a transaction to measure. The buy path gets this with
@@ -1397,8 +1418,13 @@ class Handler(BaseHTTPRequestHandler):
                 acct = self._require_account()
                 b = self._body()
                 recorded = app.market.record_purchase(
-                    acct, slug, b.get("txid"), b.get("token_atoms"), b.get("payment_atoms"))
+                    acct, slug, b.get("txid"), b.get("token_atoms"), b.get("payment_atoms"),
+                    input_index=b.get("input"))
                 return self._json(200, recorded)
+            if action == "takes":
+                acct = self._require_account()
+                b = self._body()
+                return self._json(200, app.market.note_take(acct, slug, b.get("take")))
 
         allowed = _methods_for(parts)
         if allowed and method not in allowed:
@@ -1806,6 +1832,8 @@ API_METHODS = (
     (("projects", "*", "flag"), ["POST"]),
     (("projects", "*", "fee"), ["GET"]),
     (("projects", "*", "purchases"), ["GET"]),
+    (("projects", "*", "order"), ["GET"]),
+    (("projects", "*", "takes"), ["GET", "POST"]),
 )
 
 

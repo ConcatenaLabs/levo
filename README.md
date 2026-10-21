@@ -34,6 +34,16 @@ enforced by consensus:
   buyer's running total are in the sale's address, and the chain refuses a
   purchase past a cap, or by a key not on the list, whoever builds it. See
   [doc/capped-sales.md](doc/capped-sales.md).
+- **Buying from leaves**, enforced by consensus and attributed by Levo. A
+  holder of leaves of an operator's batches buys from a sale whose treasury
+  is a taproot address through the operator's round, which spends the sale
+  once for many buyers: the covenant judges that spend as it judges any
+  purchase, at whatever input the round puts it, and each buyer gets a leaf of
+  its own share. Levo attributes each share to its buyer from the operator's
+  status of the take and the round it reads on its own node, and counts it
+  once the round is in a block and for as long as the block stays in the
+  chain. See [doc/how-a-sale-settles.md](doc/how-a-sale-settles.md) and
+  [doc/api.md](doc/api.md).
 - **Signed-message login**, a signature Levo checks. An account is a public key.
   Levo issues a challenge, a wallet signs it, and Levo recovers the key from the
   signature. The signed text has to be the issued challenge, word for word.
@@ -265,6 +275,7 @@ python3 levod/tests/test_render.py # every page, in a real browser; skipped with
 python3 levod/tests/test_cli.py   # bin/levo end to end against a real node; skipped without one
 python3 levod/tests/test_capped.py # a capped sale end to end: real node, levod, bin/levo; skipped without a node or seqc
 python3 levod/tests/test_browser.py # a purchase made in a browser, with a wallet; skipped without either
+python3 levod/tests/leaves_observer.py --help # buying from leaves: run by arca's shared-fills test, see below
 npm --prefix web test             # the formatters, the parsers, and the guards that walk the sources
 npm --prefix web run build        # the frontend gate
 ```
@@ -320,6 +331,29 @@ the PSET, broadcasts, and then checks the transaction that came out -- the
 treasury paid what the covenant demands, the remainder re-rested at the sale's
 own address, the ledger moved, and the account page showing it -- with no
 console error anywhere in the sequence. It needs the app built first.
+
+Buying from leaves needs an operator, so its whole path runs from the other
+side: arca's `bark-cli/tests/arca_shared_fills.rs` (in
+[ConcatenaLabs/arca](https://github.com/ConcatenaLabs/arca)) starts an anchored
+regtest chain, an operator and eleven wallets, and runs a program named by
+`ARCA_TEST_OBSERVER` at each step. `levod/tests/leaves_observer.py` is that
+program for Levo: it starts a levod serving the built app on the test's chain,
+lists the sale the test's wallets take, records each take, drives one buyer
+through the sale page in developer mode in a headless Chromium (its stand-in
+wallet answers `takeOrder` by running that wallet's own `arca take`), and at
+every step checks what levod shows: ten buyers attributed from one spend of
+the sale at input 1, every attribution undone when the round's anchor is
+orphaned and back when the round is mined again, a buyer whose wallet never
+hands its part over dropped and the nine others attributed from the next
+round. From an arca checkout:
+
+```sh
+ARCA_TEST_OBSERVER=/path/to/levo/levod/tests/leaves_observer.py \
+  cargo test -p arca-cli --test arca_shared_fills -- --nocapture
+```
+
+with what arca's own tests need (`SEQUENTIAD_EXEC`, `ARCA_TEST_POSTGRES`, the
+`arca-signer` binary; arca's `bark-cli/README.md`), and the app built here.
 
 No framework. Those commands are the whole gate, on a laptop and in CI alike.
 
@@ -438,6 +472,7 @@ reaches the box nowhere else.
 | `LEVOD_TIERS` | supply-share defaults | JSON list of tiers, lowest first, each with `name`, `min_stake` (whole SEQ), `cap` (whole units of the payment asset; the most one account may commit per sale), `may_list`, and a `blurb` that the home page shows beside the tier. Takes effect on restart; caps apply to open sales at once, while what an account has already committed stays committed. |
 | `LEVOD_EXPLORER_URL` | — | An esplora-style explorer base (`.../tx/`, `.../address/`, `.../asset/`), for links. |
 | `LEVOD_LINKS` | — | JSON of label to URL for the rest of the deployment, shown in the footer. Four labels are also used in the text: `Extension` (where to get the browser extension, which is what signs in here in one click), `Wallet`, `Faucet` and `Staking pools`. |
+| `LEVOD_LEAF_OPERATOR` | — | The leaf operator (an Arca server) whose rounds fill sales for buyers paying from leaves. levod reads each take's status there by its id to attribute a share of a round to its buyer, and checks the round itself on its own node. Empty: no take is followed, and a sale page offers no purchase from leaves. See [doc/api.md](doc/api.md), Buying from leaves. |
 | `LEVOD_REGISTRY_URL` | — | An asset registry, read as `<url>/<asset id>`. A listing whose ticker or decimals contradict a registered contract is refused; an unregistered asset lists as it is. A registry that cannot be reached blocks nothing. |
 | `LEVOD_WATCH_SECONDS` | `60` | How often the watcher reconciles. |
 | `LEVOD_SEQC` | `seqc` on `PATH` | The contracts toolchain's `seqc`, which builds a capped sale's purchase witness ([doc/capped-sales.md](doc/capped-sales.md)). Without it capped sales are listed and watched, and their purchases cannot be built. |

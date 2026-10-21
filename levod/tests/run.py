@@ -24,7 +24,7 @@ STANDALONE = {"test_e2e", "test_node", "test_cli", "test_capped", "test_render",
 
 MODULES = ["test_crypto", "test_auth", "test_covenant", "test_address", "test_pset",
            "test_tiers", "test_precision", "test_rails", "test_rpc", "test_store",
-           "test_tx", "test_watcher", "test_bundle", "test_handler", "test_capped_terms", "test_docs"]
+           "test_tx", "test_watcher", "test_leaves", "test_bundle", "test_handler", "test_capped_terms", "test_docs"]
 
 
 class T:
