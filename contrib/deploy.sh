@@ -94,12 +94,20 @@ cd ..
 say "== installing the units"
 install -m 644 contrib/levod.service contrib/levo-backup.service contrib/levo-backup.timer \
   contrib/levo-alert@.service contrib/levo-check.service contrib/levo-check.timer \
+  contrib/levo-receiver.service \
   /etc/systemd/system/ || die "could not install the units"
 systemctl daemon-reload || die "daemon-reload failed"
 systemctl enable --now levo-backup.timer levo-check.timer >/dev/null 2>&1 || die "could not enable the timers"
 
 say "== restarting $UNIT"
 systemctl restart "$UNIT" || die "could not restart $UNIT"
+# A project's Lightning receiver runs here only where it is configured; its
+# unit is conditional on its environment file.
+if [ -f /etc/sequentia/levo-receiver.env ]; then
+  systemctl enable levo-receiver >/dev/null 2>&1 || die "could not enable levo-receiver"
+  systemctl restart levo-receiver || die "could not restart levo-receiver"
+  say "   levo-receiver restarted"
+fi
 
 say "== checking what is being served"
 i=0

@@ -165,6 +165,16 @@ def build(app, node):
             "reclaim_xonly": K.xonly_pubkey(0x40 + i).hex(),
             "total_atoms": L["total"] * 100_000_000,
         }
+        if i == 0:
+            # The first sale also sells for BTC over Lightning. No receiver
+            # runs in the demo, so the page shows the form and a reservation
+            # says the receiver cannot be reached.
+            terms["lightning"] = {
+                "receiver_xonly": K.xonly_pubkey(0x50).hex(),
+                "receiver_url": "http://127.0.0.1:9/receiver",
+                "btc_num": 1, "btc_den": 25_600, "bond_asset": USDX,
+                "bond_atoms": 100_000_000, "fee_allowance": 100_000,
+                "timeout_seconds": 6 * 3600}
         meta = {k: L[k] for k in ("slug", "name", "ticker", "summary", "description", "links")}
         p = app.market.list_project(issuer, meta, terms)
         if L["fund"]:

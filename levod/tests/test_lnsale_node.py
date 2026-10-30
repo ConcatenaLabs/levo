@@ -33,6 +33,7 @@ from test_node import Checker, Rig, Wallet, find_node  # noqa: E402
 
 COIN = 100_000_000
 FEE = 5_000
+ALLOWANCE = 10_000
 
 RECEIVER = 0x1111111111111111111111111111111111111111111111111111111111111111
 RECLAIM = 0x2222222222222222222222222222222222222222222222222222222222222222
@@ -60,6 +61,9 @@ def run(ok, rig, log):
     bond_asset = w("issueasset", assetamount=1_000_000, tokenamount=0, blind=False, fee_asset="bitcoin")["asset"]
     pay = w("issueasset", assetamount=1_000_000, tokenamount=0, blind=False, fee_asset="bitcoin")["asset"]
     rig.mine()
+    # The bond is in an asset this node takes fees in, so a claim pays its fee
+    # from the bond and needs no other coin.
+    n("setfeeexchangerates", {"bitcoin": COIN, bond_asset: COIN})
 
     def spk_of(addr):
         return w("getaddressinfo", addr)["scriptPubKey"]
@@ -162,7 +166,8 @@ def run(ok, rig, log):
     H = hashlib.sha256(preimage).digest()
     vest_time = int(time.time()) + 3 * 3600
     vest = L.Vesting(vest_time, B)
-    lock = L.LotLock(sale, H, B, vest.script_pubkey, 6 * 3600)
+    refund_spk = bytes.fromhex(spk_of(w("getnewaddress", "", "bech32")))
+    lock = L.LotLock(sale, H, vest.script_pubkey, refund_spk, bond_asset, ALLOWANCE, 6 * 3600)
     log.append("lot lock %s, bond lock %s, claim leaf %d B, re-rest leaf %d B, timeout %d s"
                % (lock.lot.script_pubkey.hex(), lock.bond.script_pubkey.hex(), len(lock.claim_leaf),
                   len(lock.rerest_leaf), lock.timeout_seconds))
@@ -182,32 +187,32 @@ def run(ok, rig, log):
           % (LOT // COIN, BOND // COIN))
     lot_in, rem_in, bond_in = (rtxid, 0), (rtxid, 1), (rtxid, 2)
 
-    def claim(secret_for_lot, dest=None, lot_value=LOT, refund_signer=BUYER, refund_preimage=None,
-              seq=0xffffffff, with_bond=True):
-        fc = coin(policy, 100_000)
-        buyer_back = w("getnewaddress", "", "bech32")
+    def claim(secret_for_lot, dest=None, lot_value=LOT, refund_to=None, bond_back=BOND - FEE,
+              with_bond=True):
+        """The claim: no signature anywhere. The bond pays the fee."""
         t = TX.Transaction()
-        t.vin.append(TX.TxIn(lot_in[0], lot_in[1], sequence=seq))
+        t.vin.append(TX.TxIn(lot_in[0], lot_in[1]))
+        fc = None
         if with_bond:
-            t.vin.append(TX.TxIn(bond_in[0], bond_in[1], sequence=seq))
-        t.vin.append(TX.TxIn(fc["txid"], fc["vout"]))
+            t.vin.append(TX.TxIn(bond_in[0], bond_in[1]))
+        else:
+            fc = coin(policy, 100_000)
+            t.vin.append(TX.TxIn(fc["txid"], fc["vout"]))
         t.vout.append(TX.TxOut(token, lot_value, dest if dest is not None else vest.script_pubkey))
+        if with_bond:
+            t.vout.append(TX.TxOut(bond_asset, bond_back, refund_to if refund_to is not None else refund_spk))
+        else:
+            t.vout.append(TX.TxOut(policy, 100_000 - FEE, bytes.fromhex(fc["spk"])))
         if lot_value != LOT:
             t.vout.append(TX.TxOut(token, LOT - lot_value, treasury_spk))
         if with_bond:
-            t.vout.append(TX.TxOut(bond_asset, BOND, bytes.fromhex(spk_of(buyer_back))))
-        t.vout.append(TX.TxOut(policy, 100_000 - FEE, bytes.fromhex(fc["spk"])))
-        t.vout.append(TX.TxOut(policy, FEE, b""))
-        spent = [(token, LOT, lock.lot.script_pubkey)]
-        if with_bond:
-            spent.append((bond_asset, BOND, lock.bond.script_pubkey))
-        spent.append((policy, fc["atoms"], bytes.fromhex(fc["spk"])))
-        hexed = wallet_sign(t)
+            t.vout.append(TX.TxOut(bond_asset, BOND - bond_back, b""))
+        else:
+            t.vout.append(TX.TxOut(policy, FEE, b""))
+        hexed = wallet_sign(t) if fc else t.hex()
         hexed = TX.set_witness(hexed, 0, lock.lot.witness("claim", secret_for_lot))
         if with_bond:
-            s = sig(t, spent, 1, lock.refund_leaf, refund_signer)
-            hexed = TX.set_witness(hexed, 1, lock.bond.witness(
-                "refund", s, refund_preimage if refund_preimage is not None else preimage))
+            hexed = TX.set_witness(hexed, 1, lock.bond.witness("refund", preimage))
         return hexed
 
     blocked(claim(hashlib.sha256(b"a guess").digest(), with_bond=False),
@@ -218,8 +223,11 @@ def run(ok, rig, log):
     blocked(claim(preimage, lot_value=LOT - 1, with_bond=False),
             "Script evaluated without error but finished with a false/empty top stack element",
             "the lot taken with the secret, one atom short to the buyer")
-    blocked(claim(preimage, refund_signer=RECEIVER), "Invalid Schnorr signature",
-            "the bond kept after paying: the project signs the bond's refund with the secret")
+    blocked(claim(preimage, refund_to=treasury_spk), "Script failed an OP_EQUALVERIFY operation",
+            "the bond kept after paying: the secret sends the bond anywhere but the buyer")
+    blocked(claim(preimage, bond_back=BOND - ALLOWANCE - 1),
+            "Script evaluated without error but finished with a false/empty top stack element",
+            "the bond kept after paying: the refund keeps one atom more than the fee allowance")
 
     def forfeit_now(seq):
         fc = coin(policy, 100_000)
@@ -237,8 +245,8 @@ def run(ok, rig, log):
     blocked(forfeit_now(0), "Locktime requirement not satisfied",
             "the bond kept after paying: the project's forfeit before the timeout (sequence unset)")
 
-    mined(claim(preimage), "the claim: the secret delivers the lot to the vesting destination "
-                           "and the buyer's signature takes the bond back")
+    mined(claim(preimage), "the claim, signed by nobody: the secret delivers the lot to the "
+                           "vesting destination and returns the bond, which pays the fee")
 
     # --- the vested allocation ----------------------------------------------
     claim_tx = None
@@ -263,8 +271,9 @@ def run(ok, rig, log):
 
     # --- reservation 2, never paid ------------------------------------------
     preimage2 = hashlib.sha256(b"levo invoice two").digest()
-    lock2 = L.LotLock(sale, hashlib.sha256(preimage2).digest(), B,
-                      bytes.fromhex(spk_of(w("getnewaddress", "", "bech32"))), 6 * 3600)
+    lock2 = L.LotLock(sale, hashlib.sha256(preimage2).digest(),
+                      bytes.fromhex(spk_of(w("getnewaddress", "", "bech32"))), refund_spk, bond_asset,
+                      ALLOWANCE, 6 * 3600)
     LOT2 = 500 * COIN
     good2, r2 = reserve(rem_in, LOCKED - LOT, LOT2, lock2, BOND)
     mined(good2, "a second reservation, which nobody pays")
@@ -286,7 +295,6 @@ def run(ok, rig, log):
         hexed = TX.set_witness(hexed, 0, lock2.lot.witness("rerest"))
         return TX.set_witness(hexed, 1, lock2.bond.witness("forfeit", s))
 
-    n("setfeeexchangerates", {"bitcoin": COIN, bond_asset: COIN})
     blocked(rerest(lock2.sequence), "bad-txns-nonfinal", "a re-rest before the timeout (sequence set)")
     blocked(rerest(0), "Locktime requirement not satisfied", "a re-rest before the timeout (sequence unset)")
 

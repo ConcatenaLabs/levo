@@ -95,6 +95,8 @@ export const api = {
   lock: (slug, txid, vout) =>
     call('POST', '/projects/' + slug + '/lock', txid ? { txid, vout } : {}),
   buy: (slug, payload) => call('POST', '/projects/' + slug + '/buy', payload),
+  lightningReserve: (slug, payload) => call('POST', '/projects/' + slug + '/lightning', payload),
+  lightningStatus: (slug, hash) => call('GET', '/projects/' + slug + '/lightning/' + hash),
   confirm: (slug, payload) => call('POST', '/projects/' + slug + '/confirm', payload),
   transaction: (slug, payload) => call('POST', '/projects/' + slug + '/transaction', payload),
   walletPurchase: (slug, payload) => call('POST', '/projects/' + slug + '/wallet-purchase', payload),

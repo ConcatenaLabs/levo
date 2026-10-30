@@ -1,0 +1,30 @@
+[Unit]
+Description=Levo Lightning receiver (a project's half of a Lightning sale)
+After=network-online.target levod.service
+Wants=network-online.target
+ConditionPathExists=/etc/sequentia/levo-receiver.env
+OnFailure=levo-alert@%n.service
+
+[Service]
+Type=simple
+WorkingDirectory=/root/sequentia/levo
+# The receiver key's file, the Lightning node's command line, the node RPC and
+# the sales it serves: see contrib/levo-receiver.env.example.
+EnvironmentFile=/etc/sequentia/levo-receiver.env
+ExecStart=/usr/bin/python3 /root/sequentia/levo/levod/receiver.py
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+# It talks to the Lightning node through its socket, which lives in that
+# node's directory, so home is not made read-only here as it is for levod.
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

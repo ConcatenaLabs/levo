@@ -1365,6 +1365,19 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(201, {"project": p.to_json(),
                                     "lock": app.market.lock_instructions(p)})
 
+        # A Lightning sale (lnsale.py): reserve a lot, follow it, and the
+        # signature-free claim a wallet can broadcast itself.
+        if len(parts) >= 3 and parts[0] == "projects" and parts[2] == "lightning":
+            slug = parts[1]
+            if method == "POST" and len(parts) == 3:
+                acct = self._require_account()
+                return self._json(200, app.market.lightning_reserve(acct, slug, self._body()))
+            if method == "GET" and len(parts) == 4:
+                return self._json(200, app.market.lightning_status(slug, parts[3]))
+            if method == "POST" and len(parts) == 5 and parts[4] == "claim":
+                b = self._body()
+                return self._json(200, app.market.lightning_claim(slug, parts[3], b.get("preimage")))
+
         if method == "POST" and len(parts) == 3 and parts[0] == "projects":
             slug, action = parts[1], parts[2]
             if action == "lock":
@@ -1840,6 +1853,9 @@ API_METHODS = (
     (("projects", "*", "purchases"), ["GET"]),
     (("projects", "*", "order"), ["GET"]),
     (("projects", "*", "takes"), ["GET", "POST"]),
+    (("projects", "*", "lightning"), ["POST"]),
+    (("projects", "*", "lightning", "*"), ["GET"]),
+    (("projects", "*", "lightning", "*", "claim"), ["POST"]),
 )
 
 

@@ -29,14 +29,15 @@ def _sale(**kw):
 
 def test_frozen_addresses(t):
     s = _sale()
-    lock = L.LotLock(s, hashlib.sha256(b"vector").digest(), B, bytes([0x51, 0x20]) + B, 21600)
+    lock = L.LotLock(s, hashlib.sha256(b"vector").digest(), bytes([0x51, 0x20]) + B,
+                     bytes([0, 20]) + b"\x44" * 20, "bb" * 32, 10000, 21600)
     t.eq(s.spk_hex, "5120809af3cf6733ffb09076ef19966f918e88993e2476763653e73f3cf14f391acc",
          "the Lightning sale address is unchanged")
     t.eq(lock.lot.script_pubkey.hex(),
          "5120582d4752b735f906fbe8a14ef26b344463f60893fd00b2c9209cad6fcea864db",
          "the lot lock is unchanged")
     t.eq(lock.bond.script_pubkey.hex(),
-         "5120637d0c8930979c7d848cbfe16dc02d91da9cf41541fd291ff5e16db247df4a21",
+         "51209928e8a55b167fb431e02a017c870a071f9641efac33219c7eaf23844d58d184",
          "the bond lock is unchanged")
     t.eq(L.Vesting(1_900_000_000, B).script_pubkey.hex(),
          "51201f3cfda141f7940e8fd6427976d788c2c825b979faf01e68979b964d310444c1",
@@ -62,10 +63,13 @@ def test_refusals(t):
             "a receiver key that is no curve point is refused")
     refused(lambda: L.timeout_units(0), "a zero timeout is refused")
     refused(lambda: L.timeout_units(0x10000 * 512), "a timeout past 16 bits of 512 s is refused")
-    refused(lambda: L.LotLock(_sale(), b"\x00" * 31, B, bytes([0x51, 0x20]) + B, 600),
+    ok_spk = bytes([0x51, 0x20]) + B
+    refused(lambda: L.LotLock(_sale(), b"\x00" * 31, ok_spk, ok_spk, "bb" * 32, 1, 600),
             "a payment hash that is not 32 bytes is refused")
-    refused(lambda: L.LotLock(_sale(), b"\x00" * 32, B, bytes([0x52, 0x20]) + B, 600),
+    refused(lambda: L.LotLock(_sale(), b"\x00" * 32, bytes([0x52, 0x20]) + B, ok_spk, "bb" * 32, 1, 600),
             "a destination that is no v0 or v1 witness output is refused")
+    refused(lambda: L.LotLock(_sale(), b"\x00" * 32, ok_spk, bytes([0x52, 0x20]) + B, "bb" * 32, 1, 600),
+            "a refund address that is no v0 or v1 witness output is refused")
     other = C.SaleTerms("aa" * 32, "bb" * 32, 1, 4, "11" * 32, 1, 1_000_000, RECLAIM.hex())
     refused(lambda: _sale(sell_terms=other),
             "direct-settlement terms with another minimum are refused")

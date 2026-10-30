@@ -146,6 +146,7 @@ class Sale:
         self.takes = []            # takes from leaves, as Levo follows them (leaves.py)
         self.reclaim_txids = []    # reclaims Levo built for this sale, by txid
         self.strays = []           # other assets seen resting at the sale address
+        self.lots = []             # Lightning reservations Levo built (lnsale.py)
         # Labels for messages people read. Never used in arithmetic.
         self.token_label = token_label
         self.token_decimals = int(token_decimals)

@@ -10,6 +10,7 @@ import Beam from '../components/Beam'
 import BuyFlow from '../components/BuyFlow'
 import CappedBuy from '../components/CappedBuy'
 import LeafBuy from '../components/LeafBuy'
+import LightningBuy from '../components/LightningBuy'
 import Reclaim from '../components/Reclaim'
 import LockPanel from '../components/LockPanel'
 import { Status } from './Projects'
@@ -180,6 +181,9 @@ function BuyPanel({ project, onBought }) {
         </>
       ) : (
         <>
+          {project.sale && project.sale.terms.lightning && (
+            <LightningBuy project={project} onSettled={onBought} />
+          )}
           <BuyFlow project={project} tier={tier} onSettled={onBought} />
           <LeafBuy project={project} onTaken={onBought} />
         </>
