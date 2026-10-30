@@ -1263,6 +1263,11 @@ class Platform:
         tier = self.tier_for(sale, self.stake.policy.for_stake(standing["stake_atoms"]))
         plan = sale.plan_buy(account, tier, token_atoms=body.get("token_atoms"),
                              height=self.height(strict=sale.close_is_height()))
+        # A wallet's receive code (`bitcoin:<address>?…`) names the address
+        # the tokens go to; the rest of it is for other payments.
+        code = str(body.get("token_address") or "")
+        if code.lower().startswith("bitcoin:"):
+            body = dict(body, token_address=code.split(":", 1)[1].split("?", 1)[0])
         buyer_spk = self._spk(body, "token_script_pubkey", "token_address", "where your tokens go")
         try:
             dest = sale.cov.destination(buyer_spk, body.get("buyer_key"))

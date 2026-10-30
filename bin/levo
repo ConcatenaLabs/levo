@@ -14,6 +14,8 @@ the transaction, signs your inputs with your wallet, and broadcasts.
     levo buyers <slug>                      who bought from a sale you list, and how much
     levo link                               prove a staking key for your account
     levo keygen                             a reclaim key pair for a new listing
+    levo order SLUG --tokens N --to ADDR    a lot of a Lightning sale, for BTC: the invoice
+    levo order-status SLUG HASH             where that order stands
     levo create terms.json                  list a project from a JSON file
                                             (levo create --example prints one)
     levo lock <slug>                        fund a sale you are listing
@@ -1007,6 +1009,33 @@ def _sign_capped(args, built, cov, buyer_xonly, buyer_secret, tok):
     return done["tx_hex"]
 
 
+def cmd_order(args):
+    """A lot of a Lightning sale, for BTC: prints the invoice to pay. The
+    tokens go to --to, which may be any Sequentia address (a wallet's receive
+    code works too); the account that orders is the one whose cap it counts
+    against."""
+    tok = sign_in()
+    p = api("GET", "/api/projects/%s" % args.slug)
+    if not ((p.get("sale") or {}).get("terms") or {}).get("lightning"):
+        raise Fail("%s is not paid over Lightning" % args.slug)
+    decimals = int(p.get("decimals", 8))
+    token_atoms = U.parse(args.tokens, decimals)
+    if token_atoms is None:
+        raise Fail("--tokens must be a number with at most %d decimal places" % decimals)
+    r = api("POST", "/api/projects/%s/lightning" % args.slug,
+            {"token_atoms": str(token_atoms), "token_address": args.to}, tok)
+    lot = r["lot"]
+    print("pay %s sats for %s %s:" % (lot["sats"], args.tokens, p.get("ticker", "")))
+    print(lot["bolt11"])
+    print("order %s" % lot["payment_hash"])
+    print("then: levo order-status %s %s" % (args.slug, lot["payment_hash"]))
+
+
+def cmd_order_status(args):
+    r = api("GET", "/api/projects/%s/lightning/%s" % (args.slug, args.hash))
+    print(json.dumps(r, indent=2))
+
+
 def cmd_buy(args):
     tok = sign_in()
     p = api("GET", "/api/projects/%s" % args.slug)
@@ -1677,6 +1706,19 @@ def main():
                     help="the chain's address prefix, used only when this Levo "
                          "publishes no address of its own")
     lk.set_defaults(fn=cmd_lock)
+
+    od = sub.add_parser("order", help="a lot of a Lightning sale, for BTC: prints the invoice")
+    od.add_argument("slug", help=SLUG)
+    od.add_argument("--tokens", required=True, type=_amount,
+                    help="how many tokens, in the token's own units (40, or 0.5)")
+    od.add_argument("--to", required=True,
+                    help="the Sequentia address the tokens go to (a receive code works too)")
+    od.set_defaults(fn=cmd_order)
+
+    os_ = sub.add_parser("order-status", help="where a Lightning order stands")
+    os_.add_argument("slug", help=SLUG)
+    os_.add_argument("hash", help="the order's payment hash, as `levo order` printed it")
+    os_.set_defaults(fn=cmd_order_status)
 
     b = sub.add_parser("buy", help="buy, end to end")
     b.add_argument("slug", help=SLUG)
