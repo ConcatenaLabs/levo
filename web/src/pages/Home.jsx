@@ -2,11 +2,11 @@ import { Link } from 'react-router-dom'
 import { useStore } from '../lib/store'
 import Beam from '../components/Beam'
 import { Notice, usePageTitle } from '../components/ui'
-import { compact, tierSays } from '../lib/format'
+import { compact, positive } from '../lib/format'
 
 export default function Home() {
   usePageTitle('')
-  const { tiers, standing, signedIn, loading, config, payment, stake, links } = useStore()
+  const { tiers, standing, signedIn, loading, config, payment, stake, links, money } = useStore()
   const list = tiers ? tiers.tiers : null
   const stakeAtoms = standing ? standing.stake_atoms : 0
   const first = list && list.length > 1 ? list[1] : null
@@ -31,7 +31,7 @@ export default function Home() {
           Between the two sits a covenant, not Levo: it holds the
           project&rsquo;s tokens from the moment they are locked to the moment
           they reach a buyer, and settles each purchase in one transaction.
-          Sales here are priced in {payment.label}.
+          Every amount here reads in BTC.
         </p>
         <div className="hero-actions">
           <Link className="btn btn-primary" to="/projects">See the sales</Link>
@@ -138,7 +138,7 @@ export default function Home() {
                       </span>
                     </div>
                     <p className="small dim" style={{ margin: '.5rem 0 0' }}>
-                      {tierSays(t, payment.label, payment.decimals)}
+                      {positive(t.cap_atoms) ? 'Up to ' + money(t.cap_atoms, payment.asset) + ' in any one sale.' : 'This tier cannot buy.'}{t.may_list ? ' May list a project.' : ''}
                     </p>
                     {t.blurb && <p className="small dim" style={{ margin: '.35rem 0 0' }}>{t.blurb}</p>}
                   </div>
@@ -153,10 +153,9 @@ export default function Home() {
                 Sequentia has no privileged coin. Fees are payable in any
                 accepted asset and every issued asset stands equal. Staking is
                 the one exception the protocol itself makes, because only
-                Sequence can stake. That every sale here is priced in{' '}
-                {payment.label} is Levo&rsquo;s own policy and not the
-                chain&rsquo;s: it is what lets any two sales be compared, and a
-                covenant will hold terms in any asset at all.
+                Sequence can stake. A sale here settles in whichever asset its
+                project chooses, and every amount reads in BTC so that any two
+                sales can be compared.
               </p>
               <p className="small dim" style={{ marginBottom: 0 }}>
                 Levo's tiers ride on that exception rather than on holdings. A

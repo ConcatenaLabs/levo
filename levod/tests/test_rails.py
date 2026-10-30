@@ -132,3 +132,78 @@ def test_a_registry_answer_is_read_with_an_end_to_it(t):
     t.ok(a.error and "larger than" in a.error,
          "a registry answering without end is refused, not read", a.error)
     t.eq(a.found, False, "and the listing is not held up by it")
+
+
+class Node:
+    """A node answering the rate table and the labels."""
+
+    def __init__(self, rates, labels):
+        self.rates_, self.labels_ = rates, labels
+
+    def call(self, method, *params):
+        return dict(self.rates_ if method == "getfeeexchangerates" else self.labels_)
+
+
+OTHER = "bb" * 32
+SBTC_ID = "cc" * 32
+
+
+def _platform():
+    import market as M
+    import store as ST
+    import tempfile
+    import os
+    node = Node({"SBTC": 8 * 10**12, "USDX": 10**8, OTHER: 2 * 10**8},
+                {"USDX": USDX, "SBTC": SBTC_ID})
+    rails = R.Rails(USDX, "USDX", R.NodeRateSource(node))
+    import tiers as T
+
+    class Stake:
+        links = T.StakeLinks()
+        policy = T.TierPolicy()
+    _DIRS.append(tempfile.TemporaryDirectory(prefix="levo-rails-"))
+    path = os.path.join(_DIRS[-1].name, "s.json")
+    return M.Platform(ST.Store(path), Stake(), rails, node, payment_asset=USDX), M
+
+
+_DIRS = []
+
+
+def test_any_priced_asset_settles_a_sale(t):
+    plat, M = _platform()
+    plat.check_settlement_asset(USDX)
+    plat.check_settlement_asset(OTHER)
+    t.ok(True, "the default asset and another priced asset are both accepted")
+    for bad, why in ((SBTC_ID, "pegged bitcoin"), ("dd" * 32, "prices no such asset")):
+        try:
+            plat.check_settlement_asset(bad)
+            t.ok(False, "%s is refused" % why)
+        except M.PlatformError as e:
+            t.ok(why in str(e), "%s is refused, and says so" % why, str(e))
+
+
+def test_values_and_sats(t):
+    plat, M = _platform()
+    v = plat.rails.values()
+    t.eq(v["btc_rate"], 8 * 10**12, "bitcoin's rate is published")
+    t.eq(v["rates"][OTHER], 2 * 10**8, "assets without a label are keyed by id")
+    t.eq(v["rates"][USDX], 10**8, "labelled assets by their id too")
+    t.eq(plat.rails.to_sats(USDX, 80 * 10**8), 10**5, "$80 of USDX is 100,000 sats at $80,000")
+
+
+def test_a_cap_is_converted_into_the_sales_asset(t):
+    import copy
+    plat, M = _platform()
+
+    class Tier:
+        cap_atoms = 1000 * 10**8
+
+    class Terms:
+        payment_asset = OTHER
+
+    class Sale:
+        terms = Terms()
+    got = plat.tier_for(Sale(), Tier())
+    t.eq(got.cap_atoms, 500 * 10**8, "a $1,000 cap is 500 of an asset worth $2")
+    Terms.payment_asset = USDX
+    t.eq(plat.tier_for(Sale(), Tier()).cap_atoms, 1000 * 10**8, "and unchanged in the default asset")

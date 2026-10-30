@@ -16,7 +16,7 @@ function Mark() {
 }
 
 export function Nav() {
-  const { signedIn, tier, account, loading, nodeDown, meError, configError, stateFrozen } = useStore()
+  const { signedIn, tier, account, loading, nodeDown, meError, configError, stateFrozen, unit, setUnit } = useStore()
   return (
     <>
       <a className="skip" href="#main">Skip to content</a>
@@ -30,6 +30,11 @@ export function Nav() {
             <NavLink to="/projects">Sales</NavLink>
             <NavLink to="/launch">Launch</NavLink>
             <NavLink to="/how-it-works">How it works</NavLink>
+            <button type="button" className="unit-switch" onClick={() => setUnit(unit === 'btc' ? 'usd' : 'btc')}
+                    aria-label={'Amounts in ' + (unit === 'btc' ? 'BTC' : 'US dollars') + '. Switch to ' + (unit === 'btc' ? 'US dollars' : 'BTC')}>
+              <span className={unit === 'btc' ? 'on' : ''}>BTC</span>
+              <span className={unit === 'usd' ? 'on' : ''}>USD</span>
+            </button>
             <NavLink to="/account">
               {loading ? <span className="dim">…</span> : signedIn ? (
                 <span className="mono" style={{ fontSize: '.82rem' }}>

@@ -40,7 +40,7 @@ export default function Launch() {
   const [form, setForm] = useState(() => ({
     slug: '', name: '', ticker: '', summary: '', description: '', website: '',
     token_asset: '', decimals: '8', issuance_txid: '', treasury_address: '', reclaim_xonly: '',
-    total: '', price: '', min_lot: '', close: '',
+    total: '', price: '', min_lot: '', close: '', settles_in: '',
     ...(readDraft() || {}),
   }))
   const [error, setError] = useState(null)
@@ -64,7 +64,14 @@ export default function Launch() {
       }
       const total = toAtoms(form.total, decimals)
       const minLot = toAtoms(form.min_lot, decimals)
-      const priceAtoms = toAtoms(form.price, payment.decimals)
+      // The sale settles in the asset the project chooses; the deployment's
+      // own is the suggestion. Another asset is read at eight places, every
+      // asset's precision unless its issuer registered another.
+      const settles = (form.settles_in || '').trim().toLowerCase() || payment.asset
+      const own = settles === payment.asset
+      const payDecimals = own ? payment.decimals : 8
+      const payLabel = own ? payment.label : 'the asset it settles in'
+      const priceAtoms = toAtoms(form.price, payDecimals)
       // Two different mistakes, two different sentences: a value that could not
       // be read (1e5, a stray letter) and one that read as nothing.
       const amountOr = (field, what, places, atoms, raw) => {
@@ -78,7 +85,7 @@ export default function Launch() {
       }
       amountOr('total', 'The amount for sale', decimals, total, form.total)
       amountOr('min', 'The minimum purchase', decimals, minLot, form.min_lot)
-      amountOr('price', 'The price per token, in ' + payment.label + ',', payment.decimals, priceAtoms, form.price)
+      amountOr('price', 'The price per token, in ' + payLabel + ',', payDecimals, priceAtoms, form.price)
       if (!form.close) throw bad('close', 'Pick a close date.')
       const close = Math.floor(new Date(form.close + 'T23:59:59Z').getTime() / 1000)
       if (!close || Number.isNaN(close)) throw bad('close', 'Pick a close date.')
@@ -88,7 +95,7 @@ export default function Launch() {
       // so the covenant's ceiling arithmetic matches what is shown here.
       const terms = {
         token_asset: form.token_asset.trim().toLowerCase(),
-        payment_asset: payment.asset,
+        payment_asset: settles,
         price_num: atomsArg(priceAtoms),
         price_den: atomsArg(10n ** BigInt(decimals)),
         treasury_address: form.treasury_address.trim(),
@@ -242,6 +249,16 @@ export default function Launch() {
             <div className="hint">How the token is shown, 0 to 8. Match the precision in its registry contract.</div>
           </div>
         </div>
+        <div className="field">
+          <label htmlFor="settles">Settles in</label>
+          <input id="settles" className="mono" value={form.settles_in} onChange={set('settles_in')}
+                 placeholder={payment.asset} spellCheck={false} />
+          <div className="hint">
+            The asset buyers pay in, by its id: any asset the network's fee table prices,
+            {' '}{payment.label} unless you name another. Every amount on Levo reads in BTC
+            whatever the sale settles in.
+          </div>
+        </div>
         <div className="grid-2">
           <div className="field">
             <label htmlFor="total">Tokens for sale</label>
@@ -249,7 +266,7 @@ export default function Launch() {
                    required aria-invalid={invalid.total || undefined} />
           </div>
           <div className="field">
-            <label htmlFor="price">Price per token, {payment.label}</label>
+            <label htmlFor="price">Price per token, in the asset it settles in</label>
             <input id="price" className="mono" inputMode="decimal" value={form.price} onChange={set('price')}
                    placeholder="0.25" required aria-invalid={invalid.price || undefined} />
           </div>

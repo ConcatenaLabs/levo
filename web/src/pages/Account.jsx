@@ -188,7 +188,7 @@ function MyProjects() {
 }
 
 function MyPositions() {
-  const { payment, explorer } = useStore()
+  const { payment: fallbackPay, explorer, money } = useStore()
   const [positions, setPositions] = useState(null)
   const [error, setError] = useState(null)
   const [total, setTotal] = useState(0)
@@ -209,11 +209,11 @@ function MyPositions() {
             <Link to={'/p/' + p.slug}><b>{p.name}</b> <span className="row-ticker">{p.ticker}</span></Link>
             <span className="num small">{amount(p.tokens_atoms, p.decimals)} {p.ticker}</span>
           </div>
-          <div className="kv" style={{ marginTop: '.5rem' }}><span>Committed</span><b>{amount(p.committed_atoms, payment.decimals)} {payment.label}</b></div>
-          <div className="kv"><span>Still open in your cap</span><b>{amount(p.allowance_remaining_atoms, payment.decimals)} {payment.label}</b></div>
+          <div className="kv" style={{ marginTop: '.5rem' }}><span>Committed</span><b>{money(p.committed_atoms, (p.payment || fallbackPay).asset, p.payment)}</b></div>
+          <div className="kv"><span>Still open in your cap</span><b>{money(p.allowance_remaining_atoms, (p.payment || fallbackPay).asset, p.payment)}</b></div>
           {p.purchases.map((e) => (
             <div key={e.txid + e.at} className="small dim" style={{ marginTop: '.4rem' }}>
-              {timeLabel(e.at)}: {amount(e.token_atoms, p.decimals)} {p.ticker} for {amount(e.payment_atoms, payment.decimals)} {payment.label}
+              {timeLabel(e.at)}: {amount(e.token_atoms, p.decimals)} {p.ticker} for {money(e.payment_atoms, (p.payment || fallbackPay).asset, p.payment)}
               {e.txid && <> · <Hex value={e.txid} href={explorer('tx', e.txid)} short={12} label="transaction id" /></>}
               {e.verified === true ? ' · treasury payment checked' : e.verified === false ? '' : ' · not checked on chain'}
             </div>
@@ -236,7 +236,7 @@ function MyPositions() {
 
 export default function Account() {
   usePageTitle('Account')
-  const { signedIn, standing, tiers, account, signOut, setStanding, loading, config, payment, stake } = useStore()
+  const { signedIn, standing, tiers, account, signOut, setStanding, loading, config, payment, stake, money } = useStore()
   const [unlinkError, setUnlinkError] = useState(null)
   const [busyKey, setBusyKey] = useState(null)
 
@@ -298,7 +298,7 @@ export default function Account() {
           </span>
         </div>
         <div className="stat">
-          <b>{amount(st.tier.cap_atoms, payment.decimals)}</b><span>{payment.label} cap per sale</span>
+          <b>{money(st.tier.cap_atoms, payment.asset)}</b><span>cap per sale</span>
         </div>
         <div className="stat">
           <b>{st.next_tier ? compact(st.to_next_atoms) : '—'}</b>

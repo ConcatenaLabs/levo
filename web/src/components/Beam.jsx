@@ -1,5 +1,6 @@
 import { big, compact, positive } from '../lib/format'
 import { xFor, yFor } from '../lib/beam'
+import { useStore } from '../lib/store'
 
 // Levo's one drawing: the rule itself, plotted.
 //
@@ -17,6 +18,10 @@ export default function Beam({ tiers, stakeAtoms = 0, compactMode = false, showM
                                // stake is an amount of the stake asset, and the
                                // two do not divide the same way.
                                paymentDecimals = 8, stakeDecimals = 8 }) {
+  // Caps are written in the deployment's default asset and read in the
+  // viewer's unit, BTC unless they chose dollars.
+  const { money, payment, unit } = useStore()
+  const cap = (atoms) => money(atoms, payment.asset, { label: paymentLabel, decimals: paymentDecimals })
   if (!tiers || tiers.length < 2) return null
 
   const W = 1000
@@ -57,7 +62,7 @@ export default function Beam({ tiers, stakeAtoms = 0, compactMode = false, showM
       : 'below the first threshold'
     return t.name + ', ' + from + ', ' +
       (positive(t.cap_atoms)
-        ? 'up to ' + compact(t.cap_atoms, paymentDecimals) + ' ' + paymentLabel + ' per sale'
+        ? 'up to ' + cap(t.cap_atoms) + ' per sale'
         : 'cannot buy') +
       (t.may_list ? ', and may list a project' : '')
   }).join('. ') + '.' + (showMarker && stake > 0
@@ -69,7 +74,7 @@ export default function Beam({ tiers, stakeAtoms = 0, compactMode = false, showM
     <div className={'beam' + (compactMode ? ' compact' : '')}>
       <div className="beam-head">
         <span>Stake, {stakeLabel} →</span>
-        <span>cap per sale, {paymentLabel}</span>
+        <span>cap per sale, {unit === 'usd' ? 'USD' : 'BTC'}</span>
       </div>
       <div className="beam-plot">
       <svg viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none"
@@ -118,7 +123,7 @@ export default function Beam({ tiers, stakeAtoms = 0, compactMode = false, showM
             <span key={'cap' + s.i} className="beam-cap"
                   style={{ left: (s.x0 / W) * 100 + '%',
                            top: ((s.y / H) * 100) + '%' }}>
-              {compact(s.tier.cap_atoms, paymentDecimals)}
+              {cap(s.tier.cap_atoms).replace(/ BTC$/, '')}
             </span>
           ) : null
         ))}
@@ -147,7 +152,7 @@ export default function Beam({ tiers, stakeAtoms = 0, compactMode = false, showM
                 ? 'no stake'
                 : compact(t.min_stake_atoms, stakeDecimals) + ' ' + stakeLabel}
               {positive(t.cap_atoms)
-                ? ' · up to ' + compact(t.cap_atoms, paymentDecimals) + ' ' + paymentLabel
+                ? ' · up to ' + cap(t.cap_atoms)
                 : ''}
             </span>
           </li>

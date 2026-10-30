@@ -710,7 +710,7 @@ class Handler(BaseHTTPRequestHandler):
             # client with no answer at all.
             path = urlparse(getattr(self, "path", "") or "").path
             code = str(args[1]) if len(args) > 1 else ""
-            quiet = path in ("/api/health", "/api/tiers", "/api/rails", "/api/config") \
+            quiet = path in ("/api/health", "/api/tiers", "/api/rails", "/api/rates", "/api/config") \
                 or path.startswith("/assets/") or path.endswith((".svg", ".png", ".woff2"))
             if quiet and code.startswith("2"):
                 return
@@ -1106,6 +1106,11 @@ class Handler(BaseHTTPRequestHandler):
                 "note": app.tiers_note(),
                 "caps_enforced_by": "levo",
             })
+
+        if method == "GET" and parts == ["rates"]:
+            # What a page needs to show any amount in BTC or in dollars: each
+            # priced asset's rate and bitcoin's, from the node's table.
+            return self._json(200, app.rails.values(), cache="public, max-age=30")
 
         if method == "GET" and parts == ["rails"]:
             return self._json(200, {"rails": app.rails.available()}, cache="public, max-age=30")
@@ -1809,6 +1814,7 @@ API_METHODS = (
     (("config",), ["GET"]),
     (("tiers",), ["GET"]),
     (("rails",), ["GET"]),
+    (("rates",), ["GET"]),
     (("watcher",), ["GET"]),
     (("me",), ["GET"]),
     (("me", "projects"), ["GET"]),

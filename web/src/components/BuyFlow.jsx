@@ -117,7 +117,9 @@ function Step({ n, title, children, done }) {
 }
 
 export default function BuyFlow({ project, tier, onSettled }) {
-  const { payment, explorer, refresh, config } = useStore()
+  const { payment: fallbackPay, explorer, refresh, config, money } = useStore()
+  // The sale's own asset: sales settle in whatever asset their project chose.
+  const payment = (project.sale && project.sale.payment) || fallbackPay
   const hrp = config.hrp || 'tb'
   const blinded = hrp === 'bc' ? 'sqb' : hrp === 'tb' ? 'tsqb' : hrp + 'b'
   const sale = project.sale
@@ -436,8 +438,8 @@ export default function BuyFlow({ project, tier, onSettled }) {
                    placeholder={amount(sale.terms.min_lot, decimals)} />
             <div className="hint" id="qty-hint">
               Minimum {amount(sale.terms.min_lot, decimals)} {project.ticker}. Your cap in this sale
-              is {amount(tier.cap_atoms, payment.decimals)} {label}
-              {remaining !== null ? ', of which ' + amount(remaining, payment.decimals) + ' is still open' : ''}.
+              is {money(tier.cap_atoms, fallbackPay.asset, fallbackPay)}
+              {remaining !== null ? ', of which ' + money(remaining, payment.asset, payment) + ' is still open' : ''}.
             </div>
           </div>
           <button className="btn btn-primary btn-sm" aria-disabled={busy}>
@@ -456,12 +458,13 @@ export default function BuyFlow({ project, tier, onSettled }) {
                   <b>{expired ? 'stale; refresh it below' : timeLabel(plan.quote.expires_at)}</b></div>
               </>
             ) : (
-              <div className="kv"><span>You pay</span><b>{amount(plan.payment_atoms, payment.decimals)} {label}</b></div>
+              <div className="kv"><span>You pay</span><b>{amount(plan.payment_atoms, payment.decimals)} {label}</b>
+                <span className="dim small">{money(plan.payment_atoms, payment.asset, payment)}</span></div>
             )}
             <div className="kv"><span>Left in the sale after this buy</span><b>{amount(plan.remainder_atoms, decimals)} {project.ticker}</b></div>
             <div className="kv">
               <span>Your cap in this sale</span>
-              <b>{amount(plan.cap.committed_atoms, payment.decimals)} of {amount(plan.cap.per_sale_atoms, payment.decimals)} {label} used</b>
+              <b>{money(plan.cap.committed_atoms, payment.asset, payment)} of {money(plan.cap.per_sale_atoms, payment.asset, payment)} used</b>
             </div>
             <p className="small dim" style={{ marginTop: '.75rem' }}>
               The cap is Levo's allocation policy. The covenant enforces the
