@@ -20,7 +20,7 @@ sys.path.insert(0, str(HERE.parent))
 
 # The suites that run on their own, each against something this runner does
 # not have: a real node, a browser, a wallet, or the HTTP surface end to end.
-STANDALONE = {"test_e2e", "test_node", "test_lnsale_node", "test_cli", "test_capped", "test_render", "test_browser"}
+STANDALONE = {"test_e2e", "test_node", "test_lnsale_node", "test_lightning_e2e", "test_cli", "test_capped", "test_render", "test_browser"}
 
 MODULES = ["test_crypto", "test_auth", "test_covenant", "test_address", "test_pset",
            "test_tiers", "test_precision", "test_rails", "test_rpc", "test_store",

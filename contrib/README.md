@@ -4,6 +4,11 @@
   every setting in `/etc/sequentia/levod.env`.
 - `levod.env.example` lists every setting. Copy it, fill it in, keep it out of
   the repo.
+- `levo-receiver.service` runs `levod/receiver.py`, a project's Lightning
+  receiver ([doc/lightning-sales.md](../doc/lightning-sales.md)), with its
+  settings in `/etc/sequentia/levo-receiver.env` (`levo-receiver.env.example`).
+  It starts only where that file exists, and `deploy.sh` restarts it beside
+  levod when it does.
 - `levo-backup.sh`, `levo-backup.service` and `levo-backup.timer` copy the
   state file to `/var/backups/levo` four times a day and keep the newest sixty
   copies. The state file holds every sale's terms, which is what a funded

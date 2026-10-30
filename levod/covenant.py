@@ -333,7 +333,7 @@ class SaleTerms:
 
     def __init__(self, token_asset, payment_asset, price_num, price_den,
                  treasury_prog, min_lot, close_locktime, reclaim_xonly,
-                 total_atoms=None, treasury_ver=1, allocations=None):
+                 total_atoms=None, treasury_ver=1, allocations=None, lightning=None):
         self.token_asset = _hex32(token_asset, "token_asset")
         self.payment_asset = _hex32(payment_asset, "payment_asset")
         self.price_num = _int(price_num, "price_num")
@@ -361,6 +361,14 @@ class SaleTerms:
                 self.allocations = CAP.check_allocations(allocations)
             except CAP.CappedError as e:
                 raise ValueError(str(e))
+        # A Lightning sale (lnsale.py): buyers also pay in BTC over Lightning,
+        # and the address gains the RESERVE leaf under the receiver's key.
+        self.lightning = None
+        if lightning is not None:
+            if self.allocations is not None:
+                raise ValueError("a sale is capped or paid over Lightning, not both")
+            import lnsale as LN
+            self.lightning = LN.LightningTerms.from_json(lightning)
         self._validate()
 
     @property
@@ -452,6 +460,8 @@ class SaleTerms:
         }
         if self.allocations is not None:
             out["allocations"] = [{"key": k, "cap_atoms": atoms_out(c)} for k, c in self.allocations]
+        if self.lightning is not None:
+            out["lightning"] = self.lightning.to_json()
         return out
 
     @classmethod
@@ -465,7 +475,8 @@ class SaleTerms:
         return cls(d["token_asset"], d["payment_asset"], d["price_num"],
                    d["price_den"], d["treasury_prog"], d["min_lot"],
                    d["close_locktime"], d["reclaim_xonly"], d.get("total_atoms"),
-                   treasury_ver=d.get("treasury_ver", 1), allocations=d.get("allocations"))
+                   treasury_ver=d.get("treasury_ver", 1), allocations=d.get("allocations"),
+                   lightning=d.get("lightning"))
 
 
 class SaleCovenant:
@@ -528,6 +539,11 @@ def derive(terms, internal_key=NUMS):
             raise ValueError("a Levo sale must use the NUMS internal key")
         import capped as CAP
         return CAP.CappedCovenant(terms)
+    if getattr(terms, "lightning", None) is not None:
+        if internal_key != NUMS:
+            raise ValueError("a Levo sale must use the NUMS internal key")
+        import lnsale as LN
+        return LN.LightningCovenant(terms)
     return SaleCovenant(terms, internal_key)
 
 

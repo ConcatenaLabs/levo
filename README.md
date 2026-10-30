@@ -116,6 +116,14 @@ uses to price a fee paid in any asset. That table is the node operator's
 policy, not a consensus price, so treat a BTC quote as Levo's quote and check
 it against your own wallet before swapping.
 
+**Native BTC over Lightning.** A sale can also be priced in BTC and paid with
+a Lightning invoice, from any Lightning wallet or a Bitcoin Ark balance. The
+lot waits in a lock under the invoice's payment hash, and paying the invoice is
+what hands over the secret that delivers it. Nobody holds the tokens or the
+BTC in between and no pegged bitcoin is involved. A project runs a small
+receiver beside its Lightning node for this
+([doc/lightning-sales.md](doc/lightning-sales.md)).
+
 ## Who does what
 
 **A buyer** needs a Levo account (a key that can sign a message: the browser
@@ -175,6 +183,7 @@ fonts are served by the app itself. How it works says the same to visitors.
 | `levod/server.py` | The service: the API under `/api/` and the built app, one origin. Every page is served with its own title and description in its head, a sale's page with the sale's name and one-liner, so a link previews as what it points at wherever it is shared. `levod/demo.py` is the same server over a stub node, with three seeded sales: one open, one not yet funded, one reclaimed. |
 | `levod/covenant.py` | The sale covenant, checked byte for byte against `levod/vectors.json` on every import. |
 | `levod/capped.py`, `levod/capped_sale/`, `levod/sequentia_address.py` | The capped sale: the `sequentia/capped-sale` covenant of sequentia-contracts, vendored and pinned (`capped_sale/PIN.json`, checked on every import), the compiler-free address code it is derived with, and the purchase witness built through `seqc`. |
+| `levod/receiver.py` | A project's Lightning receiver: invoices, the reservation signature, and the delivery or re-rest of every lock it signed. The project runs it; levod holds no key. |
 | `levod/lnsale.py` | The Lightning sale's scripts: the sale address with its RESERVE leaf, the lot lock and the bond lock a reservation creates, and the vesting destination ([doc/lightning-sales.md](doc/lightning-sales.md)). |
 | `levod/sale.py`, `levod/market.py` | The sale lifecycle (lock, sell, reclaim) and the marketplace rules: listing, the settlement plan, the per-buyer caps, the ledger. |
 | `levod/tiers.py` | The tier policy, and the `LEVOD_TIERS` table it reads. |
@@ -281,6 +290,7 @@ python3 levod/tests/test_node.py  # the whole life of a sale against a real sequ
 python3 levod/tests/test_render.py # every page, in a real browser; skipped without a chromium
 python3 levod/tests/test_cli.py   # bin/levo end to end against a real node; skipped without one
 python3 levod/tests/test_capped.py # a capped sale end to end: real node, levod, bin/levo; skipped without a node or seqc
+python3 levod/tests/test_lightning_e2e.py # a Lightning sale end to end: sequentiad, bitcoind, two lightningd, the receiver; skipped without them
 python3 levod/tests/test_lnsale_node.py # the Lightning sale's scripts on a real chain, every refusal mined into a block; skipped without a node
 python3 levod/tests/test_browser.py # a purchase made in a browser, with a wallet; skipped without either
 python3 levod/tests/leaves_observer.py --help # buying from leaves: run by arca's shared-fills test, see below

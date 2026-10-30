@@ -15,8 +15,10 @@ secret:
      paying.
   2. The buyer pays the invoice in BTC, from any Lightning wallet or a Bitcoin
      Ark balance, and learns the secret.
-  3. The secret delivers the lot to the destination written in the lock, and,
-     with the buyer's signature, returns the bond.
+  3. The secret delivers the lot to the destination written in the lock and
+     returns the bond, less the claim's fee, to the buyer. Neither needs a
+     signature, so whoever holds the secret -- the buyer, or the receiver once
+     paid -- can broadcast the claim, and it can only pay the buyer.
 
 If the invoice is never paid, the lot re-rests at the sale address once the
 lock's timeout has passed, and the project keeps the bond.
@@ -35,8 +37,11 @@ none of them has a key path:
             the buyer. RE-REST: after the timeout, the output at the input's
             own index pays the lot, all of it, back to the sale address. No
             signature either, so an unpaid lot needs nobody to come back.
-  BOND LOCK REFUND: the secret and the buyer's signature. FORFEIT: after the
-            timeout, the receiver's signature.
+  BOND LOCK REFUND: the secret, and the output at the input's own index
+            returns the bond, less at most a fixed fee allowance, to the
+            buyer's refund address. No signature: the bond pays the claim's
+            fee, so a buyer needs no key and no other coin to collect.
+            FORFEIT: after the timeout, the receiver's signature.
   VESTING   (when the sale vests) the destination a lot lock names: the
             buyer's key, from the vesting time on.
 
@@ -45,7 +50,8 @@ What each party can and cannot do, all of it consensus:
   * Nobody takes a lot without the secret, and the secret can only send it to
     the buyer's destination.
   * Before the timeout a lot cannot go back to the sale, and the project
-    cannot take the bond; the bond goes back to the buyer with the secret.
+    cannot take the bond; with the secret the bond can only go back to the
+    buyer, less at most the fee allowance.
   * The receiver's key moves lots out of the sale. The project holds the
     secret of every invoice it issues, so it can always take its own lots, the
     same way a project can always buy its own sale out at the published price.
@@ -178,10 +184,21 @@ def build_rerest_leaf(units, sale_spk, token_wire):
                     + _pin_output_here(sale_spk, token_wire))
 
 
-def build_refund_leaf(payment_hash, buyer_xonly):
-    if len(buyer_xonly) != 32:
-        raise ValueError("the buyer key is a 32-byte x-only key")
-    return K.script(_secret_check(payment_hash) + [buyer_xonly] + _O(K.OP_CHECKSIG))
+def build_refund_leaf(payment_hash, refund_spk, bond_wire, fee_allowance):
+    """REFUND: the secret, and the output at this input's own index returns
+    the bond to `refund_spk`, explicitly, in the bond's asset, worth at least
+    this input's value less `fee_allowance`."""
+    ver, prog = _witness(refund_spk)
+    s = _secret_check(payment_hash)
+    s += _here() + _O(K.OP_INSPECTOUTPUTSCRIPTPUBKEY, K.OP_1 if ver == 1 else K.OP_0,
+                      K.OP_EQUALVERIFY) + [prog] + _O(K.OP_EQUALVERIFY)
+    s += _here() + _O(K.OP_INSPECTOUTPUTASSET, K.OP_1, K.OP_EQUALVERIFY) + [bond_wire] \
+        + _O(K.OP_EQUALVERIFY)
+    s += _here() + _O(K.OP_INSPECTOUTPUTVALUE, K.OP_1, K.OP_EQUALVERIFY)
+    s += [C.le8(fee_allowance)] + _O(K.OP_ADD64, K.OP_VERIFY)
+    s += _here() + _O(K.OP_INSPECTINPUTVALUE, K.OP_1, K.OP_EQUALVERIFY)
+    s += _O(K.OP_GREATERTHANOREQUAL64)
+    return K.script(s)
 
 
 def build_forfeit_leaf(units, receiver_xonly):
@@ -288,20 +305,30 @@ class LightningSale:
 
 
 class LotLock:
-    """One reservation: the lot lock, the bond lock, and where the lot goes."""
+    """One reservation: the lot lock, the bond lock, and where each goes.
 
-    def __init__(self, sale, payment_hash, buyer_xonly, dest_spk, timeout_seconds):
+    `bond_asset` and `fee_allowance` (atoms of it) shape the REFUND leaf: the
+    bond comes back to `refund_spk` less at most the allowance, which pays the
+    claim's fee.
+    """
+
+    def __init__(self, sale, payment_hash, dest_spk, refund_spk, bond_asset, fee_allowance,
+                 timeout_seconds):
         self.sale = sale
         self.payment_hash = _b32(payment_hash, "the payment hash")
-        self.buyer = _xonly(buyer_xonly, "the buyer key")
-        self.dest_spk = bytes.fromhex(dest_spk) if isinstance(dest_spk, str) else bytes(dest_spk)
-        _witness(self.dest_spk)
+        self.dest_spk = _spk(dest_spk)
+        self.refund_spk = _spk(refund_spk)
+        self.bond_asset = C._hex32(bond_asset, "the bond asset")
+        self.fee_allowance = int(fee_allowance)
+        if not 0 <= self.fee_allowance < (1 << 62):
+            raise ValueError("the fee allowance is a whole number of atoms")
         self.units = timeout_units(timeout_seconds)
         tw = C.asset_to_wire(sale.token_asset)
         self.claim_leaf = build_claim_leaf(self.payment_hash, self.dest_spk, tw)
         self.rerest_leaf = build_rerest_leaf(self.units, sale.script_pubkey, tw)
         self.lot = Tree([("claim", self.claim_leaf), ("rerest", self.rerest_leaf)])
-        self.refund_leaf = build_refund_leaf(self.payment_hash, self.buyer)
+        self.refund_leaf = build_refund_leaf(self.payment_hash, self.refund_spk,
+                                             C.asset_to_wire(self.bond_asset), self.fee_allowance)
         self.forfeit_leaf = build_forfeit_leaf(self.units, sale.receiver)
         self.bond = Tree([("refund", self.refund_leaf), ("forfeit", self.forfeit_leaf)])
 
@@ -312,6 +339,12 @@ class LotLock:
     @property
     def timeout_seconds(self):
         return self.units * SEQUENCE_UNIT_SECONDS
+
+
+def _spk(v):
+    b = bytes.fromhex(v) if isinstance(v, str) else bytes(v)
+    _witness(b)
+    return b
 
 
 class Vesting:
@@ -329,3 +362,203 @@ class Vesting:
 
 def preimage_hash(preimage):
     return hashlib.sha256(bytes(preimage)).digest()
+
+
+# --- a sale's Lightning terms, and Levo's view of the address ----------------
+
+DEFAULT_TIMEOUT = 6 * 3600
+
+
+class LightningTerms:
+    """What a sale's Lightning half publishes.
+
+    Only the receiver key is in the address (the RESERVE leaf). The rest is
+    what the receiver and Levo build each reservation from, and what a buyer's
+    wallet checks a lock against: the BTC price (`btc_num`/`btc_den`
+    satoshis per token atom, rounded up per lot), where the receiver answers,
+    the lock's timeout, the bond, the fee the bond may pay on its way back,
+    and a vesting time when the tokens vest.
+    """
+
+    def __init__(self, receiver_xonly, receiver_url, btc_num, btc_den, bond_asset, bond_atoms,
+                 fee_allowance, timeout_seconds=DEFAULT_TIMEOUT, vest_locktime=0):
+        self.receiver_xonly = _xonly(receiver_xonly, "the receiver key").hex()
+        self.receiver_url = str(receiver_url or "").strip().rstrip("/")
+        if not self.receiver_url.startswith(("http://", "https://")):
+            raise ValueError("the receiver's address must be an http(s) URL")
+        self.btc_num, self.btc_den = C.canonical_price(btc_num, btc_den)
+        self.bond_asset = C._hex32(bond_asset, "bond_asset")
+        self.bond_atoms = C._int(bond_atoms, "bond_atoms")
+        self.fee_allowance = C._int(fee_allowance, "fee_allowance")
+        if self.bond_atoms <= self.fee_allowance:
+            raise ValueError("the bond must be larger than the fee it may pay on its way back")
+        self.timeout_seconds = timeout_units(timeout_seconds) * SEQUENCE_UNIT_SECONDS
+        self.vest_locktime = C._int(vest_locktime or 0, "vest_locktime")
+        if not 0 <= self.vest_locktime <= 0xffffffff:
+            raise ValueError("the vesting time is a block height or a unix time")
+
+    def sats_for(self, token_atoms):
+        return -(-int(token_atoms) * self.btc_num // self.btc_den)
+
+    def to_json(self):
+        return {"receiver_xonly": self.receiver_xonly, "receiver_url": self.receiver_url,
+                "btc_num": self.btc_num, "btc_den": self.btc_den,
+                "bond_asset": self.bond_asset, "bond_atoms": C.atoms_out(self.bond_atoms),
+                "fee_allowance": C.atoms_out(self.fee_allowance),
+                "timeout_seconds": self.timeout_seconds, "vest_locktime": self.vest_locktime}
+
+    @classmethod
+    def from_json(cls, d):
+        if isinstance(d, LightningTerms):
+            return d
+        if not isinstance(d, dict):
+            raise ValueError("the Lightning terms must be an object")
+        for k in ("receiver_xonly", "receiver_url", "btc_num", "btc_den", "bond_asset",
+                  "bond_atoms", "fee_allowance"):
+            if d.get(k) in (None, ""):
+                raise ValueError("the Lightning terms are missing %s" % k)
+        return cls(d["receiver_xonly"], d["receiver_url"], d["btc_num"], d["btc_den"],
+                   d["bond_asset"], d["bond_atoms"], d["fee_allowance"],
+                   d.get("timeout_seconds") or DEFAULT_TIMEOUT, d.get("vest_locktime") or 0)
+
+
+class LightningCovenant:
+    """A Lightning sale as the rest of Levo sees a sale: the ordinary SELL and
+    RECLAIM leaves (so a purchase in the sale's asset and the reclaim work as
+    for any sale) beside RESERVE."""
+
+    capped = False
+
+    def __init__(self, terms):
+        self.terms = terms
+        ln = terms.lightning
+        self.sale = LightningSale(terms.token_asset, ln.receiver_xonly, terms.min_lot,
+                                  terms.close_locktime, terms.reclaim_xonly, sell_terms=terms)
+        self.sell_leaf = self.sale.sell_leaf
+        self.reclaim_leaf = self.sale.reclaim_leaf
+        self.reserve_leaf = self.sale.reserve_leaf
+        self.tap = self.sale.tree
+        self.script_pubkey = self.sale.script_pubkey
+
+    @property
+    def spk_hex(self):
+        return self.script_pubkey.hex()
+
+    def sell_witness(self):
+        return self.tap.witness("sell")
+
+    def reclaim_witness(self, project_sig):
+        return self.tap.witness("reclaim", project_sig)
+
+    def reserve_witness(self, receiver_sig):
+        return self.tap.witness("reserve", receiver_sig)
+
+    def verify_funding(self, onchain_spk):
+        if isinstance(onchain_spk, str):
+            onchain_spk = bytes.fromhex(onchain_spk)
+        if bytes(onchain_spk) != self.script_pubkey:
+            raise ValueError("funded scriptPubKey %s does not match the sale terms, which derive %s"
+                             % (bytes(onchain_spk).hex(), self.spk_hex))
+        return True
+
+    def lock(self, payment_hash, dest_spk, refund_spk):
+        ln = self.terms.lightning
+        return LotLock(self.sale, payment_hash, dest_spk, refund_spk, ln.bond_asset,
+                       ln.fee_allowance, ln.timeout_seconds)
+
+    def destination(self, buyer_spk, buyer_xonly=None):
+        """Where a lot goes: the buyer's address, or, when the sale vests, the
+        vesting script for the buyer's key."""
+        vest = self.terms.lightning.vest_locktime
+        if not vest:
+            return bytes.fromhex(buyer_spk) if isinstance(buyer_spk, str) else bytes(buyer_spk)
+        if not buyer_xonly:
+            raise ValueError("this sale vests, so a lot is locked to the buyer's key: name it")
+        return Vesting(vest, buyer_xonly).script_pubkey
+
+
+# --- the transactions --------------------------------------------------------
+
+def build_reserve(cov, sale_coin, token_atoms, lock, buyer_inputs, change_spk, fee_atoms):
+    """The reservation, unsigned: the sale coin at input 0, the buyer's coins
+    after it. Output 0 is the lot lock, output 1 the remainder (when any),
+    then the bond lock, the buyer's change in each asset, and the fee in the
+    bond's asset.
+
+    `sale_coin` is {txid, vout, atoms}; `buyer_inputs` are verified coins
+    ({txid, vout, asset, value_atoms, script_pubkey}). Returns the transaction
+    the outputs it spends, in input order, as (asset, atoms, spk), and the
+    bond lock's output index.
+    """
+    import tx as TX
+    ln = cov.terms.lightning
+    token = cov.terms.token_asset
+    left = int(sale_coin["atoms"]) - int(token_atoms)
+    if int(token_atoms) < cov.terms.min_lot:
+        raise ValueError("a lot is at least the sale's minimum")
+    if left < 0:
+        raise ValueError("the sale holds fewer tokens than that")
+    if 0 < left < cov.terms.min_lot:
+        raise ValueError("that would leave less than the minimum in the sale; take it all")
+    t = TX.Transaction()
+    t.vin.append(TX.TxIn(sale_coin["txid"], sale_coin["vout"]))
+    spent = [(token, int(sale_coin["atoms"]), cov.script_pubkey)]
+    have = {}
+    for c in buyer_inputs:
+        t.vin.append(TX.TxIn(c["txid"], c["vout"]))
+        spent.append((c["asset"], int(c["value_atoms"]), bytes.fromhex(c["script_pubkey"])))
+        have[c["asset"]] = have.get(c["asset"], 0) + int(c["value_atoms"])
+    t.vout.append(TX.TxOut(token, int(token_atoms), lock.lot.script_pubkey))
+    if left:
+        t.vout.append(TX.TxOut(token, left, cov.script_pubkey))
+    bond_vout = len(t.vout)
+    t.vout.append(TX.TxOut(ln.bond_asset, ln.bond_atoms, lock.bond.script_pubkey))
+    need = {ln.bond_asset: ln.bond_atoms + int(fee_atoms)}
+    for asset, n in need.items():
+        if have.get(asset, 0) < n:
+            raise ValueError("the coins given hold %d atoms of the bond's asset; the bond and the "
+                             "fee need %d" % (have.get(asset, 0), n))
+    for asset, n in sorted(have.items()):
+        back = n - need.get(asset, 0)
+        if back:
+            t.vout.append(TX.TxOut(asset, back, change_spk))
+    t.vout.append(TX.TxOut(ln.bond_asset, int(fee_atoms), b""))
+    return t, spent, bond_vout
+
+
+def build_claim(lock, reserve_txid, lot_vout, lot_atoms, bond_vout, bond_atoms, preimage, fee_atoms):
+    """The claim, complete: no signature. The lot goes to the destination and
+    the bond, less the fee, to the refund address."""
+    import tx as TX
+    if hashlib.sha256(bytes(preimage)).digest() != lock.payment_hash:
+        raise ValueError("that secret is not the payment hash's")
+    if int(fee_atoms) > lock.fee_allowance:
+        raise ValueError("the fee is more than the bond may pay")
+    t = TX.Transaction()
+    t.vin.append(TX.TxIn(reserve_txid, lot_vout))
+    t.vin.append(TX.TxIn(reserve_txid, bond_vout))
+    t.vout.append(TX.TxOut(lock.sale.token_asset, int(lot_atoms), lock.dest_spk))
+    t.vout.append(TX.TxOut(lock.bond_asset, int(bond_atoms) - int(fee_atoms), lock.refund_spk))
+    t.vout.append(TX.TxOut(lock.bond_asset, int(fee_atoms), b""))
+    t.vin[0].witness = lock.lot.witness("claim", bytes(preimage))
+    t.vin[1].witness = lock.bond.witness("refund", bytes(preimage))
+    return t
+
+
+def build_rerest(lock, reserve_txid, lot_vout, lot_atoms, bond_vout, bond_atoms, project_spk,
+                 fee_atoms):
+    """The re-rest after the timeout, unsigned: the lot back to the sale, the
+    bond less the fee to the project. Input 1 needs the receiver's signature
+    on the FORFEIT leaf (`forfeit_sighash`)."""
+    import tx as TX
+    seq = lock.sequence
+    t = TX.Transaction()
+    t.vin.append(TX.TxIn(reserve_txid, lot_vout, sequence=seq))
+    t.vin.append(TX.TxIn(reserve_txid, bond_vout, sequence=seq))
+    t.vout.append(TX.TxOut(lock.sale.token_asset, int(lot_atoms), lock.sale.script_pubkey))
+    t.vout.append(TX.TxOut(lock.bond_asset, int(bond_atoms) - int(fee_atoms), project_spk))
+    t.vout.append(TX.TxOut(lock.bond_asset, int(fee_atoms), b""))
+    spent = [(lock.sale.token_asset, int(lot_atoms), lock.lot.script_pubkey),
+             (lock.bond_asset, int(bond_atoms), lock.bond.script_pubkey)]
+    t.vin[0].witness = lock.lot.witness("rerest")
+    return t, spent
