@@ -62,6 +62,10 @@ mislead but cannot rob.
   locked under the old bytes are not at the address the new bytes derive. Never
   regenerate the vectors to make a failing check pass; that is a migration, and
   existing sales must be closed out under the old bytes first.
+- **The Lightning sale's addresses are frozen too.** `levod/tests/test_lnsale.py`
+  pins the sale, lot-lock, bond-lock and vesting addresses `lnsale.py` derives.
+  A changed byte strands every lot locked under the old one; treat it like the
+  vectors.
 - **`levod/capped_sale/` is pinned.** The capped sale is sequentia-contracts'
   `sequentia/capped-sale` template, vendored with its address code
   (`levod/sequentia_address.py`) and checked against `capped_sale/PIN.json` on
