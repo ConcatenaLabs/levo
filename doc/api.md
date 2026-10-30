@@ -303,32 +303,30 @@ account has already recorded is refused, because a purchase counts once.
 ## Buying in BTC over Lightning
 
 A sale whose terms carry `lightning` also sells for native BTC
-([lightning-sales.md](lightning-sales.md)). Levo builds the reservation; the
-project's receiver issues the invoice and signs; the buyer's wallet signs its
-own coins and broadcasts. Levo holds no key and broadcasts nothing.
+([lightning-sales.md](lightning-sales.md)). The buyer needs only BTC: the
+project's receiver issues the invoice, holds the payment, locks the lot and
+delivers it. Levo holds no key and broadcasts nothing.
 
 **`POST /api/projects/<slug>/lightning`** `{token_atoms, token_address |
-token_script_pubkey, refund_address?, change_address?, buyer_key?, inputs,
-fee_atoms}` (session) → `{lot, tx_hex, pset}`. `inputs` are the buyer's
-explicit coins of the bond's asset, which pay the bond and `fee_atoms`. The tier
-cap is checked as for any purchase. `buyer_key` (x-only) is needed when the
-sale vests: the lot is then locked to that key until the vesting time. Levo
-refuses an invoice that is not for the published BTC price, and a receiver
-signature over any other transaction. `lot` carries the `payment_hash`, the
-`bolt11` invoice, its `sats`, `invoice_expires_at`, the `reserve_txid` the
-broadcast will have, and the lock's `lock_timeout_seconds`.
+token_script_pubkey, buyer_key?}` (session) → `{lot}`. The tier cap is checked
+as for any purchase. `buyer_key` (x-only) is needed when the sale vests: the
+lot is then locked to that key until the vesting time. Levo refuses an invoice
+that is not for the published BTC price. `lot` carries the `payment_hash`, the
+`bolt11` invoice, its `sats`, `invoice_expires_at` and the lock's
+`lock_timeout_seconds`.
 
 **`GET /api/projects/<slug>/lightning/<slug>`** (the second `<slug>` is the lot's payment hash) → the lot and its
-`state`: `reserving` (not yet seen), `reserved` (locked; pay now), `paid`
-(the receiver has been paid and is delivering), `delivered` (`claim_txid`),
-`returned` (unpaid past the timeout; `rerest_txid`), or `expired` (the invoice
-lapsed before the reservation was seen).
+`state`: `awaiting_payment`, `paid` (held, being locked and delivered;
+`reserve_txid` once locked), `delivered` (`claim_txid`), `refunded` (the
+payment went back before anything was locked), `returned` (the payment went
+away after the lock and the lot went back to the sale; `rerest_txid`), or
+`expired` (nobody paid).
 
 **`POST /api/projects/<slug>/lightning/<slug>/claim`** (the payment hash again) `{preimage}` →
-`{tx_hex, txid}`: the delivery, complete and needing no signature, for a
-wallet to broadcast itself when the receiver has not. It pays the lot to the
-buyer's destination and the bond, less the fee allowance, to the refund
-address; nothing else can be built from the secret.
+`{tx_hex, txid}`: the delivery, complete and needing no signature, for anyone
+holding the secret to broadcast when the receiver has not. It pays the lot to
+the buyer's destination and the pot, less the fee allowance, to the buyer;
+nothing else can be built from the secret.
 
 ## Buying from leaves
 

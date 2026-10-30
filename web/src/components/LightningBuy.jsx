@@ -1,26 +1,25 @@
 import { useEffect, useState } from 'react'
 import { api } from '../lib/api'
-import { hasProvider, getUtxos, getAddress, signPset, broadcastPset, friendly } from '../lib/wallet'
-import { useStore } from '../lib/store'
+import { hasProvider, getAddress, friendly } from '../lib/wallet'
 import { amount, atomsArg, big, capitalise, toAtoms } from '../lib/format'
 import { btcText } from '../lib/money'
 import { Copy, Notice } from './ui'
 
 // Paying a sale in BTC, over Lightning.
 //
-// The buyer names an amount, their wallet signs a small reservation, and the
-// page shows an invoice. Paying it from any Lightning wallet delivers the
-// tokens: the payment's secret is what unlocks them, and the project's
-// receiver broadcasts the delivery the moment it is paid. levod builds the
-// reservation; it never holds the tokens, the bond or the BTC.
+// The buyer names an amount and the address the tokens go to, and the page
+// shows an invoice. Paying it from any Lightning wallet, or a Bitcoin Ark
+// balance, is all there is: the project's receiver holds the payment, locks
+// the lot for the buyer, delivers it with the payment's secret and only then
+// takes the BTC. levod never holds the tokens or the BTC.
 
 const SAID = {
-  reserving: 'Your wallet is sending the reservation.',
-  reserved: 'Reserved. Pay the invoice below from any Lightning wallet.',
-  paid: 'Paid. Your tokens are on their way.',
-  delivered: 'Done: your tokens are in your wallet.',
-  returned: 'The invoice was not paid in time, so the tokens went back to the sale and the bond to the project.',
-  expired: 'The invoice expired before it was paid. Reserve again to buy.',
+  awaiting_payment: 'Pay the invoice below from any Lightning wallet.',
+  paid: 'Payment received. Your tokens are on their way.',
+  delivered: 'Done: your tokens are at your address.',
+  refunded: 'The payment could not be matched with tokens, so it went back to you.',
+  returned: 'The payment went back to you, and the tokens to the sale.',
+  expired: 'The invoice expired before it was paid. Order again to buy.',
 }
 
 export function sats(terms, tokenAtoms) {
@@ -31,16 +30,21 @@ export function sats(terms, tokenAtoms) {
 }
 
 export default function LightningBuy({ project, onSettled }) {
-  const { money } = useStore()
   const sale = project.sale
-  const ln = sale.terms.lightning
   const decimals = project.decimals ?? 8
   const [tokens, setTokens] = useState('')
+  const [address, setAddress] = useState('')
   const [lot, setLot] = useState(null)
   const [status, setStatus] = useState(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState(null)
   const atoms = toAtoms(tokens, decimals)
+
+  // A browser wallet, when there is one, fills in where the tokens go.
+  useEffect(() => {
+    if (!hasProvider()) return
+    getAddress({}).then((a) => setAddress((v) => v || a || '')).catch(() => {})
+  }, [])
 
   useEffect(() => {
     if (!lot) return undefined
@@ -56,49 +60,27 @@ export default function LightningBuy({ project, onSettled }) {
     return () => { alive = false; clearInterval(t) }
   }, [lot, project.slug])
 
-  async function reserve(e) {
+  async function order(e) {
     e.preventDefault()
     if (busy || !atoms) return
     setError(null); setBusy(true)
     try {
-      if (!hasProvider()) throw new Error('A browser wallet is needed to reserve: it signs the small bond that holds your lot while you pay.')
-      const fee = big(ln.fee_allowance)
-      const need = big(ln.bond_atoms) + fee
-      const [list, addr] = await Promise.all([getUtxos({}), getAddress({})])
-      const mine = list.filter((x) => (x.asset || '').toLowerCase() === ln.bond_asset)
-      const checked = mine.length
-        ? await api.checkOutputs(mine.slice(0, 32).map((x) => ({ txid: x.txid, vout: x.vout })))
-        : { outputs: [] }
-      const ok = new Set(checked.outputs.filter((x) => x.spendable).map((x) => x.txid + ':' + x.vout))
-      const picked = []
-      let total = 0n
-      for (const u of mine) {
-        if (!ok.has(u.txid + ':' + u.vout)) continue
-        picked.push({ txid: u.txid, vout: u.vout })
-        total += big(u.value)
-        if (total >= need) break
-      }
-      if (total < need) {
-        throw new Error('A reservation holds a bond of ' + money(ln.bond_atoms, ln.bond_asset) +
-          ', which comes back to you when you pay, and your wallet does not hold enough of it.')
-      }
+      if (!address.trim()) throw new Error('Enter the Sequentia address your tokens go to.')
       const r = await api.lightningReserve(project.slug, {
-        token_atoms: atomsArg(atoms), token_address: addr, inputs: picked, fee_atoms: atomsArg(fee),
+        token_atoms: atomsArg(atoms), token_address: address.trim(),
       })
-      const signed = await signPset(r.pset)
-      await broadcastPset(signed)
       setLot(r.lot)
     } catch (err) {
       setError(capitalise(friendly(err)))
     } finally { setBusy(false) }
   }
 
-  const state = status ? status.state : lot ? 'reserving' : null
+  const state = status ? status.state : lot ? 'awaiting_payment' : null
   return (
     <div className="card" style={{ marginBottom: '1rem' }}>
       <h3>Pay in BTC</h3>
       {!lot && (
-        <form onSubmit={reserve}>
+        <form onSubmit={order}>
           <div className="field">
             <label htmlFor="ln-qty">{project.ticker} to buy</label>
             <input id="ln-qty" className="mono" inputMode="decimal" value={tokens}
@@ -109,8 +91,14 @@ export default function LightningBuy({ project, onSettled }) {
                 'Minimum ' + amount(sale.terms.min_lot, decimals) + ' ' + project.ticker + '.'}
             </div>
           </div>
+          <div className="field">
+            <label htmlFor="ln-addr">Your Sequentia address</label>
+            <input id="ln-addr" className="mono" value={address} spellCheck={false}
+                   onChange={(e) => setAddress(e.target.value)} />
+            <div className="hint">Where the tokens go. Your wallet's Receive tab shows it.</div>
+          </div>
           <button className="btn btn-primary btn-sm" aria-disabled={busy || !atoms}>
-            {busy ? 'Working…' : 'Reserve and get an invoice'}
+            {busy ? 'Working…' : 'Get an invoice'}
           </button>
         </form>
       )}
@@ -119,7 +107,7 @@ export default function LightningBuy({ project, onSettled }) {
           <div className="kv"><span>You pay</span><b>{btcText(lot.sats)}</b></div>
           <div className="kv"><span>You receive</span><b>{amount(lot.token_atoms, decimals)} {project.ticker}</b></div>
           <p className="small" role="status">{SAID[state] || ''}</p>
-          {(state === 'reserved' || state === 'reserving') && (
+          {state === 'awaiting_payment' && (
             <div className="field">
               <label htmlFor="ln-invoice">Invoice</label>
               <textarea id="ln-invoice" className="mono" rows={4} readOnly value={lot.bolt11}
@@ -128,9 +116,8 @@ export default function LightningBuy({ project, onSettled }) {
                 <Copy value={lot.bolt11} label="Copy the invoice" />
                 <a className="btn btn-sm" href={'lightning:' + lot.bolt11}>Open in a Lightning wallet</a>
               </div>
-              {state === 'reserving' && (
-                <p className="small dim">Pay once the reservation is confirmed; this page says so.</p>
-              )}
+              <p className="small dim">Until your tokens arrive, nobody has your BTC: if they cannot be
+                delivered, the payment goes back to you.</p>
             </div>
           )}
         </div>

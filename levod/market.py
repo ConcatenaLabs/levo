@@ -1248,9 +1248,10 @@ class Platform:
                                 "the sale's asset instead, or try again shortly" % e)
 
     def lightning_reserve(self, account, slug, body):
-        """Reserve a lot for BTC over Lightning: an invoice from the project's
-        receiver, and the reservation, signed by the receiver, for the buyer's
-        wallet to sign its own coins in and broadcast."""
+        """Order a lot for BTC over Lightning: an invoice from the project's
+        receiver, which holds the payment, locks the lot for the buyer and
+        delivers it with the payment's secret. The buyer needs only BTC and an
+        address to receive the tokens at."""
         p = self._project(slug)
         sale = p.sale
         if sale is None or not sale.funding or sale.terms.lightning is None:
@@ -1263,75 +1264,37 @@ class Platform:
         plan = sale.plan_buy(account, tier, token_atoms=body.get("token_atoms"),
                              height=self.height(strict=sale.close_is_height()))
         buyer_spk = self._spk(body, "token_script_pubkey", "token_address", "where your tokens go")
-        refund_spk = self._spk(body, "refund_script_pubkey", "refund_address",
-                               "where your bond comes back") \
-            if (body.get("refund_address") or body.get("refund_script_pubkey")) else buyer_spk
-        change_spk = self._spk(body, "change_script_pubkey", "change_address", "where your change goes") \
-            if (body.get("change_address") or body.get("change_script_pubkey")) else refund_spk
         try:
             dest = sale.cov.destination(buyer_spk, body.get("buyer_key"))
         except ValueError as e:
             raise PlatformError(str(e))
-        inputs = self.verify_buyer_inputs(body.get("inputs"))
-        if any(i.get("blinded") for i in inputs):
-            raise PlatformError("a coin you named is confidential, and a reservation is explicit")
-        fee_atoms = int(body.get("fee_atoms") or 0)
-        if fee_atoms <= 0:
-            raise PlatformError("name the reservation's fee, in the bond's asset")
-        coin = {"txid": sale.funding["txid"], "vout": int(sale.funding["vout"]),
-                "atoms": int(sale.locked_atoms or sale.funding.get("atoms") or 0)}
-        if self.rpc is not None and self.rpc.txout(coin["txid"], coin["vout"]) is None:
-            self.on_stale()
-            raise PlatformError("the sale's tokens have just moved; try again in a minute")
         inv = self._receiver(ln, "/invoice", {"slug": slug, "token_atoms": plan.token_atoms,
-                                               "dest_spk": dest.hex(), "refund_spk": refund_spk})
+                                               "dest_spk": dest.hex(), "refund_spk": buyer_spk})
         sats = ln.sats_for(plan.token_atoms)
         if int(inv.get("amount_msat") or 0) != sats * 1000:
             raise PlatformError("the receiver's invoice is not for the published BTC price "
-                                "(%s msat asked, %d expected); nothing was reserved"
+                                "(%s msat asked, %d expected); do not pay it"
                                 % (inv.get("amount_msat"), sats * 1000))
         h = str(inv.get("payment_hash") or "").lower()
-        try:
-            lock = sale.cov.lock(bytes.fromhex(h), dest, refund_spk)
-            t, spent, bond_vout = LN.build_reserve(sale.cov, coin, plan.token_atoms, lock, inputs,
-                                                   bytes.fromhex(change_spk), fee_atoms)
-        except ValueError as e:
-            raise PlatformError(str(e))
-        signed = self._receiver(ln, "/reserve-signature", {
-            "payment_hash": h, "sale_coin": coin,
-            "inputs": [{"txid": i["txid"], "vout": i["vout"]} for i in inputs],
-            "change_spk": change_spk, "fee_atoms": fee_atoms})
-        if signed.get("txid") != t.txid():
-            raise PlatformError("the receiver signed a different reservation; nothing was reserved")
-        sig = bytes.fromhex(signed["signature"])
-        msg = TX.taproot_sighash(t, spent, 0, self._genesis(), leaf_script=sale.cov.reserve_leaf)
-        import secp256k1 as EC
-        if not EC.schnorr_verify(msg, sig, bytes.fromhex(ln.receiver_xonly)):
-            raise PlatformError("the receiver's signature does not verify; nothing was reserved")
-        t.vin[0].witness = sale.cov.reserve_witness(sig)
-        import pset as PS
-        pset = PS.from_transaction(t, [{"asset": a, "atoms": n, "script_pubkey": k.hex()}
-                                       for a, n, k in spent])
         lot = {"payment_hash": h, "account": account, "token_atoms": plan.token_atoms,
                "sats": sats, "bolt11": inv.get("bolt11"), "expires_at": inv.get("expires_at"),
-               "reserve_txid": t.txid(), "bond_vout": bond_vout, "dest_spk": dest.hex(),
-               "refund_spk": refund_spk, "created_at": int(time.time())}
+               "dest_spk": dest.hex(), "refund_spk": buyer_spk, "created_at": int(time.time())}
         with self.lock:
             sale.lots = (getattr(sale, "lots", []) + [lot])[-S.MAX_BUILDS:]
-            if len(t.vout) > 1 and t.vout[1].script_pubkey == sale.cov.script_pubkey:
-                sale.expect_remainder_at(t.txid(), 1)
             self.save()
-        return {"lot": self._lot_json(sale, lot), "tx_hex": t.hex(), "pset": pset,
-                "next": "sign your own coins and broadcast; once the reservation is in a "
-                        "block, pay the invoice, and the tokens are delivered to you"}
+        return {"lot": self._lot_json(sale, lot),
+                "next": "pay the invoice from any Lightning wallet; the tokens are delivered "
+                        "to your address, and until they are, nobody has your BTC"}
 
     def _lot_json(self, sale, lot):
         ln = sale.terms.lightning
-        return {"payment_hash": lot["payment_hash"], "token_atoms": S.atoms_out(lot["token_atoms"]),
-                "sats": lot["sats"], "bolt11": lot["bolt11"], "invoice_expires_at": lot["expires_at"],
-                "reserve_txid": lot["reserve_txid"], "lock_timeout_seconds": ln.timeout_seconds,
-                "bond_asset": ln.bond_asset, "bond_atoms": S.atoms_out(ln.bond_atoms),
-                "vest_locktime": ln.vest_locktime or None}
+        out = {"payment_hash": lot["payment_hash"], "token_atoms": S.atoms_out(lot["token_atoms"]),
+               "sats": lot["sats"], "bolt11": lot["bolt11"], "invoice_expires_at": lot["expires_at"],
+               "lock_timeout_seconds": ln.timeout_seconds, "vest_locktime": ln.vest_locktime or None}
+        for k in ("reserve_txid", "claim_txid", "rerest_txid"):
+            if lot.get(k):
+                out[k] = lot[k]
+        return out
 
     def _find_lot(self, slug, payment_hash):
         p = self._project(slug)
@@ -1339,47 +1302,47 @@ class Platform:
         for lot in getattr(sale, "lots", []) if sale else []:
             if lot["payment_hash"] == str(payment_hash).lower():
                 return sale, lot
-        raise PlatformError("no such reservation on this sale")
+        raise PlatformError("no such order on this sale")
+
+    # The receiver's states, in the words a buyer reads.
+    LIGHTNING_STATES = {"issued": "awaiting_payment", "reserved": "paid", "delivered": "delivered",
+                        "returned": "returned", "expired": "expired", "cancelled": "refunded"}
 
     def lightning_status(self, slug, payment_hash):
-        """Where a reservation stands, in one word: reserving, reserved, paid,
-        delivered, returned, or expired."""
+        """Where an order stands: awaiting_payment, paid (held, being locked and
+        delivered), delivered, refunded (the payment went back), returned (the
+        lot went back to the sale), or expired."""
         sale, lot = self._find_lot(slug, payment_hash)
+        rs = self._receiver(sale.terms.lightning, "/invoice/" + lot["payment_hash"])
+        state = self.LIGHTNING_STATES.get(rs.get("state"), rs.get("state") or "unknown")
+        if state == "awaiting_payment" and rs.get("held"):
+            state = "paid"
+        changed = False
+        for k in ("reserve_txid", "bond_vout", "claim_txid", "rerest_txid"):
+            if rs.get(k) is not None and lot.get(k) != rs[k]:
+                lot[k] = rs[k]
+                changed = True
+        if changed:
+            with self.lock:
+                self.save()
         out = self._lot_json(sale, lot)
-        lock_out = self.rpc.txout(lot["reserve_txid"], 0) if self.rpc else None
-        try:
-            rs = self._receiver(sale.terms.lightning, "/invoice/" + lot["payment_hash"])
-        except PlatformError:
-            rs = {}
-        paid = bool(rs.get("paid"))
-        if lock_out is not None:
-            state = "paid" if paid else "reserved"
-            out["confirmations"] = int(lock_out.get("confirmations") or 0)
-        elif rs.get("claim_txid") or (paid and rs.get("state") == "claimed"):
-            state = "delivered"
-        elif rs.get("rerest_txid"):
-            state = "returned"
-        elif paid:
-            state = "delivered"
-        elif time.time() > int(lot.get("expires_at") or 0):
-            state = "expired"
-        else:
-            state = "reserving"
         out["state"] = state
-        for k in ("claim_txid", "rerest_txid"):
-            if rs.get(k):
-                out[k] = rs[k]
         return out
 
     def lightning_claim(self, slug, payment_hash, preimage_hex):
-        """The claim for a paid lot, complete and needing no signature, for a
-        wallet to broadcast itself when the receiver has not yet."""
+        """The delivery of a paid lot, complete and needing no signature, for
+        anyone holding the payment's secret to broadcast if the receiver has
+        not: it can only pay the lot to the buyer."""
         sale, lot = self._find_lot(slug, payment_hash)
         ln = sale.terms.lightning
+        if not lot.get("reserve_txid"):
+            self.lightning_status(slug, payment_hash)
+        if not lot.get("reserve_txid"):
+            raise PlatformError("this order's lot has not been locked yet")
         try:
             pre = bytes.fromhex(str(preimage_hex or ""))
             lock = sale.cov.lock(bytes.fromhex(lot["payment_hash"]), lot["dest_spk"], lot["refund_spk"])
-            t = LN.build_claim(lock, lot["reserve_txid"], 0, lot["token_atoms"], lot["bond_vout"],
+            t = LN.build_claim(lock, lot["reserve_txid"], 0, lot["token_atoms"], int(lot["bond_vout"]),
                                ln.bond_atoms, pre, ln.fee_allowance)
         except ValueError as e:
             raise PlatformError(str(e))
