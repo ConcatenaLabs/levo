@@ -17,24 +17,31 @@ buyer the secret.
 
 ## The flow
 
-1. **Reserve.** The buyer asks for a lot. The project's receiver, the service
-   that runs the project's Lightning node, issues an invoice for the lot's BTC
-   price and signs a transaction that moves the lot out of the sale into a
-   *lot lock* under the invoice's payment hash. The lock names the buyer's
-   destination. The buyer adds a small *bond* under the same hash, against
-   reserving without paying, and pays the transaction's fee. The receiver
-   signs before the buyer does: its signature covers this one transaction and
-   nothing else, so a reservation the buyer never broadcasts costs nobody
-   anything.
-2. **Pay.** Once the lock is confirmed, the buyer's wallet checks it (the
-   hash, the destination, the amount, the time left) and pays the invoice.
-3. **Claim.** The secret delivers the lot to the destination the lock names,
-   and returns the bond, less the claim's fee, to the buyer's refund address.
-   Neither needs a signature, so whoever holds the secret can broadcast the
-   claim: the buyer's wallet, or Levo once the receiver reports the invoice
-   paid. It can only pay the buyer.
-4. **Unpaid.** After the lock's timeout the lot goes back to the sale address,
-   and the project keeps the bond.
+A buyer needs nothing but BTC and an address to receive the tokens at.
+
+1. **Order.** The buyer names an amount and their address. The project's
+   receiver, the service beside the project's Lightning node, issues an
+   invoice for the lot's BTC price under a secret only it knows.
+2. **Pay.** The buyer pays the invoice from any Lightning wallet or a Bitcoin
+   Ark balance. The project's node *holds* the payment: it is committed, and
+   nobody has it yet.
+3. **Lock.** With the payment held, the receiver signs a transaction that
+   moves the lot out of the sale into a *lot lock* under the invoice's payment
+   hash, naming the buyer's address. It pays that transaction's fee from its
+   own coins and funds the lock's fee pot (the *bond lock*), which pays the
+   delivery's fee.
+4. **Deliver.** Once the lock is in a block, the receiver broadcasts the
+   delivery, which needs no signature: the secret sends the lot to the buyer
+   and the pot's remainder to the buyer too. Then it settles the payment.
+
+Neither side can cheat. The receiver is paid only by settling, and settling
+hands the buyer the secret, which alone delivers the lot: a receiver that
+settled without delivering leaves the buyer holding a delivery anyone can
+broadcast (`POST …/lightning/<hash>/claim`), with its fee already in the pot. A
+payment the receiver cannot back with a lock (the sale emptied, no coins for
+the fee) is failed back to the buyer. A payment that goes away after the lock,
+failed back or expired, leaves the lot to go back to the sale after the
+timeout, and the pot to the receiver. An order nobody pays locks nothing.
 
 ## Listing one
 
@@ -45,9 +52,9 @@ A Lightning sale is an ordinary listing whose terms add `lightning`:
 | `receiver_xonly` | The receiver's key, in the address. `bin/levo keygen` makes a pair. |
 | `receiver_url` | Where the receiver answers. Levo asks it for invoices and signatures. |
 | `btc_num`, `btc_den` | The BTC price: satoshis per token atom, rounded up per lot. |
-| `bond_asset`, `bond_atoms` | The bond a reservation holds, in an asset nodes take fees in. |
-| `fee_allowance` | The most the bond may pay as the claim's fee on its way back. |
-| `timeout_seconds` | How long a lot waits for payment (default six hours). |
+| `bond_asset`, `bond_atoms` | The fee pot each lock carries, in an asset nodes take fees in. The receiver funds it; what the delivery's fee leaves goes to the buyer, so keep it just above the allowance. |
+| `fee_allowance` | The most the pot may pay as the delivery's fee. |
+| `timeout_seconds` | How long a locked lot waits for its delivery before it may go back to the sale (default six hours). |
 | `vest_locktime` | Optional: tokens reach the buyer's key only from this time. |
 
 The rest of the terms are the ordinary sale's, so the same address also sells
@@ -56,13 +63,15 @@ directly in the asset the sale settles in, through the SELL leaf.
 ## Running the receiver
 
 `levod/receiver.py` is the project's process, on the project's machine, beside
-its Lightning node. It issues an invoice per reservation, signs a reservation
-only for an invoice it issued and a transaction it rebuilt itself, and follows
-every lock it signed: paid, it broadcasts the delivery; unpaid past the
-timeout, it re-rests the lot and keeps the bond. `contrib/levo-receiver.service`
-runs it; `contrib/levo-receiver.env.example` lists its settings. Its invoices
-expire long before the lock does, and it refuses a sale whose timeout leaves
-less than half an hour between the two.
+its Lightning node, which runs the holdinvoice plugin
+(`contrib/holdinvoice-seq` in the SeqLN repository). It issues an invoice per
+order and registers it to be held, locks a lot only once its payment is held,
+delivers it, settles, and re-rests any lock whose payment went away. Its own
+coins, which pay the locks' fees and fund the pots, rest at its key's taproot
+output, which `GET /health` names; keep a few there in the bond asset.
+`contrib/levo-receiver.service` runs it; `contrib/levo-receiver.env.example`
+lists its settings. Its invoices expire long before a lock does, and it refuses
+a sale whose timeout leaves less than half an hour between the two.
 
 ## The scripts
 
@@ -100,10 +109,10 @@ Not enforced, and why:
 - **The invoice amount is the project's.** The chain cannot see a Bitcoin
   price. The buyer's wallet compares the invoice with the published BTC price
   before paying.
-- **The buyer must claim before the timeout.** A receiver can hold a Lightning
-  payment until its expiry, so a wallet pays only while the time left on the
-  lock is longer than the longest the payment can be held, with a margin to
-  claim in. After the timeout the lot and the claim race.
+- **Delivery must happen before the timeout.** The receiver delivers as soon as
+  the lock is in a block. If it settles and does not, the buyer, holding the
+  secret, must broadcast the delivery before the timeout; after it the lot and
+  the delivery race.
 - **The receiver's key moves lots out of the sale.** The project knows the
   secret of every invoice it issues, so it can always take its own lots, the
   same way it can always buy its own sale out at the published price. The key
