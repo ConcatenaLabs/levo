@@ -4,6 +4,7 @@ import { hasProvider, getAddress, friendly } from '../lib/wallet'
 import { amount, atomsArg, big, capitalise, toAtoms } from '../lib/format'
 import { btcText } from '../lib/money'
 import { Copy, Notice } from './ui'
+import { useStore } from '../lib/store'
 
 // Paying a sale in BTC, over Lightning.
 //
@@ -30,6 +31,9 @@ export function sats(terms, tokenAtoms) {
 }
 
 export default function LightningBuy({ project, onSettled }) {
+  const { links } = useStore()
+  // The deployment's wallet, when it names one, pays the invoice from a link.
+  const wallet = (links && (links.Wallet || links.wallet)) || null
   const sale = project.sale
   const decimals = project.decimals ?? 8
   const [tokens, setTokens] = useState('')
@@ -114,6 +118,11 @@ export default function LightningBuy({ project, onSettled }) {
                         onFocus={(e) => e.target.select()} />
               <div style={{ display: 'flex', gap: '.5rem', marginTop: '.4rem' }}>
                 <Copy value={lot.bolt11} label="Copy the invoice" />
+                {wallet && (
+                  <a className="btn btn-sm btn-primary" target="_blank" rel="noopener noreferrer"
+                     href={wallet.replace(/#.*$/, '') + '#pay?invoice=' + encodeURIComponent(lot.bolt11)}>
+                    Pay with your Sequentia wallet</a>
+                )}
                 <a className="btn btn-sm" href={'lightning:' + lot.bolt11}>Open in a Lightning wallet</a>
               </div>
               <p className="small dim">Until your tokens arrive, nobody has your BTC: if they cannot be
