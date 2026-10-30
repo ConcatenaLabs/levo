@@ -16,7 +16,7 @@ import { useStore } from '../lib/store'
 
 const SAID = {
   awaiting_payment: 'Pay the invoice below from any Lightning wallet.',
-  paid: 'Payment received. Your tokens are on their way.',
+  paid: 'Payment received. Your tokens arrive with the next block, in about a minute.',
   delivered: 'Done: your tokens are at your address.',
   refunded: 'The payment could not be matched with tokens, so it went back to you.',
   returned: 'The payment went back to you, and the tokens to the sale.',
