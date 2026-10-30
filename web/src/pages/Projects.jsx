@@ -3,7 +3,7 @@ import { Link, useSearchParams } from 'react-router-dom'
 import { api } from '../lib/api'
 import { useStore } from '../lib/store'
 import { Notice, usePageTitle, useReread } from '../components/ui'
-import { closeIn, closeLabel, compact, positive, priceLabel, shortHex } from '../lib/format'
+import { closeIn, closeLabel, compact, positive, shortHex } from '../lib/format'
 
 // What a state is CALLED, which is not always what levod calls it. "Closed"
 // is the one that would mislead: the sell leaf carries no locktime, so a sale
@@ -61,7 +61,7 @@ const FILTERS = [
 
 export default function Projects() {
   usePageTitle('Sales')
-  const { payment, chainHeight, standing } = useStore()
+  const { chainHeight, standing, price: priceOf } = useStore()
   const [projects, setProjects] = useState(null)
   const [total, setTotal] = useState(0)
   const [error, setError] = useState(null)
@@ -194,7 +194,7 @@ export default function Projects() {
         <div className="rows">
           {projects.map((p) => {
             const d = p.decimals ?? 8
-            const price = p.sale ? priceLabel(p.sale.terms, d, payment.decimals) + ' ' + payment.label : null
+            const price = p.sale ? priceOf(p.sale.terms, d, p.sale.terms.payment_asset, p.sale.payment) : null
             return (
               <Link className="row" key={p.slug} to={'/p/' + p.slug}>
                 <div>

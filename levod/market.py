@@ -496,10 +496,84 @@ class Platform:
     # --- persistence --------------------------------------------------------
 
     def _make_sale(self, p, terms, created_at=None):
+        label, decimals = self.asset_names(terms.payment_asset)
         return S.Sale(p.slug, terms, p.issuer_account, created_at,
                       token_label=p.ticker, token_decimals=p.decimals,
-                      payment_label=self.payment_label,
-                      payment_decimals=self.payment_decimals)
+                      payment_label=label, payment_decimals=decimals)
+
+    def asset_names(self, asset):
+        """What an asset is called on this node, and how finely it divides.
+
+        The default asset keeps the deployment's configured label and places.
+        Any other takes the node's label (an id where it has none) and eight
+        places, which is every asset's precision unless its issuer registered
+        another.
+        """
+        asset = str(asset or "").lower()
+        if asset == self.payment_asset:
+            return self.payment_label, self.payment_decimals
+        label = None
+        try:
+            labels = self.rpc.call("dumpassetlabels") if self.rpc else {}
+            for k, v in (labels or {}).items():
+                if str(v).lower() == asset:
+                    label = k
+                    break
+        except Exception:
+            label = None
+        return (label or asset[:8]), 8
+
+    def check_settlement_asset(self, asset):
+        """Refuse a settlement asset the node cannot price, and pegged bitcoin.
+
+        Native bitcoin is paid over Lightning (lnsale.py); a sale settling in
+        the pegged asset would sell bitcoin's name for a claim on a bridge.
+        """
+        if not ASSET_RE.match(asset or ""):
+            raise PlatformError("the settlement asset must be a 64-character asset id")
+        if asset == self.payment_asset:
+            return
+        src = getattr(self.rails, "rate_source", None) if self.rails else None
+        if src is None or not hasattr(src, "rate_of"):
+            raise PlatformError(
+                "this Levo reads no rate table, so it can settle sales only in %s"
+                % self.payment_label)
+        try:
+            btc_asset = src.btc_asset()
+            rate = src.rate_of(asset)
+        except Exception as e:
+            raise PlatformError("the node's rate table could not be read: %s" % e)
+        if btc_asset and asset == btc_asset:
+            raise PlatformError(
+                "a sale cannot settle in pegged bitcoin. To be paid in bitcoin, "
+                "list a Lightning sale: buyers pay native BTC over Lightning")
+        if not rate:
+            raise PlatformError(
+                "the node prices no such asset, so the sale could not be shown in "
+                "BTC or capped. Choose an asset the node's fee table lists")
+
+    def tier_for(self, sale, tier):
+        """A tier with its per-sale cap in the sale's own asset.
+
+        Caps are configured in the default asset. A sale settling in another
+        is capped at the same value, at the node's rates now; a cap is Levo's
+        policy, not the chain's, so a rate that moves moves it.
+        """
+        pa = sale.terms.payment_asset
+        if pa == self.payment_asset or not tier.cap_atoms:
+            return tier
+        src = getattr(self.rails, "rate_source", None) if self.rails else None
+        try:
+            ref, own = src.rate_of(self.payment_asset), src.rate_of(pa)
+        except Exception:
+            ref = own = None
+        if not ref or not own:
+            raise PlatformError("the node no longer prices this sale's asset, so "
+                                "Levo cannot work out your cap in it; try again shortly")
+        import copy
+        t = copy.copy(tier)
+        t.cap_atoms = int(tier.cap_atoms) * int(ref) // int(own)
+        return t
 
     def _load(self):
         """Read the state file, or refuse to start.
@@ -749,15 +823,12 @@ class Platform:
                 raise PlatformError("treasury address: %s" % e)
             terms_json["treasury_prog"] = prog
             terms_json["treasury_ver"] = ver
-        # Every sale on this Levo is priced in the one asset it quotes and
-        # checks fees in. A sale in another asset would be listed, then fail
-        # to be quoted, paid or capped correctly.
+        # A project chooses the asset its sale settles in. Any asset the
+        # node's rate table prices will do: the rate is what shows the sale in
+        # BTC and in dollars and what converts a tier's cap into it. No asset
+        # is the platform's own; the default is only what the form suggests.
         pa = str(terms_json.get("payment_asset") or self.payment_asset).lower()
-        if pa != self.payment_asset:
-            raise PlatformError(
-                "sales here are priced in %s (%s); this listing names a different "
-                "payment asset, which Levo could neither quote nor cap"
-                % (self.payment_label, self.payment_asset))
+        self.check_settlement_asset(pa)
         terms_json["payment_asset"] = pa
         # Canonicalise the price before anything is derived from it: the same
         # ratio in lowest terms buys a large amount of overflow headroom, and
@@ -1061,7 +1132,7 @@ class Platform:
         if p.sale is None:
             raise PlatformError("this project has no sale")
         standing = self.stake.standing(account)
-        tier = self.stake.policy.for_stake(standing["stake_atoms"])
+        tier = self.tier_for(p.sale, self.stake.policy.for_stake(standing["stake_atoms"]))
         height = self.height(strict=p.sale.close_is_height())
         plan = p.sale.plan_buy(account, tier, token_atoms=token_atoms,
                                payment_atoms=payment_atoms, height=height,
@@ -1153,7 +1224,7 @@ class Platform:
         if not isinstance(buyer, dict):
             raise PlatformError("buyer must be an object")
         standing = self.stake.standing(account)
-        tier = self.stake.policy.for_stake(standing["stake_atoms"])
+        tier = self.tier_for(p.sale, self.stake.policy.for_stake(standing["stake_atoms"]))
         height = self.height(strict=p.sale.close_is_height())
         plan = p.sale.plan_buy(account, tier,
                                token_atoms=plan_json.get("token_atoms"),
@@ -1592,7 +1663,7 @@ class Platform:
         if why:
             raise PlatformError("this sale cannot be bought from leaves: %s" % why)
         standing = self.stake.standing(account)
-        tier = self.stake.policy.for_stake(standing["stake_atoms"])
+        tier = self.tier_for(sale, self.stake.policy.for_stake(standing["stake_atoms"]))
         if not tier.cap_atoms:
             raise NotAuthorised(
                 "your tier has no allocation in a sale, so a take of it cannot be "
@@ -1661,7 +1732,7 @@ class Platform:
         if token_atoms <= 0 or payment_atoms <= 0:
             raise PlatformError("a purchase has a positive token amount and a positive payment")
         standing = self.stake.standing(account)
-        tier = self.stake.policy.for_stake(standing["stake_atoms"])
+        tier = self.tier_for(sale, self.stake.policy.for_stake(standing["stake_atoms"]))
         # A purchase Levo planned passed this gate when it was planned. A stake
         # that has since moved does not un-make the purchase, and a ledger
         # that refused it would hand the account its headroom back.
@@ -1977,6 +2048,8 @@ class Platform:
                 continue
             out.append({
                 "slug": p.slug, "name": p.name, "ticker": p.ticker,
+                "payment": {"asset": sale.terms.payment_asset, "label": sale.payment_label,
+                            "decimals": sale.payment_decimals},
                 "decimals": p.decimals,
                 "status": sale.shown_status(height=h),
                 "committed_atoms": committed,

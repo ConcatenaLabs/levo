@@ -96,7 +96,13 @@ derived from, so rebuild the address and compare it to the funded output.
 
 ## Paying
 
-**USDX** settles inside the covenant: buyer and project exchange in one
+Levo shows every amount in **BTC**, and in US dollars at the flip of a switch
+the page remembers for you. Both come from the fee exchange-rate table of the
+node Levo reads (`GET /api/rates`).
+
+**A sale settles in the asset its project chooses**: any asset the node's rate
+table prices, USDX or another stablecoin among them, and never pegged bitcoin.
+That asset settles inside the covenant: buyer and project exchange in one
 transaction, enforced by consensus.
 
 **BTC** is native Bitcoin on the parent chain, not a token on Sequentia and not
@@ -116,7 +122,7 @@ it against your own wallet before swapping.
 extension in one click, or by pasting a signature the web wallet's Sign tab,
 Ambra's Sign screen, or any wallet that signs a message the way
 `sequentia-cli signmessage` does), staked Sequence under a key they can prove
-they control, and unblinded USDX. A browser wallet signs and broadcasts the
+they control, and the sale's asset, unblinded. A browser wallet signs and broadcasts the
 purchase in place: Levo hands it a PSET whose covenant input already carries
 its witness, and the wallet signs only the buyer's own inputs.
 That needs a wallet that fills in its own key origins before signing, which it
@@ -172,7 +178,7 @@ fonts are served by the app itself. How it works says the same to visitors.
 | `levod/lnsale.py` | The Lightning sale's scripts: the sale address with its RESERVE leaf, the lot lock and the bond lock a reservation creates, and the vesting destination ([doc/lightning-sales.md](doc/lightning-sales.md)). |
 | `levod/sale.py`, `levod/market.py` | The sale lifecycle (lock, sell, reclaim) and the marketplace rules: listing, the settlement plan, the per-buyer caps, the ledger. |
 | `levod/tiers.py` | The tier policy, and the `LEVOD_TIERS` table it reads. |
-| `levod/rails.py` | The USDX and BTC payment rails and their quotes. |
+| `levod/rails.py` | The payment rails and their quotes, and the node's rates every amount is shown in BTC and dollars with. |
 | `levod/auth.py` | Login: a challenge, a signature, and the key recovered from it. |
 | `levod/store.py` | The state file: listings and the allocation ledger, written atomically. |
 | `levod/tx.py`, `levod/pset.py` | The transaction that settles a buy (as raw hex and as a PSET), and the one that reclaims what did not sell. |
@@ -390,7 +396,7 @@ offer to sign.
 ## Deployment
 
 The platform is live at [sequentiatestnet.com/levo/](https://sequentiatestnet.com/levo/),
-priced in USDX on the Sequentia testnet
+suggesting USDX on the Sequentia testnet as the asset a sale settles in
 (`2a515539da5e6a60caa7766ecd65bac0c10d15717ddd2088844ba58f4d04b9de`, eight
 decimal places), with `LEVOD_ORIGIN=https://sequentiatestnet.com/levo` and the
 explorer at `https://sequentiatestnet.com/explorer`. Those belong to this
@@ -465,13 +471,13 @@ reaches the box nowhere else.
 | `LEVOD_SECRET` | random per start | Session-token key. Set it, or every restart signs everyone out. |
 | `LEVOD_RPC_URL` | `http://127.0.0.1:18776` | Sequentia node JSON-RPC. The default is the node's RPC port on chain `test`; the testnet box points it at its own follower node. |
 | `LEVOD_RPC_USER` / `LEVOD_RPC_PASSWORD` / `LEVOD_RPC_COOKIE` | — | Node credentials. The cookie path is tilde-expanded, read on every call, and refused at startup if it does not exist. |
-| `LEVOD_PAYMENT_ASSET` | USDX on testnet | The asset every sale is priced in. A listing in another asset is refused, and levod will not start on a value that is not a 64-character asset id. |
+| `LEVOD_PAYMENT_ASSET` | USDX on testnet | The asset the listing form suggests and tier caps are written in. A sale may settle in any asset the node's rate table prices; its cap is converted at the node's rates. levod will not start on a value that is not a 64-character asset id. |
 | `LEVOD_PAYMENT_DECIMALS` | `8` | How many places that asset divides into. Prices, caps and quotes are all read through it. |
 | `LEVOD_BTC_RATE_LABEL` | `SBTC` | Which row of the node's fee exchange-rate table a BTC quote is derived from. |
 | `LEVOD_PAYMENT_LABEL` | `USDX` | Its label in the node's rate table and in the interface. |
 | `LEVOD_STAKE_LABEL` | `tSEQ` on chain `test`, else `SEQ` | The staking token's ticker in the interface. |
 | `LEVOD_HRP` | `tb` | Address prefix: `tb` testnet, `bc` mainnet (Sequentia's unblinded addresses use Bitcoin's own HRPs), `ert` on `elementsregtest`. |
-| `LEVOD_TIERS` | supply-share defaults | JSON list of tiers, lowest first, each with `name`, `min_stake` (whole SEQ), `cap` (whole units of the payment asset; the most one account may commit per sale), `may_list`, and a `blurb` that the home page shows beside the tier. Takes effect on restart; caps apply to open sales at once, while what an account has already committed stays committed. |
+| `LEVOD_TIERS` | supply-share defaults | JSON list of tiers, lowest first, each with `name`, `min_stake` (whole SEQ), `cap` (whole units of `LEVOD_PAYMENT_ASSET`; the most one account may commit per sale, converted at the node's rates for a sale settling in another asset), `may_list`, and a `blurb` that the home page shows beside the tier. Takes effect on restart; caps apply to open sales at once, while what an account has already committed stays committed. |
 | `LEVOD_EXPLORER_URL` | — | An esplora-style explorer base (`.../tx/`, `.../address/`, `.../asset/`), for links. |
 | `LEVOD_LINKS` | — | JSON of label to URL for the rest of the deployment, shown in the footer. Four labels are also used in the text: `Extension` (where to get the browser extension, which is what signs in here in one click), `Wallet`, `Faucet` and `Staking pools`. |
 | `LEVOD_LEAF_OPERATOR` | — | The leaf operator (an Arca server) whose rounds fill sales for buyers paying from leaves. levod reads each take's status there by its id to attribute a share of a round to its buyer, and checks the round itself on its own node. Empty: no take is followed, and a sale page offers no purchase from leaves. See [doc/api.md](doc/api.md), Buying from leaves. |
@@ -492,8 +498,9 @@ reaches the box nowhere else.
 | `LEVOD_OPERATORS` | — | Public keys (compressed hex, comma or space separated) that may hide or flag a listing. Empty means nobody can. |
 | `LEVOD_TRUSTED_PROXIES` | `127.0.0.1 ::1` | Peers whose `X-Forwarded-For` is believed, and only its **last** entry, which is the one such a proxy appends. Set it empty when levod is exposed directly, or any caller can pick their own rate-limit bucket. |
 
-Changing `LEVOD_PAYMENT_ASSET` while a sale is open is not supported: every
-sale's covenant is priced in the asset it was listed with.
+Every sale's covenant is priced in the asset it was listed with, whatever
+`LEVOD_PAYMENT_ASSET` says later; changing it moves only what the form
+suggests and what the tier caps are written in.
 
 ## What levod can and cannot do
 

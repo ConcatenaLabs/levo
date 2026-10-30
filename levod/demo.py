@@ -74,7 +74,7 @@ class StubNode:
         if method == "getfeeexchangerates":
             return {"SBTC": 6400000000000, "USDX": 100000000}
         if method == "dumpassetlabels":
-            return {"USDX": USDX}
+            return {"USDX": USDX, "SBTC": "5bf4" + "00" * 30}
         if method == "getblockhash":
             return "ddd11d54c87a2bd94400fd31ce05d8e1110bb4b78e7103f738342086fc4ea92e"
         if method == "scantxoutset":

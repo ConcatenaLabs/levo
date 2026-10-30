@@ -24,7 +24,8 @@ const SAID = {
 }
 
 export default function LeafBuy({ project, onTaken }) {
-  const { config, payment } = useStore()
+  const { config, payment: fallbackPay, money } = useStore()
+  const payment = (project.sale && project.sale.payment) || fallbackPay
   const decimals = project.decimals ?? 8
   const [mode, setMode] = useState(null)
   const [order, setOrder] = useState(null)
@@ -94,7 +95,7 @@ export default function LeafBuy({ project, onTaken }) {
         <ul className="small" style={{ marginTop: '0.75rem' }}>
           {takes.map((t) => (
             <li key={t.take}>
-              {amount(t.token_atoms, decimals)} {project.ticker} for {amount(t.payment_atoms, payment.decimals)} {payment.label}: {SAID[t.state] || t.state}
+              {amount(t.token_atoms, decimals)} {project.ticker} for {money(t.payment_atoms, payment.asset, payment)}: {SAID[t.state] || t.state}
               {t.round ? <> (round {shortHex(t.round)}, the sale at its input {t.input})</> : null}
               {t.state === 'void' && t.reason ? <>: {t.reason}</> : null}
             </li>

@@ -32,9 +32,12 @@ quote. It is published with its source and its expiry so a buyer can check it
 against their own wallet before swapping.
 """
 
+import re
 import time
 
 import units as U
+
+C_ASSET_RE = re.compile(r"^[0-9a-f]{64}$")
 
 USDX = "usdx"
 BTC = "btc"
@@ -76,6 +79,54 @@ class NodeRateSource:
             self._cached = self.rpc.call("getfeeexchangerates") or {}
             self._at = now
         return self._cached
+
+    def labels(self):
+        """The node's asset labels, label -> asset id. The rate table is keyed
+        by label where an asset has one and by its id where it has none."""
+        now = time.time()
+        if getattr(self, "_labels", None) is None or now - self._labels_at > self.ttl:
+            try:
+                self._labels = {str(k): str(v).lower()
+                                for k, v in (self.rpc.call("dumpassetlabels") or {}).items()}
+            except Exception:
+                self._labels = getattr(self, "_labels", None) or {}
+            self._labels_at = now
+        return self._labels
+
+    def rate_of(self, asset):
+        """The table's rate for an asset id, or None when the node prices it not."""
+        asset = str(asset or "").lower()
+        r = self.rates()
+        if asset in r:
+            return int(r[asset])
+        for label, a in self.labels().items():
+            if a == asset and label in r:
+                return int(r[label])
+        return None
+
+    def btc_asset(self):
+        """The asset id of the row this source reads as bitcoin's price, which
+        is never itself offered as a sale's asset."""
+        return self.labels().get(self.btc_label)
+
+    def table(self):
+        """Every priced asset by id, with bitcoin's rate beside them.
+
+        A rate is reference units (1e-8 of a US dollar) per 1e8 atoms, at any
+        precision, so `atoms * rate / 1e8` is an amount's value in reference
+        units, and `atoms * rate / btc_rate` the same value in satoshis.
+        """
+        r = self.rates()
+        labels = self.labels()
+        out = {}
+        for k, v in r.items():
+            a = labels.get(k, k).lower()
+            if C_ASSET_RE.match(a):
+                out[a] = int(v)
+        btc = r.get(self.btc_label)
+        return {"rates": out, "btc_rate": int(btc) if btc else None,
+                "btc_asset": labels.get(self.btc_label), "reference": "USD",
+                "reference_per_unit": "1e-8 USD"}
 
     def payment_atoms_per_btc(self, payment_label="USDX"):
         """How many atoms of the payment asset one BTC is worth."""
@@ -125,6 +176,30 @@ class Rails:
             return True, None
         except Exception as e:
             return False, str(e)
+
+    def values(self):
+        """The rates a page needs to show any amount in BTC or in US dollars."""
+        if self.rate_source is None or not hasattr(self.rate_source, "table"):
+            return {"rates": {}, "btc_rate": None, "btc_asset": None, "reference": "USD"}
+        try:
+            return self.rate_source.table()
+        except Exception as e:
+            return {"rates": {}, "btc_rate": None, "btc_asset": None, "reference": "USD",
+                    "unavailable_because": str(e)}
+
+    def to_sats(self, asset, atoms):
+        """An amount of `asset` in satoshis at the node's rates, or None."""
+        src = self.rate_source
+        if src is None or not hasattr(src, "rate_of"):
+            return None
+        try:
+            rate = src.rate_of(asset)
+            btc = int((src.rates() or {}).get(src.btc_label) or 0)
+        except Exception:
+            return None
+        if not rate or not btc:
+            return None
+        return int(atoms) * int(rate) // int(btc)
 
     def available(self):
         ok, why = self._btc_ready()

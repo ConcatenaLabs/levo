@@ -395,6 +395,13 @@ carries one request's leftover bytes into the next.
 **`GET /api/watcher`** → what the watcher is doing, and any sale whose funding
 it cannot place in the chain.
 
+**`GET /api/rates`** → `{rates: {asset id: rate}, btc_rate, btc_asset,
+reference: "USD"}` from the node's fee exchange-rate table. A rate is
+reference units (a hundred-millionth of a US dollar) per 10^8 atoms at any
+precision, so `atoms × rate / 10^16` is an amount in dollars and
+`atoms × rate / btc_rate` the same amount in satoshis. `btc_rate` is the
+table's price for a bitcoin. Every amount the app shows is converted with it.
+
 **`GET /api/config`**, **`GET /api/tiers`**, **`GET /api/rails`** → the labels,
 prefixes, links, tier table and payment rails this deployment runs with,
 including how many decimal places the payment asset divides into. They

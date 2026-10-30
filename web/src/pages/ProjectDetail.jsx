@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { useParams, Link } from 'react-router-dom'
 import { api } from '../lib/api'
 import { useStore } from '../lib/store'
-import { amount, capitalise, closeIn, closeLabel, compact, positive, priceLabel, prose, shortHex, timeLabel, treasurySpk } from '../lib/format'
+import { amount, big, capitalise, closeIn, closeLabel, compact, positive, priceLabel, prose, shortHex, timeLabel, treasurySpk } from '../lib/format'
 import { addressOf } from '../lib/bech32'
 import { Copy, Hex, Notice, usePageTitle, useReread } from '../components/ui'
 import SignIn from '../components/SignIn'
@@ -15,7 +15,8 @@ import LockPanel from '../components/LockPanel'
 import { Status } from './Projects'
 
 function Terms({ project, sale }) {
-  const { payment, config, explorer } = useStore()
+  const { payment: fallbackPay, config, explorer, price } = useStore()
+  const payment = sale.payment || fallbackPay
   const t = sale.terms
   const d = project.decimals ?? 8
   const treasuryAddr = addressOf(treasurySpk(t), config.hrp)
@@ -27,11 +28,12 @@ function Terms({ project, sale }) {
             the name and ticker are the project's own words; the asset id beside
             them is the only part of this row the chain knows about
           </div></td></tr>
-        <tr><th>Paid in</th><td>{payment.label} <span className="dim">·</span> <Hex value={t.payment_asset} href={explorer('asset', t.payment_asset)} label="payment asset id" /></td></tr>
+        <tr><th>Settles in</th><td>{payment.label} <span className="dim">·</span> <Hex value={t.payment_asset} href={explorer('asset', t.payment_asset)} label="payment asset id" /></td></tr>
         <tr>
           <th>Price</th>
-          <td>{priceLabel(t, d, payment.decimals)} {payment.label} per {project.ticker}
+          <td>{price(t, d, t.payment_asset, payment)} per {project.ticker}
             <div className="dim small prose">
+              shown at the node's rates; the sale settles at {priceLabel(t, d, payment.decimals)} {payment.label} per {project.ticker},
               exactly ceil(n × {t.price_num} / {t.price_den}) {payment.label} atoms for n token atoms
             </div>
           </td>
@@ -288,7 +290,8 @@ function KeepThis({ project, sale }) {
 }
 
 function LedgerPanel({ project }) {
-  const { payment, explorer } = useStore()
+  const { explorer, money } = useStore()
+  const sale = project.sale || { terms: {} }
   const [page, setPage] = useState(null)
   const [error, setError] = useState(null)
   const [open, setOpen] = useState(false)
@@ -339,7 +342,7 @@ function LedgerPanel({ project }) {
                   </th>
                   <td>
                     {amount(e.token_atoms, d)} {project.ticker} for{' '}
-                    {amount(e.payment_atoms, payment.decimals)} {payment.label}
+                    {money(e.payment_atoms, sale.terms.payment_asset, sale.payment)}
                     <div className="dim small prose">
                       <Hex value={e.txid} href={explorer('tx', e.txid)} label="transaction id" />
                       {e.verified === true ? ' · treasury payment checked on chain'
@@ -426,7 +429,7 @@ function FlagPanel({ project, onFlagged }) {
 
 export default function ProjectDetail() {
   const { slug } = useParams()
-  const { account, explorer, chainHeight, payment, standing, stake } = useStore()
+  const { account, explorer, chainHeight, payment, standing, stake, money } = useStore()
   const [project, setProject] = useState(null)
   const [error, setError] = useState(null)
   const [notFound, setNotFound] = useState(false)
@@ -685,6 +688,7 @@ export default function ProjectDetail() {
           {sale && positive(sale.terms.total_atoms) && (
             <div className="card" style={{ marginTop: '1rem' }}>
               <div className="kv"><span>Sold</span><b>{amount(sale.sold_atoms, d)} {project.ticker}</b></div>
+              <div className="kv"><span>Raised</span><b>{money(big(sale.sold_atoms) * big(sale.terms.price_num) / big(sale.terms.price_den), sale.terms.payment_asset, sale.payment)}</b></div>
               <div className="kv"><span>Still locked</span><b>{amount(sale.locked_atoms, d)} {project.ticker}</b></div>
               <div className="kv"><span>Total for sale</span><b>{amount(sale.terms.total_atoms, d)} {project.ticker}</b></div>
               {typeof sale.buyers === 'number' && (

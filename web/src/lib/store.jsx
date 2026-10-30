@@ -1,5 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useState } from 'react'
 import { api, getToken, setToken, onSignedOut } from './api'
+import { moneyText as fmtMoney, priceText as fmtPrice, savedUnit, saveUnit } from './money.js'
 
 // One signed-in account per browser. "Signed in" means Levo holds a token that
 // says which public key proved itself; it never means Levo holds a key.
@@ -26,6 +27,11 @@ export function StoreProvider({ children }) {
   // to show: a tab left open past the session's twelve hours used to wake
   // signed out with nothing said.
   const [sessionNotice, setSessionNotice] = useState(null)
+  // Amounts read in BTC unless this viewer chose dollars; the choice is
+  // remembered in this browser.
+  const [unit, setUnitState] = useState(savedUnit)
+  const [rates, setRates] = useState(null)
+  const setUnit = useCallback((u) => { saveUnit(u); setUnitState(u) }, [])
 
   const refresh = useCallback(async () => {
     if (!getToken()) { setStanding(null); return null }
@@ -46,8 +52,9 @@ export function StoreProvider({ children }) {
   useEffect(() => {
     let alive = true
     ;(async () => {
-      const [t, c, h] = await Promise.allSettled([api.tiers(), api.config(), api.health()])
+      const [t, c, h, r] = await Promise.allSettled([api.tiers(), api.config(), api.health(), api.rates()])
       if (!alive) return
+      if (r.status === 'fulfilled') setRates(r.value)
       if (t.status === 'fulfilled') setTiers(t.value)
       // The deployment's own facts: the chain's address prefix, the ticker
       // its figures are in, how finely the payment asset divides. Without
@@ -66,6 +73,7 @@ export function StoreProvider({ children }) {
     // at page load would go on saying everything is fine. It is cheap: one
     // request a minute, the same one an uptime check makes.
     const beat = setInterval(() => {
+      api.rates().then((r) => alive && setRates(r)).catch(() => {})
       api.health()
         .then((h) => alive && setHealth(h))
         .catch((e) => { if (alive && e && e.body && e.body.node) setHealth(e.body) })
@@ -90,6 +98,12 @@ export function StoreProvider({ children }) {
     mayList: !!(standing && standing.tier && standing.tier.may_list),
     configError,
     payment: config.payment,
+    unit, setUnit, rates,
+    // An amount of `asset` in the viewer's unit; `fallback` names the
+    // asset's own label and places for when the node prices it not.
+    money: (atoms, asset, fallback) => fmtMoney(atoms, asset, rates, unit, fallback || config.payment),
+    price: (terms, tokenDecimals, asset, fallback) =>
+      fmtPrice(terms, tokenDecimals, asset, rates, unit, fallback || config.payment),
     stake: config.stake,
     links: config.links || {},
     nodeDown: !!(health && health.node && health.node.reachable === false),

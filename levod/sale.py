@@ -671,6 +671,11 @@ class Sale:
             "status": self.shown_status(height=height, now=now),
             "script_pubkey": self.script_pubkey,
             "terms": self.terms.to_json(),
+            # The asset this sale settles in, as people read it. Sales here
+            # settle in any priced asset, so the page cannot take one label
+            # for all of them.
+            "payment": {"asset": self.terms.payment_asset, "label": self.payment_label,
+                        "decimals": self.payment_decimals},
             "funding": self.funding,
             "locked_atoms": atoms_out(self.locked_atoms),
             "sold_atoms": atoms_out(self.sold_atoms),

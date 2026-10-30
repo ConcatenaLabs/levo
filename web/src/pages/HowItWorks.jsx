@@ -5,7 +5,7 @@ import { amount, big, compact, positive } from '../lib/format'
 
 export default function HowItWorks() {
   usePageTitle('How it works')
-  const { tiers, config, payment, stake, links } = useStore()
+  const { tiers, config, payment, stake, links, money } = useStore()
   const first = tiers && tiers.tiers.length > 1 ? tiers.tiers[1] : null
   const firstAtoms = first ? first.min_stake_atoms : config.first_tier_atoms
   const floor = compact(config.staking_floor_atoms)
@@ -91,7 +91,7 @@ export default function HowItWorks() {
                 <td>
                   {big(t.min_stake_atoms) === 0n ? 'no stake' : compact(t.min_stake_atoms) + ' ' + stake.label + ' staked'}
                   <div className="dim small prose">
-                    {positive(t.cap_atoms) ? 'up to ' + amount(t.cap_atoms, payment.decimals) + ' ' + payment.label + ' per sale' : 'cannot buy'}
+                    {positive(t.cap_atoms) ? 'up to ' + money(t.cap_atoms, payment.asset) + ' per sale' : 'cannot buy'}
                     {t.may_list ? ' · may list a project' : ''}
                   </div>
                 </td>

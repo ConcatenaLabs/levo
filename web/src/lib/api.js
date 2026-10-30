@@ -73,6 +73,7 @@ export const api = {
   config: () => call('GET', '/config'),
   tiers: () => call('GET', '/tiers'),
   rails: () => call('GET', '/rails'),
+  rates: () => call('GET', '/rates'),
   me: () => call('GET', '/me'),
   myProjects: (params) => call('GET', '/me/projects' + query(params)),
   myPositions: (params) => call('GET', '/me/positions' + query(params)),
