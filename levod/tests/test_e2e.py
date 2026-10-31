@@ -262,13 +262,14 @@ def run(d):
     ok.eq(r["explorer_url"], "https://example.test/explorer", "and the explorer, without a trailing slash")
     ok.eq(r["links"], {"Faucet": "https://example.test/faucet"}, "and the site links")
     ok.eq(r["stake"]["label"], "tSEQ", "the staking token is tSEQ on chain test")
-    ok.eq(r["first_tier_is_chain_floor"], True, "the default first tier is the chain floor")
+    ok.eq(r["first_tier_is_chain_floor"], False, "the default first tier is below the chain floor")
     code, r = req("GET", "/api/tiers")
-    ok.ok("40,000 tSEQ" in r["note"], "the tiers note is built from the table", r["note"])
+    ok.ok("100 tSEQ" in r["note"] and "40,000 tSEQ" in r["note"],
+          "the tiers note is built from the table and the floor", r["note"])
     ok.eq(int(r["staking_floor_atoms"]), 4_000_000_000_000, "the floor comes from the node")
     ok.eq(r["staking_floor_from_chain"], True, "and says that it did")
-    ok.ok("consensus ignores" in r["note"],
-          "so the note may say what consensus does", r["note"])
+    ok.ok("delegated to a block producer" in r["note"],
+          "so the note may say how a small stake counts", r["note"])
     code, _, h = _req(d.base, "HEAD", "/api/health")
     ok.eq(code, 200, "HEAD works on the API")
     code, r, _ = _req(d.base, "GET", "/api/health")

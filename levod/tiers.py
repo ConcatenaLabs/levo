@@ -7,11 +7,13 @@ all.
 
 Two things about that are deliberate.
 
-The first tier begins at the protocol's OWN eligibility floor: 40,000 SEQ, the
-minimum weight a key must hold before consensus counts it as a blocksigner at
-all (whitepaper section 3.3, `-posminstake`). Stake below that floor buys no
-influence over the chain, so it buys no allocation here either. Levo does not
-invent an economic threshold; it borrows the one the chain already enforces.
+The first tier asks for a small stake: 100 SEQ, which a new tester reaches
+with a faucet grant alone. What it asks is that you stake at all, which is to
+commit coins to securing the chain for the unbonding delay. A stake that small
+does not sign blocks on its own: the chain's blocksigner floor (40,000 SEQ,
+whitepaper section 3.3, `-posminstake`) applies to what a SIGNER commands, so a
+small holder delegates to a producing signer, whose total clears it, and the
+stake counts in full. Levo's higher tiers are larger shares of the supply.
 
 The second is that this is the ONLY place SEQ is privileged. Sequentia has no
 privileged coin: fees are payable in any accepted asset and every issued asset
@@ -42,7 +44,8 @@ import json
 import os
 
 SEQ_ATOMS = 100_000_000          # SEQ has 8 decimal places
-POS_MIN_STAKE_ATOMS = 4_000_000_000_000   # 40,000 SEQ: the chain's own floor
+POS_MIN_STAKE_ATOMS = 4_000_000_000_000   # 40,000 SEQ: the chain's own floor, for a signer
+FIRST_TIER_ATOMS = 100 * SEQ_ATOMS          # 100 SEQ: the first tier, reached by delegating
 
 
 # An atom count on the wire.
@@ -84,14 +87,13 @@ class Tier:
 # and stop it binding at all.
 USDX_ATOMS = 100_000_000
 
-# The default thresholds are shares of the 400,000,000 SEQ supply, which is
-# where the protocol's own floor comes from: 40,000 SEQ is 0.01% (whitepaper
-# section 3.3). Expressing them that way rather than as round numbers means they
-# keep their meaning as the network grows.
+# The first tier is a small stake anyone can reach from the faucet. The ones
+# above it are shares of the 400,000,000 SEQ supply, which keeps their meaning
+# as the network grows:
 #
-#   Contributor  0.01%   the floor below which consensus ignores a staker
+#   Contributor  100 SEQ   any stake, delegated to a producing signer
 #   Backer       0.05%
-#   Founder      0.25%   and the only tier that may list
+#   Founder      0.25%     and the only tier that may list
 # A blurb says what a tier MEANS. It quotes no figure and no ticker: the cap
 # and the threshold are data, shown beside it in whatever units the deployment
 # actually runs -- tSEQ on a testnet, SEQ on mainnet -- and a blurb repeating
@@ -116,9 +118,9 @@ def default_tiers(payment_decimals=8):
         Tier(0, "Visitor", 0, caps[0], False,
              "Read every sale and check every address it publishes. Staking opens "
              "the first allocation tier."),
-        Tier(1, "Contributor", POS_MIN_STAKE_ATOMS, caps[1], False,
-             "0.01% of the supply staked, which is the chain's own blocksigner "
-             "floor: below it, consensus ignores a staker's weight entirely."),
+        Tier(1, "Contributor", FIRST_TIER_ATOMS, caps[1], False,
+             "A stake of your own, delegated to a block producer if it is too "
+             "small to sign blocks by itself."),
         Tier(2, "Backer", 5 * POS_MIN_STAKE_ATOMS, caps[2], False,
              "0.05% of the supply staked."),
         Tier(3, "Founder", 25 * POS_MIN_STAKE_ATOMS, caps[3], True,
