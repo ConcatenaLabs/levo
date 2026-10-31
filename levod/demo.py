@@ -40,6 +40,13 @@ class StubNode:
     def staker_weights(self):
         return dict(self.weights)
 
+    def staking_floor(self):
+        return FLOOR
+
+    def producing_signer(self):
+        # The signer a small stake is told to delegate to.
+        return "02" + K.xonly_pubkey(0x61).hex()
+
     def controller_weights(self):
         # An upgraded node's answer: weight keyed by the controller that owns
         # it, with the pool it is delegated to where that applies.

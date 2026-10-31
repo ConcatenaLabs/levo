@@ -13,13 +13,15 @@ import units as U  # noqa: E402
 
 SEQ = T.SEQ_ATOMS
 FLOOR = T.POS_MIN_STAKE_ATOMS
+FIRST = T.FIRST_TIER_ATOMS
 
 
 def test_tier_boundaries(t):
     p = T.TierPolicy()
     t.eq(p.for_stake(0).name, "Visitor", "no stake is a visitor")
-    t.eq(p.for_stake(FLOOR - 1).name, "Visitor", "one atom below the floor is still a visitor")
-    t.eq(p.for_stake(FLOOR).name, "Contributor", "the chain's floor opens tier 1")
+    t.eq(p.for_stake(FIRST - 1).name, "Visitor", "one atom below the first tier is still a visitor")
+    t.eq(p.for_stake(FIRST).name, "Contributor", "100 SEQ opens tier 1")
+    t.eq(p.for_stake(FLOOR).name, "Contributor", "the chain's signer floor is still tier 1")
     t.eq(p.for_stake(5 * FLOOR).name, "Backer", "five times the floor is tier 2")
     t.eq(p.for_stake(25 * FLOOR).name, "Founder", "25 times the floor is tier 3")
     t.eq(p.for_stake(10**18).name, "Founder", "there is nothing above the top tier")
@@ -32,13 +34,14 @@ def test_only_the_top_tier_may_list(t):
     t.eq(p.for_stake(0).cap_atoms, 0, "a visitor has no allocation")
 
 
-def test_first_tier_matches_the_chains_own_floor(t):
-    """Tier 1 is not an invented number: it is the weight below which consensus
-    itself ignores a staker."""
+def test_first_tier_is_a_small_delegated_stake(t):
+    """Tier 1 asks only that you stake: 100 SEQ, below the signer floor, which a
+    faucet grant reaches; it counts by being delegated to a producer."""
     p = T.TierPolicy()
     tier1 = [x for x in p.tiers if x.level == 1][0]
-    t.eq(tier1.min_stake_atoms, FLOOR, "tier 1 begins at -posminstake")
-    t.eq(FLOOR // SEQ, 40_000, "the floor is 40,000 SEQ")
+    t.eq(tier1.min_stake_atoms, 100 * SEQ, "tier 1 begins at 100 SEQ")
+    t.ok(tier1.min_stake_atoms < FLOOR, "below the 40,000 SEQ signer floor")
+    t.eq(FLOOR // SEQ, 40_000, "the signer floor is 40,000 SEQ")
 
 
 def test_a_staking_key_counts_for_one_account_only(t):
@@ -221,12 +224,11 @@ def test_bad_tier_configuration_is_refused(t):
 
 
 def test_default_tiers_are_shares_of_supply(t):
-    """Not round numbers picked to feel right: 40,000 SEQ is 0.01% of the
-    400,000,000 supply, which is where the protocol's own floor comes from."""
+    """Above the first tier, not round numbers picked to feel right: shares of
+    the 400,000,000 supply."""
     supply = 400_000_000 * SEQ
     p = T.TierPolicy()
     shares = {x.name: x.min_stake_atoms / supply for x in p.tiers}
-    t.eq(round(shares["Contributor"] * 100, 4), 0.01, "Contributor is 0.01%")
     t.eq(round(shares["Backer"] * 100, 4), 0.05, "Backer is 0.05%")
     t.eq(round(shares["Founder"] * 100, 4), 0.25, "Founder is 0.25%")
 
