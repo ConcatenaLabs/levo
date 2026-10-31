@@ -116,7 +116,7 @@ export default function Home() {
                     ? 'The first tier opens at ' + compact(firstAtoms) + ' staked ' + stake.label + '.' +
                       (big(firstAtoms) < big(config.staking_floor_atoms)
                         ? ' A stake that small signs no blocks by itself: the chain\'s ' + floor +
-                          ' floor applies to a block producer\'s total, so you delegate it to one and it counts in full.'
+                          ' floor applies to a block producer\'s total, so you delegate it to a pool and it counts in full.'
                         : ' The chain\'s own blocksigner floor, read from the node, is ' + floor + '.')
                     /* Levo could not read the floor, so it must not state one as
                        the chain's. Everything else on this page is checkable;
@@ -180,27 +180,16 @@ export default function Home() {
                 {config.testnet && faucet && (
                   <li>Get testnet {stake.label} and {payment.label} from <a href={faucet} target="_blank" rel="noopener noreferrer">the faucet</a>.</li>
                 )}
-                {config.delegate_to ? (
-                  <li>
-                    Stake {compact(firstAtoms, stake.decimals)} {stake.label} or more by
-                    delegating it to a block producer, from a node that holds them:{' '}
-                    <span className="mono" style={{ overflowWrap: 'anywhere' }}>sequentia-cli delegatestake {config.delegate_to} &lt;amount&gt;</span>{' '}
-                    bonds the coins to a key of yours and lends their block-signing
-                    rights, never the coins, to the producer that made the most
-                    recent blocks. The command answers with your key as
-                    <span className="mono"> controller</span>: that is the key you sign in with below.
-                  </li>
-                ) : (
-                  <li>
-                    Stake {compact(firstAtoms, stake.decimals)} {stake.label}, from a
-                    wallet&rsquo;s staking screen or from a node that holds them:{' '}
-                    <span className="mono">sequentia-cli registerstake &lt;staking pubkey&gt; &lt;amount&gt;</span>{' '}
-                    bonds the coins to that key and locks them for the unbonding
-                    delay. That key is the one you sign in with below.
-                    {pools ? <> Delegating it to <a href={pools} target="_blank" rel="noopener noreferrer">a pool</a> afterwards
-                      lends the block-signing rights and not the coins, so it still counts for you.</> : ''}
-                  </li>
-                )}
+                <li>
+                  Stake {compact(firstAtoms, stake.decimals)} {stake.label} or more, your own or
+                  delegated to a pool: both count in full here. Stake from a
+                  wallet&rsquo;s staking screen, or from a node that holds the coins:{' '}
+                  <span className="mono">sequentia-cli registerstake &lt;staking pubkey&gt; &lt;amount&gt;</span>.
+                  {pools ? <> To delegate, pick a pool on <a href={pools} target="_blank" rel="noopener noreferrer">the staking pools page</a>,
+                    which shows whether each one is producing blocks; delegating lends the
+                    block-signing rights and never the coins.</> : ''}
+                  {' '}The staking key is the one you sign in with below.
+                </li>
                 <li><Link to="/account">Sign in</Link> with the staking key, and your tier is on the first screen.</li>
               </ol>
             </div>
