@@ -221,25 +221,6 @@ class NodeRPC:
         floor = answer.get("min_stake")
         return int(floor) if floor is not None else None
 
-    def producing_signer(self, window=120):
-        """The key that produced the most of the last `window` blocks, or None.
-
-        A stake below the blocksigner floor counts once it is delegated to a
-        signer, and only a signer that is producing lends it any use; a pool
-        that has stopped would hold the stake for nothing. So the signer Levo
-        suggests is the one the chain shows working, never one from a list.
-        """
-        try:
-            answer = self.call("getposrecentblocks", window) or {}
-        except Exception:
-            return None
-        counts = {}
-        for b in answer.get("blocks") or []:
-            p = b.get("producer")
-            if p:
-                counts[p] = counts.get(p, 0) + 1
-        return max(counts, key=counts.get) if counts else None
-
     def forget_chain_info(self):
         """Drop the held tip. For a caller that has just changed the chain and
         wants the next answer to be the new one."""

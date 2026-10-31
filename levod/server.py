@@ -457,9 +457,6 @@ class App:
             "first_tier_atoms": first.min_stake_atoms,
             "first_tier_is_chain_floor": (self._floor_from_chain
                                          and first.min_stake_atoms == self.staking_floor),
-            # A block producer to delegate a small stake to: the one that made
-            # the most recent blocks, read from the chain.
-            "delegate_to": self.producing_signer,
             "links": self.site_links,
             "source_url": self.source_url,
             "registry_url": self.registry_url,
@@ -467,17 +464,6 @@ class App:
             # from leaves is attributed (leaves.py).
             "leaves": self.leaf_operator is not None,
         }
-
-    @property
-    def producing_signer(self):
-        """The signer that produced the most recent blocks, held five minutes."""
-        now = time.time()
-        held = getattr(self, "_signer", None)
-        if held and now - held[0] < 300:
-            return held[1]
-        signer = self.node.producing_signer() if hasattr(self.node, "producing_signer") else None
-        self._signer = (now, signer)
-        return signer
 
     def tiers_note(self):
         first = self.policy.tiers[1] if len(self.policy.tiers) > 1 else None

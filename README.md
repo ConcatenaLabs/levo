@@ -51,6 +51,10 @@ enforced by consensus:
   node, counted only for staker keys an account has proven it controls, and
   read by CONTROLLER rather than by signer, so a stake delegated to a pool still
   counts for the person who owns it. See [doc/delegated-stake.md](doc/delegated-stake.md).
+  Levo names no signer to delegate to: it says how much stake each tier needs,
+  own or delegated, and links to a wallet's staking screen and to the public
+  staking pools page, which shows whether each pool is producing. The holder
+  chooses there.
   The tier boundaries that weight maps to are Levo's configuration, not a chain
   rule.
 - **The chain decides.** A watcher reconciles every sale against the UTXO set

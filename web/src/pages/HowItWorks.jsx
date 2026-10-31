@@ -104,7 +104,7 @@ export default function HowItWorks() {
         {config.first_tier_is_chain_floor
           ? 'The first tier begins at ' + floor + ' ' + stake.label + ' because that is the chain\'s own blocksigner floor. Below it, consensus ignores a staker\'s weight entirely. Levo did not invent a threshold; it borrowed the one already being enforced.'
           : config.staking_floor_from_chain
-            ? 'The first tier begins at ' + compact(firstAtoms) + ' ' + stake.label + ' on this deployment. The chain\'s own blocksigner floor, read from the node Levo watches, is ' + floor + ' ' + stake.label + ', and it applies to a block producer\'s total: a smaller stake delegated to a producer counts in full, here and for the chain.'
+            ? 'The first tier begins at ' + compact(firstAtoms) + ' ' + stake.label + ' on this deployment. The chain\'s own blocksigner floor, read from the node Levo watches, is ' + floor + ' ' + stake.label + ', and it applies to a block producer\'s total: a smaller stake delegated to a pool counts in full, here and for the chain.'
             : 'The first tier begins at ' + compact(firstAtoms) + ' ' + stake.label + ' on this deployment. Levo could not read the chain\'s blocksigner floor from its node, so the ' + floor + ' ' + stake.label + ' it quotes for that floor is configured rather than checked.'}
         {' '}The thresholds are Levo's configuration; the stake behind each key is read
         from the chain.
@@ -265,8 +265,8 @@ export default function HowItWorks() {
           The least stake Sequentia itself counts. Blocks here are produced by
           stakers, and a producer whose total is below this floor is passed
           over when the chain decides who signs the next one. A smaller stake
-          counts by being delegated to a producer, which is how Levo&rsquo;s
-          first tier is reached.
+          counts by being delegated to a pool, which is how such a stake
+          reaches Levo&rsquo;s first tier.
         </dd>
         <dt>Atom</dt>
         <dd>
