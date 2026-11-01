@@ -25,10 +25,13 @@ then on is the buyer's whatever the receiver does: nobody can move it before
 the vesting date, and only the buyer's key can after it (what nobody takes up
 by the deadline goes back to the project). The tokens reach that wallet from
 the sale itself: when it holds too few for a lot, the receiver moves the lot
-and a little more (the operator's fee) out of the sale to the wallet's own
-address and boards them, and pays the lot once they are in. A payment that
-cannot be backed so is failed back, and whatever was moved stays in the
-wallet for the next lot.
+and a little more (the operator's fee and its smallest leaf) out of the sale
+to the wallet's own address and boards them, and pays the lot once they are
+in. Each payment spends every coin of the token the wallet holds, the rest as
+a vesting claim to the project's own key, since the operator takes no change
+below its smallest leaf; the receiver takes those up once they vest. A
+payment that cannot be backed so is failed back, and whatever was moved
+stays in the wallet for the next lot.
 
 The receiver is never paid without revealing the secret, and the secret alone
 delivers the lot: if it settled without delivering, the buyer, now holding the
@@ -103,10 +106,17 @@ VEST_MARGIN_SECONDS = 3 * 3600
 # wallet before the payment goes back.
 VEST_PATIENCE_SECONDS = 3 * 3600
 
-# What a top-up moves out of the sale beyond the lot, in parts of the lot: the
-# operator's fee for a distribution is at most a hundredth of what it pays (the
-# wallet's own bound), and what is left stays for the next lot.
+# What a top-up moves out of the sale beyond the lot: a fiftieth of it (the
+# operator's fee for a distribution is at most a hundredth of what it pays, the
+# wallet's own bound) and the operator's smallest leaf of the token. A
+# distribution spends every coin of the token the wallet holds and leaves no
+# change, because the operator takes none below its smallest leaf: the buyer's
+# lot, and the rest as a claim to the project's own key, which that margin keeps
+# at least a smallest leaf. The project takes its claims up once they vest.
 STOCK_MARGIN_DIV = 50
+
+# How often, at most, the receiver takes up its own claims once they vest.
+OWN_CLAIMS_EVERY = 3600
 
 # The receiver's states of a vesting lot after its payment is held.
 VEST_STATES = ("stocking", "boarding", "distributing")
@@ -172,13 +182,23 @@ class Arca:
     def board(self, asset, atoms, fee_asset):
         return self.call("board", asset, int(atoms), "--fee-asset", fee_asset)
 
-    def quote(self, asset, key, atoms):
+    def quote(self, asset, claims):
         return self.call("distribute", "-", "--asset", asset, "--quote",
-                         stdin="%s %d\n" % (key, int(atoms)))
+                         stdin="".join("%s %d\n" % (k, int(a)) for k, a in claims))
 
-    def distribute(self, asset, key, atoms, vest, days, fee):
+    def distribute(self, asset, claims, vest, days, fee):
         return self.call("distribute", "-", "--asset", asset, "--vest", int(vest), "--days",
-                         int(days), "--shown", str(fee), stdin="%s %d\n" % (key, int(atoms)))
+                         int(days), "--shown", str(fee),
+                         stdin="".join("%s %d\n" % (k, int(a)) for k, a in claims))
+
+    def coins(self):
+        return self.call("coins")
+
+    def info(self):
+        return self.call("info")
+
+    def claim(self):
+        return self.call("claim")
 
     def distributions(self):
         return self.call("distributions")
@@ -314,6 +334,7 @@ class Receiver:
                 self.arca.sync()        # hands over forfeits, brings boards in
             except Exception as e:
                 sys.stderr.write("receiver: the Arca wallet's sync failed: %s\n" % e)
+        self._take_up_own_claims()
         for h, rec in list(self.lots.items()):
             if rec["state"] not in ("issued", "reserved") + VEST_STATES:
                 continue
@@ -427,12 +448,12 @@ class Receiver:
         terms, cov, funding = self._sale(rec["slug"])
         rec["paid_at"] = int(self.now())
         try:
-            q = self.arca.quote(terms.token_asset, rec["buyer_key"], rec["token_atoms"])
+            plan = self._plan(terms, rec)
         except ReceiverError:
-            q = None
+            plan = None
         try:
-            if q is not None:
-                return self._distribute(h, rec, terms, q)
+            if plan is not None:
+                return self._distribute(h, rec, terms, plan)
             self._stock(h, rec, terms, cov, funding)
         except Exception as e:
             return self._fail_back(h, rec, e)
@@ -445,7 +466,7 @@ class Receiver:
         fee = self._fee(terms)
         coin = self._sale_coin(rec["slug"], cov, funding)
         lot = rec["token_atoms"]
-        need = lot + -(-lot // STOCK_MARGIN_DIV)
+        need = lot + -(-lot // STOCK_MARGIN_DIV) + self._min_leaf(terms.token_asset)
         have = int(coin["atoms"])
         if have < lot:
             raise ReceiverError("the sale holds fewer tokens than this lot")
@@ -468,9 +489,58 @@ class Receiver:
         self.spent_own.update((c["txid"], c["vout"]) for c in own)
         rec.update(state="stocking", stock_txid=txid, stock_atoms=need)
 
-    def _distribute(self, h, rec, terms, quote):
-        d = self.arca.distribute(terms.token_asset, rec["buyer_key"], rec["token_atoms"],
-                                 rec["vest"], self.vest_days, quote["fee"])
+    def _min_leaf(self, asset):
+        """The operator's smallest leaf of `asset`, as it publishes it."""
+        for a in (self.arca.info().get("server_info") or {}).get("assets") or []:
+            if (a.get("asset") or "").lower() == asset:
+                return int(a.get("min_leaf") or 0)
+        raise ReceiverError("the operator does not serve this sale's token")
+
+    def _own_key(self):
+        """A key of the project's Arca wallet, for its own claims: the key of
+        an address it handed out, which its claim lookup names."""
+        if not getattr(self, "own_key", None):
+            self.own_key = self.arca.address()["key"]
+        return self.own_key
+
+    def _plan(self, terms, rec):
+        """The claims that pay this lot and spend every live coin of the token
+        the wallet holds, with the operator's fee for them: the buyer's lot,
+        and the rest to the project's own key. Raises ReceiverError when the
+        wallet holds too little for that (the rest would be below the
+        operator's smallest leaf, or nothing pays the lot)."""
+        token = terms.token_asset
+        total = sum(int(c.get("value") or 0) for c in self.arca.coins()
+                    if (c.get("asset") or "").lower() == token and c.get("state") == "live")
+        lot = int(rec["token_atoms"])
+        if total < lot:
+            raise ReceiverError("the project's Arca wallet holds too few tokens for this lot")
+        # The lot alone's fee starts the estimate (the fee follows the coins
+        # given up); the operator may refuse that quote for its change.
+        try:
+            fee = int(self.arca.quote(token, [(rec["buyer_key"], lot)])["fee"])
+        except ReceiverError:
+            fee = 0
+        for _ in range(8):
+            rest = total - lot - fee
+            if rest < 0:
+                raise ReceiverError("the project's Arca wallet holds too few tokens for this lot")
+            claims = [(rec["buyer_key"], lot)] + ([(self._own_key(), rest)] if rest else [])
+            try:
+                quoted = int(self.arca.quote(token, claims)["fee"])
+            except ReceiverError:
+                if rest and rest < self._min_leaf(token):
+                    raise                              # a rest below a leaf: move more in first
+                fee = fee * 2 + 1                      # the fee is more than estimated
+                continue
+            if quoted == fee:
+                return {"claims": claims, "fee": fee}
+            fee = quoted
+        raise ReceiverError("the operator's fee for this lot did not settle")
+
+    def _distribute(self, h, rec, terms, plan):
+        d = self.arca.distribute(terms.token_asset, plan["claims"], rec["vest"], self.vest_days,
+                                 plan["fee"])
         rec.update(state="distributing", distribution_id=d["distribution"])
         return ("distributing", h, d["distribution"])
 
@@ -493,11 +563,11 @@ class Receiver:
             return ("boarding", h, None)
         if rec["state"] == "boarding":
             try:
-                q = self.arca.quote(terms.token_asset, rec["buyer_key"], rec["token_atoms"])
+                plan = self._plan(terms, rec)
             except ReceiverError:
                 return self._patience(h, rec)     # not in yet
             try:
-                return self._distribute(h, rec, terms, q)
+                return self._distribute(h, rec, terms, plan)
             except Exception as e:
                 return self._fail_back(h, rec, e)
         # distributing: settle once the operator has released the buyer's claim.
@@ -516,6 +586,23 @@ class Receiver:
             return ("delivered", h, rec["distribution_id"])
         rec.update(state="delivered", error="the payment went away after the lot was paid")
         return ("delivered", h, rec["distribution_id"])
+
+    def _take_up_own_claims(self):
+        """Once a lot it paid has vested, the project's own claims (the rest of
+        each distribution) are taken up, at most once an hour."""
+        if self.arca is None:
+            return
+        paid = [r for r in self.lots.values() if r.get("distribution_id")]
+        if not paid or self.now() - getattr(self, "own_claims_at", 0) < OWN_CLAIMS_EVERY:
+            return
+        try:
+            mtp = int(self.node.call("getblockchaininfo").get("mediantime", 0))
+            if not any(int(r.get("vest") or 0) <= mtp for r in paid):
+                return
+            self.own_claims_at = self.now()
+            self.arca.claim()
+        except Exception as e:
+            sys.stderr.write("receiver: taking up the project's own claims failed: %s\n" % e)
 
     def _patience(self, h, rec):
         if self.now() - int(rec.get("paid_at") or self.now()) > VEST_PATIENCE_SECONDS:
