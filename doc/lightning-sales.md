@@ -63,7 +63,7 @@ an ordinary holding from the date on.
    vest. When the wallet holds too few tokens for that, the receiver first moves
    the lot, a fiftieth more (the operator's fee is at most a hundredth) and the
    operator's smallest leaf of the token out of the sale to the wallet's own
-   address with RESERVE, with a coin for the board's fee, and boards them.
+   address with RESERVE, with a coin for the board's fee, and boards them. When the wallet holds several coins it first pays itself one coin of the exact amount, which leaves a margin for its own fees out of the asset; the project's own claim gives that margin up.
 3. **Settle.** Once the operator has released the claim, it is the buyer's,
    whatever anyone does next: only the buyer's key can take it up after the
    vesting date. Then the receiver settles the payment.

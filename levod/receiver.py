@@ -72,6 +72,7 @@ taproot output of its key; `GET /health` names that address.
 import hashlib
 import json
 import os
+import re
 import secrets
 import shlex
 import subprocess
@@ -539,8 +540,29 @@ class Receiver:
         raise ReceiverError("the operator's fee for this lot did not settle")
 
     def _distribute(self, h, rec, terms, plan):
-        d = self.arca.distribute(terms.token_asset, plan["claims"], rec["vest"], self.vest_days,
-                                 plan["fee"])
+        """Submit the distribution. When the wallet must first pay itself one
+        coin of the exact amount (it holds several), that payment leaves a
+        margin for its own fees out of the asset, which the wallet names
+        ("paying P takes Q"): the project's own claim gives it up, and the
+        distribution is quoted and submitted again."""
+        token = terms.token_asset
+        claims, fee = list(plan["claims"]), plan["fee"]
+        for _ in range(3):
+            try:
+                d = self.arca.distribute(token, claims, rec["vest"], self.vest_days, fee)
+                break
+            except ReceiverError as e:
+                m = re.search(r"paying (\d+) takes (\d+)", str(e))
+                if not m or len(claims) < 2:
+                    raise
+                short = int(m.group(2)) - int(m.group(1))
+                own = claims[1][1] - short
+                if short <= 0 or own < self._min_leaf(token):
+                    raise
+                claims[1] = (claims[1][0], own)
+                fee = int(self.arca.quote(token, claims)["fee"])
+        else:
+            raise ReceiverError("the wallet's margins for this lot did not settle")
         rec.update(state="distributing", distribution_id=d["distribution"])
         return ("distributing", h, d["distribution"])
 
