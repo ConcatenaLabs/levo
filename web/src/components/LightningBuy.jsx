@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { api } from '../lib/api'
 import { hasProvider, getAddress, friendly } from '../lib/wallet'
-import { amount, atomsArg, big, capitalise, toAtoms } from '../lib/format'
+import { amount, atomsArg, big, capitalise, toAtoms, vestLabel } from '../lib/format'
 import { btcText } from '../lib/money'
 import { Copy, Notice } from './ui'
 import { useStore } from '../lib/store'
@@ -80,9 +80,13 @@ export default function LightningBuy({ project, onSettled }) {
   }
 
   const state = status ? status.state : lot ? 'awaiting_payment' : null
+  const vest = vestLabel(sale.terms.lightning.vest_locktime)
   return (
     <div className="card" style={{ marginBottom: '1rem' }}>
       <h3>Pay in BTC</h3>
+      {vest && (
+        <p className="small">These tokens vest on {vest}: they are yours once you pay, and they can move from that day on.</p>
+      )}
       {!lot && (
         <form onSubmit={order}>
           <div className="field">
@@ -110,6 +114,7 @@ export default function LightningBuy({ project, onSettled }) {
         <div>
           <div className="kv"><span>You pay</span><b>{btcText(lot.sats)}</b></div>
           <div className="kv"><span>You receive</span><b>{amount(lot.token_atoms, decimals)} {project.ticker}</b></div>
+          {vest && <div className="kv"><span>Vests on</span><b>{vest}</b></div>}
           <p className="small" role="status">{SAID[state] || ''}</p>
           {state === 'awaiting_payment' && (
             <div className="field">
