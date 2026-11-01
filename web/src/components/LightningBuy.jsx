@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { api } from '../lib/api'
 import { hasProvider, getAddress, friendly } from '../lib/wallet'
-import { amount, atomsArg, big, capitalise, toAtoms, vestLabel } from '../lib/format'
+import { amount, atomsArg, big, capitalise, toAtoms, vestLabel, vestsAhead } from '../lib/format'
 import { btcText } from '../lib/money'
 import { Copy, Notice } from './ui'
 import { useStore } from '../lib/store'
@@ -13,6 +13,10 @@ import { useStore } from '../lib/store'
 // balance, is all there is: the project's receiver holds the payment, locks
 // the lot for the buyer, delivers it with the payment's secret and only then
 // takes the BTC. levod never holds the tokens or the BTC.
+//
+// A sale that vests pays the lot into the wallet the buyer signed in with,
+// where it shows at once and cannot move before the vesting date; no address
+// is asked for then.
 
 const SAID = {
   awaiting_payment: 'Pay the invoice below from any Lightning wallet.',
@@ -43,6 +47,7 @@ export default function LightningBuy({ project, onSettled }) {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState(null)
   const atoms = toAtoms(tokens, decimals)
+  const intoWallet = vestsAhead(sale.terms)
 
   // A browser wallet, when there is one, fills in where the tokens go.
   useEffect(() => {
@@ -69,10 +74,10 @@ export default function LightningBuy({ project, onSettled }) {
     if (busy || !atoms) return
     setError(null); setBusy(true)
     try {
-      if (!address.trim()) throw new Error('Enter the Sequentia address your tokens go to.')
-      const r = await api.lightningReserve(project.slug, {
-        token_atoms: atomsArg(atoms), token_address: address.trim(),
-      })
+      if (!intoWallet && !address.trim()) throw new Error('Enter the Sequentia address your tokens go to.')
+      const r = await api.lightningReserve(project.slug, intoWallet
+        ? { token_atoms: atomsArg(atoms) }
+        : { token_atoms: atomsArg(atoms), token_address: address.trim() })
       setLot(r.lot)
     } catch (err) {
       setError(capitalise(friendly(err)))
@@ -81,11 +86,17 @@ export default function LightningBuy({ project, onSettled }) {
 
   const state = status ? status.state : lot ? 'awaiting_payment' : null
   const vest = vestLabel(sale.terms.lightning.vest_locktime)
+  const said = intoWallet ? {
+    ...SAID,
+    paid: 'Payment received. Your tokens reach your wallet in a few minutes.',
+    delivered: 'Done: your tokens are in your wallet, and can move from ' + vest + '.',
+  } : SAID
   return (
     <div className="card" style={{ marginBottom: '1rem' }}>
       <h3>Pay in BTC</h3>
       {vest && (
-        <p className="small">These tokens vest on {vest}: they are yours once you pay, and they can move from that day on.</p>
+        <p className="small">These tokens vest on {vest}: they are yours once you pay, and they can move from that day on.
+          {intoWallet && ' They go to the wallet you signed in with, which shows them in its balance at once.'}</p>
       )}
       {!lot && (
         <form onSubmit={order}>
@@ -99,12 +110,12 @@ export default function LightningBuy({ project, onSettled }) {
                 'Minimum ' + amount(sale.terms.min_lot, decimals) + ' ' + project.ticker + '.'}
             </div>
           </div>
-          <div className="field">
+          {!intoWallet && <div className="field">
             <label htmlFor="ln-addr">Your Sequentia address</label>
             <input id="ln-addr" className="mono" value={address} spellCheck={false}
                    onChange={(e) => setAddress(e.target.value)} />
             <div className="hint">Where the tokens go. Your wallet's Receive tab shows it.</div>
-          </div>
+          </div>}
           <button className="btn btn-primary btn-sm" aria-disabled={busy || !atoms}>
             {busy ? 'Working…' : 'Get an invoice'}
           </button>
@@ -115,7 +126,7 @@ export default function LightningBuy({ project, onSettled }) {
           <div className="kv"><span>You pay</span><b>{btcText(lot.sats)}</b></div>
           <div className="kv"><span>You receive</span><b>{amount(lot.token_atoms, decimals)} {project.ticker}</b></div>
           {vest && <div className="kv"><span>Vests on</span><b>{vest}</b></div>}
-          <p className="small" role="status">{SAID[state] || ''}</p>
+          <p className="small" role="status">{said[state] || ''}</p>
           {state === 'awaiting_payment' && (
             <div className="field">
               <label htmlFor="ln-invoice">Invoice</label>

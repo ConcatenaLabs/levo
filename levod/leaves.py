@@ -100,6 +100,9 @@ def fillable(sale):
     if getattr(sale, "capped", False):
         return ("a capped sale's covenant checks each buyer's key and cap, and an operator's round "
                 "fills only the plain sale covenant")
+    if getattr(sale.cov, "sell_leaf", 1) is None:
+        return ("this sale vests, so it sells only over Lightning: the project pays each lot to "
+                "the buyer's wallet, where it cannot move before the vesting date")
     if sale.terms.treasury_ver != 1:
         return ("the treasury is a version-0 address, and the covenant an operator's round fills "
                 "credits a taproot (version-1) treasury only")

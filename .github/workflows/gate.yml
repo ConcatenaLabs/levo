@@ -52,4 +52,5 @@ jobs:
           python3 levod/tests/test_capped.py
           python3 levod/tests/test_lnsale_node.py
           python3 levod/tests/test_lightning_e2e.py
+          python3 levod/tests/test_vest_e2e.py
           python3 levod/tests/test_browser.py

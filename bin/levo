@@ -1013,7 +1013,9 @@ def cmd_order(args):
     """A lot of a Lightning sale, for BTC: prints the invoice to pay. The
     tokens go to --to, which may be any Sequentia address (a wallet's receive
     code works too); the account that orders is the one whose cap it counts
-    against."""
+    against. A sale that vests pays the lot to a key instead, where it cannot
+    move before the vesting date: --buyer-key, or else the key you sign in
+    with, and --to is then optional."""
     tok = sign_in()
     p = api("GET", "/api/projects/%s" % args.slug)
     if not ((p.get("sale") or {}).get("terms") or {}).get("lightning"):
@@ -1022,8 +1024,14 @@ def cmd_order(args):
     token_atoms = U.parse(args.tokens, decimals)
     if token_atoms is None:
         raise Fail("--tokens must be a number with at most %d decimal places" % decimals)
-    r = api("POST", "/api/projects/%s/lightning" % args.slug,
-            {"token_atoms": str(token_atoms), "token_address": args.to}, tok)
+    body = {"token_atoms": str(token_atoms)}
+    if args.to:
+        body["token_address"] = args.to
+    if args.buyer_key:
+        body["buyer_key"] = args.buyer_key.strip().lower()
+    if not args.to and not ((p.get("sale") or {}).get("terms") or {}).get("lightning", {}).get("vest_locktime"):
+        raise Fail("--to names where the tokens go")
+    r = api("POST", "/api/projects/%s/lightning" % args.slug, body, tok)
     lot = r["lot"]
     print("pay %s sats for %s %s:" % (lot["sats"], args.tokens, p.get("ticker", "")))
     print(lot["bolt11"])
@@ -1711,8 +1719,12 @@ def main():
     od.add_argument("slug", help=SLUG)
     od.add_argument("--tokens", required=True, type=_amount,
                     help="how many tokens, in the token's own units (40, or 0.5)")
-    od.add_argument("--to", required=True,
-                    help="the Sequentia address the tokens go to (a receive code works too)")
+    od.add_argument("--to",
+                    help="the Sequentia address the tokens go to (a receive code works too); "
+                         "optional for a sale that vests")
+    od.add_argument("--buyer-key", dest="buyer_key",
+                    help="for a sale that vests: the compressed public key (66 hex) the lot is "
+                         "paid to; the key you sign in with when not given")
     od.set_defaults(fn=cmd_order)
 
     os_ = sub.add_parser("order-status", help="where a Lightning order stands")

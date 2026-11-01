@@ -4,9 +4,9 @@
 Starts sequentiad on a throwaway elementsregtest chain with -par=1, so a block
 that fails a script names the failure, and walks a Lightning sale through
 every path its scripts allow: a reservation, a claim with the payment's secret
-into a vesting destination, the vested spend, an unpaid lot re-rested after
-its timeout with the bond forfeited, and a direct purchase through the SELL
-leaf in a Sequentia asset. Each spend the scripts must refuse is mined with
+to the buyer, an unpaid lot re-rested after its timeout with the bond
+forfeited, a direct purchase through the SELL leaf in a Sequentia asset, and a
+vesting sale's move of tokens to the project's own wallet. Each spend the scripts must refuse is mined with
 `generateblock` and the refusal's reason is checked, not just the refusal:
 relay policy can hide a consensus flaw, and a refusal for an unrelated reason
 proves nothing.
@@ -164,10 +164,9 @@ def run(ok, rig, log):
     # --- reservation 1, paid ------------------------------------------------
     preimage = hashlib.sha256(b"levo invoice one").digest()
     H = hashlib.sha256(preimage).digest()
-    vest_time = int(time.time()) + 3 * 3600
-    vest = L.Vesting(vest_time, B)
+    buyer_spk = bytes.fromhex(spk_of(w("getnewaddress", "", "bech32")))
     refund_spk = bytes.fromhex(spk_of(w("getnewaddress", "", "bech32")))
-    lock = L.LotLock(sale, H, vest.script_pubkey, refund_spk, bond_asset, ALLOWANCE, 6 * 3600)
+    lock = L.LotLock(sale, H, buyer_spk, refund_spk, bond_asset, ALLOWANCE, 6 * 3600)
     log.append("lot lock %s, bond lock %s, claim leaf %d B, re-rest leaf %d B, timeout %d s"
                % (lock.lot.script_pubkey.hex(), lock.bond.script_pubkey.hex(), len(lock.claim_leaf),
                   len(lock.rerest_leaf), lock.timeout_seconds))
@@ -198,7 +197,7 @@ def run(ok, rig, log):
         else:
             fc = coin(policy, 100_000)
             t.vin.append(TX.TxIn(fc["txid"], fc["vout"]))
-        t.vout.append(TX.TxOut(token, lot_value, dest if dest is not None else vest.script_pubkey))
+        t.vout.append(TX.TxOut(token, lot_value, dest if dest is not None else buyer_spk))
         if with_bond:
             t.vout.append(TX.TxOut(bond_asset, bond_back, refund_to if refund_to is not None else refund_spk))
         else:
@@ -246,28 +245,7 @@ def run(ok, rig, log):
             "the bond kept after paying: the project's forfeit before the timeout (sequence unset)")
 
     mined(claim(preimage), "the claim, signed by nobody: the secret delivers the lot to the "
-                           "vesting destination and returns the bond, which pays the fee")
-
-    # --- the vested allocation ----------------------------------------------
-    claim_tx = None
-    for d in n("getblock", n("getbestblockhash"), 2)["tx"]:
-        if any(o["scriptPubKey"]["hex"] == vest.script_pubkey.hex() for o in d["vout"]):
-            claim_tx = d
-    vest_in = (claim_tx["txid"], [o["n"] for o in claim_tx["vout"]
-                                  if o["scriptPubKey"]["hex"] == vest.script_pubkey.hex()][0])
-
-    def vest_spend(locktime, signer=BUYER):
-        fc = coin(policy, 100_000)
-        t = TX.Transaction(locktime=locktime)
-        t.vin.append(TX.TxIn(vest_in[0], vest_in[1], sequence=0xfffffffe))
-        t.vin.append(TX.TxIn(fc["txid"], fc["vout"], sequence=0xfffffffe))
-        t.vout.append(TX.TxOut(token, LOT, bytes.fromhex(spk_of(w("getnewaddress", "", "bech32")))))
-        t.vout.append(TX.TxOut(policy, 100_000 - FEE, bytes.fromhex(fc["spk"])))
-        t.vout.append(TX.TxOut(policy, FEE, b""))
-        spent = [(token, LOT, vest.script_pubkey), (policy, fc["atoms"], bytes.fromhex(fc["spk"]))]
-        s = sig(t, spent, 0, vest.leaf, signer)
-        return TX.set_witness(wallet_sign(t), 0, vest.tree.witness("vest", s))
-    blocked(vest_spend(vest_time), "bad-txns-nonfinal", "the allocation spent before it vests")
+                           "buyer and returns the bond, which pays the fee")
 
     # --- reservation 2, never paid ------------------------------------------
     preimage2 = hashlib.sha256(b"levo invoice two").digest()
@@ -314,14 +292,6 @@ def run(ok, rig, log):
     ok.eq(amounts, sorted([LOCKED - LOT - LOT2, LOT2]), "the sale address holds the remainder and the re-rested lot")
     log.append("sale address now holds %s tokens in %d coins" % ([a // COIN for a in amounts], len(amounts)))
 
-    # --- the vested allocation, after its time ------------------------------
-    n("setmocktime", max(now + lock2.timeout_seconds + 2000, vest_time + 3600))
-    for _ in range(12):
-        rig.mine()
-    blocked(vest_spend(vest_time - 1), "Locktime requirement not satisfied",
-            "once vested, a spend whose locktime names a time before the vesting time")
-    mined(vest_spend(vest_time), "the allocation spent once vested")
-
     # --- the SELL leaf of the same address: a direct purchase in PAY --------
     pc = coin(pay, 1_000 * COIN)
     fc = coin(policy, 100_000)
@@ -340,6 +310,75 @@ def run(ok, rig, log):
     t.vout.append(TX.TxOut(policy, FEE, b""))
     mined(TX.set_witness(wallet_sign(t), 0, sale.tree.witness("sell")),
           "a direct purchase through the SELL leaf of the same address, paid in a Sequentia asset")
+
+    # --- a vesting sale: no SELL leaf, lots leave only through RESERVE -------
+    vsale = L.LightningSale(token, R, 100 * COIN, h0 + 10_000, EC.xonly_pubkey(RECLAIM))
+    vc = coin(token, 2_000 * COIN)
+    fee_c = coin(policy, 100_000)
+    t = TX.Transaction()
+    t.vin.append(TX.TxIn(vc["txid"], vc["vout"]))
+    t.vin.append(TX.TxIn(fee_c["txid"], fee_c["vout"]))
+    t.vout.append(TX.TxOut(token, 2_000 * COIN, vsale.script_pubkey))
+    t.vout.append(TX.TxOut(policy, 100_000 - FEE, bytes.fromhex(fee_c["spk"])))
+    t.vout.append(TX.TxOut(policy, FEE, b""))
+    vfund = wallet_sign(t)
+    mined(vfund, "a vesting sale (RESERVE and RECLAIM, no SELL) is funded")
+    vsale_coin = {"txid": n("decoderawtransaction", vfund)["txid"], "vout": 0, "atoms": 2_000 * COIN}
+
+    # The SELL leaf of the plain sale is no leaf of this address.
+    t = TX.Transaction()
+    pc = coin(pay, 1_000 * COIN)
+    fc = coin(policy, 100_000)
+    take = 400 * COIN
+    t.vin.append(TX.TxIn(vsale_coin["txid"], 0))
+    t.vin.append(TX.TxIn(pc["txid"], pc["vout"]))
+    t.vin.append(TX.TxIn(fc["txid"], fc["vout"]))
+    t.vout.append(TX.TxOut(pay, sell.cost_for(take), treasury_spk))
+    t.vout.append(TX.TxOut(token, 2_000 * COIN - take, vsale.script_pubkey))
+    t.vout.append(TX.TxOut(token, take, bytes.fromhex(spk_of(w("getnewaddress", "", "bech32")))))
+    t.vout.append(TX.TxOut(pay, 1_000 * COIN - sell.cost_for(take), bytes.fromhex(pc["spk"])))
+    t.vout.append(TX.TxOut(policy, 100_000 - FEE, bytes.fromhex(fc["spk"])))
+    t.vout.append(TX.TxOut(policy, FEE, b""))
+    sell_wit = [sale.sell_leaf, bytes([0xc4 + vsale.tree.negflag]) + L.NUMS + vsale.tree.path["reserve"]]
+    blocked(TX.set_witness(wallet_sign(t), 0, sell_wit), "Witness program hash mismatch",
+            "a vesting sale: a direct purchase through a SELL leaf it does not have")
+
+    # The receiver moves tokens to the project's own wallet (build_stock).
+    own_spk = bytes([0x51, 0x20]) + R
+    own_t = TX.Transaction()
+    bc = coin(bond_asset, 1_000 * COIN)
+    own_t.vin.append(TX.TxIn(bc["txid"], bc["vout"]))
+    own_t.vout.append(TX.TxOut(bond_asset, 1_000 * COIN - FEE, own_spk))
+    own_t.vout.append(TX.TxOut(bond_asset, FEE, b""))
+    own_hex = wallet_sign(own_t)
+    mined(own_hex, "the receiver's own coin in the bond asset")
+    own = [{"txid": n("decoderawtransaction", own_hex)["txid"], "vout": 0, "asset": bond_asset,
+            "value_atoms": 1_000 * COIN - FEE, "script_pubkey": own_spk.hex()}]
+    wallet_spk = bytes.fromhex(spk_of(w("getnewaddress", "", "bech32")))
+
+    def stock(signer):
+        t, spent = L.build_stock(_Cov(vsale, token),
+                                 vsale_coin, 1_020 * COIN, wallet_spk, bond_asset, 20 * COIN, own,
+                                 own_spk, FEE)
+        s = EC.schnorr_sign(TX.taproot_sighash(t, spent, 0, genesis, leaf_script=vsale.reserve_leaf), signer)
+        t.vin[0].witness = vsale.tree.witness("reserve", s)
+        t.vin[1].witness = [EC.schnorr_sign(TX.taproot_sighash(t, spent, 1, genesis), RECEIVER)]
+        return t.hex()
+    blocked(stock(STRANGER), "Invalid Schnorr signature",
+            "a vesting sale: tokens moved out without the receiver's signature")
+    mined(stock(RECEIVER), "a vesting sale: the receiver moves a lot and its fee margin to the "
+                           "project's wallet, the rest re-rested at the sale")
+    rest = n("scantxoutset", "start", ["raw(%s)" % vsale.spk_hex])
+    ok.eq([RPCMOD.to_atoms(u["amount"]) for u in rest["unspents"]], [980 * COIN],
+          "the vesting sale holds the rest")
+
+
+class _Cov:
+    """The parts of a covenant build_stock reads."""
+
+    def __init__(self, sale, token):
+        self.script_pubkey = sale.script_pubkey
+        self.terms = type("T", (), {"token_asset": token, "min_lot": sale.min_lot})()
 
 
 def main():

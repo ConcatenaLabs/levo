@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { amount, compact, toAtoms, atomsArg, closeLabel, closeIn, vestLabel, isHeightClose, pricePerToken, treasurySpk, plain,
+import { amount, compact, toAtoms, atomsArg, closeLabel, closeIn, vestLabel, vestsAhead, isHeightClose, pricePerToken, treasurySpk, plain,
          capitalise, big, prose, priceLabel, tierSays } from '../src/lib/format.js'
 import { xFor, yFor } from '../src/lib/beam.js'
 import { addressOf, encodeSegwit, scriptForAddress } from '../src/lib/bech32.js'
@@ -204,4 +204,13 @@ test('the labels do not move with the reader\'s timezone', async () => {
     // built in local time would differ in its minutes as well as its hour.
     assert.equal(under(tz), utc, 'the same in ' + tz)
   }
+})
+
+test('a vesting sale pays into the wallet only while its date is more than three hours ahead', () => {
+  const now = 1_800_000_000_000
+  const terms = (v) => ({ lightning: { vest_locktime: v } })
+  assert.equal(vestsAhead(terms(0), now), false)
+  assert.equal(vestsAhead({}, now), false)
+  assert.equal(vestsAhead(terms(now / 1000 + 4 * 3600), now), true)
+  assert.equal(vestsAhead(terms(now / 1000 + 2 * 3600), now), false)
 })

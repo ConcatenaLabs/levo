@@ -309,15 +309,21 @@ delivers it. Levo holds no key and broadcasts nothing.
 
 **`POST /api/projects/<slug>/lightning`** `{token_atoms, token_address |
 token_script_pubkey, buyer_key?}` (session) → `{lot}`. The tier cap is checked
-as for any purchase. `buyer_key` (x-only) is needed when the sale vests: the
-lot is then locked to that key until the vesting time. Levo refuses an invoice
-that is not for the published BTC price. `lot` carries the `payment_hash`, the
-`bolt11` invoice, its `sats`, `invoice_expires_at` and the lock's
-`lock_timeout_seconds`.
+as for any purchase. When the sale vests, the lot is paid into the buyer's
+wallet as a holding that cannot move before the vesting date, named by
+`buyer_key` (a compressed public key, 66 hex), or by the session's account key
+when it is left out; the address is then optional (it defaults to that key's
+own, where a lot goes if the date has passed by the time the payment is held).
+Levo refuses an invoice that is not for the published BTC price. `lot` carries
+the `payment_hash`, the `bolt11` invoice, its `sats`, `invoice_expires_at`, the
+lock's `lock_timeout_seconds`, `vest_locktime`, and for a vesting lot its
+`buyer_key` and, once paid, its `distribution_id`.
 
 **`GET /api/projects/<slug>/lightning/<slug>`** (the second `<slug>` is the lot's payment hash) → the lot and its
 `state`: `awaiting_payment`, `paid` (held, being locked and delivered;
-`reserve_txid` once locked), `delivered` (`claim_txid`), `refunded` (the
+`reserve_txid` once locked; for a vesting lot, being paid into the wallet),
+`delivered` (`claim_txid`; for a vesting lot, in the buyer's wallet,
+`distribution_id`), `refunded` (the
 payment went back before anything was locked), `returned` (the payment went
 away after the lock and the lot went back to the sale; `rerest_txid`), or
 `expired` (nobody paid).
