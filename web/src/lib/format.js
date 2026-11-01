@@ -160,6 +160,17 @@ export function prose(s) {
   return String(s || '').replace(/ -- /g, ' \u2014 ')
 }
 
+// When a vesting sale's tokens vest, in words: "1 March 2027", or "block
+// 210,000" for a height. A vest is a day a buyer plans around, so it reads as
+// a date, in UTC like every time on the site.
+export function vestLabel(locktime) {
+  if (!locktime) return ''
+  if (isHeightClose(locktime)) return 'block ' + Number(locktime).toLocaleString('en-US')
+  return new Date(Number(locktime) * 1000).toLocaleDateString('en-GB', {
+    year: 'numeric', month: 'long', day: 'numeric', timeZone: 'UTC',
+  })
+}
+
 export function timeLabel(unix) {
   return new Date(Number(unix) * 1000).toLocaleString('en-US', {
     year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', timeZone: 'UTC',

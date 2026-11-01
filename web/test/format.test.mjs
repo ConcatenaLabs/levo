@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { amount, compact, toAtoms, atomsArg, closeLabel, closeIn, isHeightClose, pricePerToken, treasurySpk, plain,
+import { amount, compact, toAtoms, atomsArg, closeLabel, closeIn, vestLabel, isHeightClose, pricePerToken, treasurySpk, plain,
          capitalise, big, prose, priceLabel, tierSays } from '../src/lib/format.js'
 import { xFor, yFor } from '../src/lib/beam.js'
 import { addressOf, encodeSegwit, scriptForAddress } from '../src/lib/bech32.js'
@@ -47,6 +47,9 @@ test('closes: heights below 500,000,000, times above, shown in UTC', () => {
   assert.equal(isHeightClose(500000000), false)
   assert.equal(closeLabel(120000), 'block 120,000')
   assert.equal(closeLabel(1792307521), 'Oct 18 2026, 07:12 UTC')
+  assert.equal(vestLabel(1803859200), '1 March 2027')
+  assert.equal(vestLabel(210000), 'block 210,000')
+  assert.equal(vestLabel(0), '')
   assert.equal(closeIn(120000, 118600), 'in about 1,400 blocks (23 hours)')
   assert.equal(closeIn(120000, 118560), 'in about 1,440 blocks (1 day)')
   assert.equal(closeIn(120000, 120000), 'closed')
