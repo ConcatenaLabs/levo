@@ -56,11 +56,14 @@ an ordinary holding from the date on.
 
 1. **Order** and **Pay** as above; no address is asked for.
 2. **Pay the lot.** With the payment held, the receiver pays the lot from the
-   project's Arca wallet as a vesting claim to the buyer's key. When that
-   wallet holds too few tokens, the receiver first moves the lot and a fiftieth
-   more (the operator's fee is at most a hundredth) out of the sale to the
-   wallet's own address with RESERVE, with a coin for the board's fee, and
-   boards them; what is left over stays there for the next lot.
+   project's Arca wallet as a vesting claim to the buyer's key. The same
+   distribution spends every coin of the token the wallet holds, with the rest
+   as a vesting claim to the project's own key, because the operator takes no
+   change below its smallest leaf; the receiver takes those claims up once they
+   vest. When the wallet holds too few tokens for that, the receiver first moves
+   the lot, a fiftieth more (the operator's fee is at most a hundredth) and the
+   operator's smallest leaf of the token out of the sale to the wallet's own
+   address with RESERVE, with a coin for the board's fee, and boards them.
 3. **Settle.** Once the operator has released the claim, it is the buyer's,
    whatever anyone does next: only the buyer's key can take it up after the
    vesting date. Then the receiver settles the payment.

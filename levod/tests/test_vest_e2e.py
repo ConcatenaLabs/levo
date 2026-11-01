@@ -223,8 +223,9 @@ def run(ok, op, arca, ln, log, root):
     st = plat.lightning_status("vest", h)
     ok.eq(st["state"], "delivered", "the order reads delivered")
     dist = [d for d in project_arca.ok("distributions") if d["distribution_id"] == st["distribution_id"]][0]
+    ok.eq(len(dist["claims"]), 2, "two claims: the lot, and the rest to the project's own key")
     log.append("distribution %s: claims %s, vest %s, deadline %s, round %s"
-               % (dist["distribution_id"], [c["state"] for c in dist["claims"]], dist.get("vest"),
+               % (dist["distribution_id"], [(c["value"], c["state"]) for c in dist["claims"]], dist.get("vest"),
                   dist.get("lapse_deadline"), dist.get("round")))
     ok.eq(dist.get("vest"), vest, "the claim vests at the sale's date")
 
@@ -262,6 +263,12 @@ def run(ok, op, arca, ln, log, root):
         op("/bury")
     log.append("holder's live coins of the token after the date: %s"
                % [(c.get("value"), c.get("state")) for c in coins])
+    rcv.own_claims_at = 0
+    rcv.poll()
+    own = [c for c in project_arca.ok("claims") if c.get("asset") == token]
+    ok.ok(own and all(c.get("state") == "claimed" for c in own),
+          "the project's own claim, the rest of the distribution, is taken up after the date", json.dumps(own)[:400])
+    log.append("the project's own claims after the date: %s" % [(c.get("value"), c.get("state")) for c in own])
     other = Wallet(arca, root, "other", state)
     req = other.ok("receive", "--asset", token, "--amount", str(40 * COIN))
     request = req["request"]

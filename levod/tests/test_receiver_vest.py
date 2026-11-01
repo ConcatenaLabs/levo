@@ -93,41 +93,75 @@ class Ln:
 
 
 class Arca:
-    def __init__(self):
-        self.stock = 0
+    """The project's Arca wallet as the operator answers it: a distribution's
+    claims are each at least the smallest leaf, and the coins it spends leave
+    no change below it (this wallet spends whole coins, in the order held)."""
+
+    def __init__(self, min_leaf=1000, fee=1000):
+        self.coins_held = []
         self.calls = []
         self.claim_state = "pending"
+        self.min_leaf = min_leaf
+        self.fee = fee
 
     def address(self):
         return {"address": "tb1q", "script_pubkey": ARCA_SPK, "key": "55" * 32}
+
+    def info(self):
+        return {"server_info": {"assets": [{"asset": TOKEN, "min_leaf": str(self.min_leaf)}]}}
+
+    def coins(self):
+        return [{"asset": TOKEN, "value": str(v), "state": "live"} for v in self.coins_held]
 
     def sync(self):
         self.calls.append("sync")
         return {}
 
+    def claim(self):
+        self.calls.append("claim")
+        return []
+
     def board(self, asset, atoms, fee_asset):
         self.calls.append(("board", asset, atoms, fee_asset))
-        self.stock += atoms
+        self.coins_held.append(atoms)
         return {}
 
-    def quote(self, asset, key, atoms):
-        self.calls.append(("quote", key, atoms))
-        if self.stock < atoms + atoms // 100:
-            raise RCV.ReceiverError("the wallet holds no live coin of asset %s" % asset)
-        return {"fee": str(atoms // 100)}
+    def _check(self, claims):
+        if not self.coins_held:
+            raise RCV.ReceiverError("the wallet holds no live coin of asset %s" % TOKEN)
+        for k, v in claims:
+            if v < self.min_leaf:
+                raise RCV.ReceiverError("a claim of %d is below the operator's smallest leaf" % v)
+        total = sum(v for _, v in claims)
+        fee = self.fee
+        held = 0
+        for c in self.coins_held:
+            held += c
+            if held >= total + fee:
+                break
+        if held < total + fee:
+            raise RCV.ReceiverError("too little")
+        if 0 < held - total - fee < self.min_leaf:
+            raise RCV.ReceiverError("the change would be below the operator's smallest leaf")
+        return fee
 
-    def distribute(self, asset, key, atoms, vest, days, fee):
-        self.calls.append(("distribute", asset, key, atoms, vest, days, fee))
+    def quote(self, asset, claims):
+        self.calls.append(("quote", tuple(claims)))
+        return {"fee": str(self._check(claims))}
+
+    def distribute(self, asset, claims, vest, days, fee):
+        assert int(fee) == self._check(claims)
+        self.calls.append(("distribute", asset, tuple(claims), vest, days, fee))
         return {"distribution": "d1"}
 
     def distributions(self):
         return [{"distribution_id": "d1", "claims": [{"state": self.claim_state}]}]
 
 
-def make(t_=None, arca=None):
+def make(t_=None, arca=None, sale_atoms=1_000_000):
     node, ln, arca = Node(), Ln(), arca if arca is not None else Arca()
     sale = t_ or terms()
-    funding = {"txid": "dd" * 32, "vout": 0, "atoms": 1_000_000}
+    funding = {"txid": "dd" * 32, "vout": 0, "atoms": sale_atoms}
     path = Path(tempfile.mkdtemp()) / "state.json"
     r = RCV.Receiver(SECRET, ln, node, lambda slug: (sale, funding), path, arca=arca,
                      now=lambda: NOW)
@@ -166,20 +200,21 @@ def test_a_vesting_lot_is_moved_in_boarded_and_paid_then_settled(t):
     rec = r.lots[h]
     txid, raw, _ = node.sent[-1]
     t.eq(rec["stock_txid"], txid, "the move is broadcast")
-    t.eq(rec["stock_atoms"], 102_000, "the lot and a fiftieth more for the operator's fee")
+    t.eq(rec["stock_atoms"], 103_000, "the lot, a fiftieth more and the smallest leaf")
     t.ok(ARCA_SPK in raw and ARCA_SPK in raw[raw.index(ARCA_SPK) + 1:],
          "the tokens and the board's fee coin go to the Arca wallet's address")
-    t.ok(r.sale_coins["s"]["atoms"] == 1_000_000 - 102_000, "the rest stays in the sale")
+    t.ok(r.sale_coins["s"]["atoms"] == 1_000_000 - 103_000, "the rest stays in the sale")
     t.eq(r.poll(), [], "nothing more until the move is in a block")
     node.conf[txid] = 1
     out = r.poll()
     t.eq(out[0][0], "boarding", "once in a block, it is boarded")
-    t.ok(("board", TOKEN, 102_000, BOND) in arca.calls, "the board pays its fee in the bond asset")
+    t.ok(("board", TOKEN, 103_000, BOND) in arca.calls, "the board pays its fee in the bond asset")
     out = r.poll()
     t.eq(out[0][0], "distributing", "once boarded, the lot is paid as a vesting claim")
     d = [c for c in arca.calls if c[0] == "distribute"][0]
-    t.eq(d, ("distribute", TOKEN, BUYER, 100_000, VEST, 30, "1000"),
-         "to the buyer's key, at the sale's vesting date, on the quoted fee")
+    t.eq(d[:2] + d[3:], ("distribute", TOKEN, VEST, 30, 1000), "at the sale's vesting date, on the quoted fee")
+    t.eq(d[2], ((BUYER, 100_000), ("55" * 32, 2_000)),
+         "the lot to the buyer's key, and the rest, at least a smallest leaf, to the project's own")
     t.eq(r.poll(), [], "not settled while the claim is pending")
     t.eq(ln.settled, [], "the payment is still held")
     arca.claim_state = "vesting"
@@ -189,11 +224,16 @@ def test_a_vesting_lot_is_moved_in_boarded_and_paid_then_settled(t):
     st = r.status(h)
     t.eq(st["distribution_id"], "d1", "the status names the distribution")
     t.eq(st["vest"], VEST, "and the vesting date")
+    r.poll()
+    t.ok("claim" not in arca.calls, "the project's own claim is not taken up before the date")
+    node.median = VEST + 1
+    r.poll()
+    t.ok("claim" in arca.calls, "and is once the chain's median time has passed it")
 
 
 def test_stock_already_in_the_wallet_pays_at_once(t):
     arca = Arca()
-    arca.stock = 500_000
+    arca.coins_held = [500_000]
     r, node, ln, arca = make(arca=arca)
     order(r)
     ln.state = "accepted"
@@ -227,3 +267,25 @@ def test_past_the_vesting_margin_a_lot_is_delivered_as_any(t):
     r, node, ln, arca = make(terms(vest=NOW + RCV.VEST_MARGIN_SECONDS - 60))
     inv = order(r)
     t.ok("vest" not in r.lots[inv["payment_hash"]], "a sale whose date is near delivers as any sale")
+
+
+def test_a_leftover_coin_that_would_leave_change_below_a_leaf(t):
+    # The live case: the wallet holds 10.2 tokens from a lot of 10 whose payment
+    # went back, the smallest leaf is 0.01 token, and no fee: paying 10 from it
+    # would leave 0.2 tokens of change, which the operator refuses.
+    arca = Arca(min_leaf=1_000_000, fee=0)
+    arca.coins_held = [10_200_000]
+    r, node, ln, arca = make(arca=arca, sale_atoms=100_000_000)
+    h = r.invoice("s", 10_000_000, "0014" + "66" * 20, "0014" + "66" * 20, BUYER)["payment_hash"]
+    ln.state = "accepted"
+    out = r.poll()
+    t.eq(out[0][0], "stocking", "a rest below a leaf is not paid: more is moved in first")
+    need = r.lots[h]["stock_atoms"]
+    t.eq(need, 10_000_000 + 200_000 + 1_000_000, "the lot, a fiftieth more and the smallest leaf")
+    node.conf[r.lots[h]["stock_txid"]] = 1
+    r.poll()
+    out = r.poll()
+    t.eq(out[0][0], "distributing", "then the lot is paid")
+    d = [c for c in arca.calls if c[0] == "distribute"][-1]
+    t.eq(d[2], ((BUYER, 10_000_000), ("55" * 32, 11_400_000)),
+         "spending both coins whole: the lot to the buyer, the rest to the project")
