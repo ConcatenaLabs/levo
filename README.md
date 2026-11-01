@@ -125,8 +125,11 @@ a Lightning invoice, from any Lightning wallet or a Bitcoin Ark balance; the
 buyer needs nothing else. The project's node holds the payment while the lot is
 locked under the invoice's payment hash, and the secret that settles the
 payment is the one that delivers the lot. Nobody holds the tokens or the BTC
-in between and no pegged bitcoin is involved. A project runs a small
-receiver beside its Lightning node for this
+in between and no pegged bitcoin is involved. A sale that vests pays each lot
+into the wallet its buyer signed in with, as an Arca vesting claim nobody can
+move before the vesting date, and the payment settles only once the claim is
+the buyer's; such a sale sells only this way. A project runs a small receiver
+beside its Lightning node for this
 ([doc/lightning-sales.md](doc/lightning-sales.md)).
 
 ## Who does what
@@ -188,8 +191,8 @@ fonts are served by the app itself. How it works says the same to visitors.
 | `levod/server.py` | The service: the API under `/api/` and the built app, one origin. Every page is served with its own title and description in its head, a sale's page with the sale's name and one-liner, so a link previews as what it points at wherever it is shared. `levod/demo.py` is the same server over a stub node, with three seeded sales: one open, one not yet funded, one reclaimed. |
 | `levod/covenant.py` | The sale covenant, checked byte for byte against `levod/vectors.json` on every import. |
 | `levod/capped.py`, `levod/capped_sale/`, `levod/sequentia_address.py` | The capped sale: the `sequentia/capped-sale` covenant of sequentia-contracts, vendored and pinned (`capped_sale/PIN.json`, checked on every import), the compiler-free address code it is derived with, and the purchase witness built through `seqc`. |
-| `levod/receiver.py` | A project's Lightning receiver: invoices it holds, the lock it signs and funds once a payment is held, the delivery, and the re-rest of a lock whose payment went away. The project runs it; levod holds no key. |
-| `levod/lnsale.py` | The Lightning sale's scripts: the sale address with its RESERVE leaf, the lot lock and the bond lock a reservation creates, and the vesting destination ([doc/lightning-sales.md](doc/lightning-sales.md)). |
+| `levod/receiver.py` | A project's Lightning receiver: invoices it holds, the lock it signs and funds once a payment is held, the delivery, and the re-rest of a lock whose payment went away; for a sale that vests, the lot paid from the project's Arca wallet into the buyer's wallet as a vesting holding before the payment settles. The project runs it; levod holds no key. |
+| `levod/lnsale.py` | The Lightning sale's scripts: the sale address with its RESERVE leaf (and no SELL leaf when the sale vests), the lot lock and the bond lock a reservation creates, and the move of a vesting sale's tokens to the project's wallet ([doc/lightning-sales.md](doc/lightning-sales.md)). |
 | `levod/sale.py`, `levod/market.py` | The sale lifecycle (lock, sell, reclaim) and the marketplace rules: listing, the settlement plan, the per-buyer caps, the ledger. |
 | `levod/tiers.py` | The tier policy, and the `LEVOD_TIERS` table it reads. |
 | `levod/rails.py` | The payment rails and their quotes, and the node's rates every amount is shown in BTC and dollars with. |

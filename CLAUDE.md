@@ -63,7 +63,7 @@ mislead but cannot rob.
   regenerate the vectors to make a failing check pass; that is a migration, and
   existing sales must be closed out under the old bytes first.
 - **The Lightning sale's addresses are frozen too.** `levod/tests/test_lnsale.py`
-  pins the sale, lot-lock, bond-lock and vesting addresses `lnsale.py` derives.
+  pins the sale (with and without SELL), lot-lock and bond-lock addresses `lnsale.py` derives.
   A changed byte strands every lot locked under the old one; treat it like the
   vectors.
 - **`levod/capped_sale/` is pinned.** The capped sale is sequentia-contracts'

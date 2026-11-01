@@ -28,9 +28,9 @@ none of them has a key path:
 
   SALE      the sale address. RESERVE: the receiver's signature moves a lot to
             output 2k and re-rests the remainder at output 2k+1, at this very
-            address. SELL (when the sale also settles in a Sequentia asset):
-            the permissionless leaf of covenant.py, unchanged. RECLAIM: the
-            project, from the close on.
+            address. SELL (unless the sale vests): the permissionless leaf of
+            covenant.py, unchanged, so the same address also sells directly
+            in the sale's asset. RECLAIM: the project, from the close on.
   LOT LOCK  CLAIM: the payment's secret, and the output at the input's own
             index pays the lot, all of it, to the destination the lock names.
             No signature: whoever holds the secret can only deliver the lot to
@@ -42,8 +42,12 @@ none of them has a key path:
             buyer's refund address. No signature: the bond pays the claim's
             fee, so a buyer needs no key and no other coin to collect.
             FORFEIT: after the timeout, the receiver's signature.
-  VESTING   (when the sale vests) the destination a lot lock names: the
-            buyer's key, from the vesting time on.
+
+A sale that vests has no SELL leaf and uses no lot lock: every lot leaves
+through RESERVE to the project's Arca wallet, which pays it to the buyer as a
+vesting claim (Arca's `vest-1` leaf, which nobody can move before the vesting
+time), and the receiver settles the payment only once that claim is the
+buyer's (receiver.py).
 
 What each party can and cannot do, all of it consensus:
 
@@ -206,11 +210,6 @@ def build_forfeit_leaf(units, receiver_xonly):
                     + [receiver_xonly] + _O(K.OP_CHECKSIG))
 
 
-def build_vest_leaf(vest_locktime, buyer_xonly):
-    return K.script([int(vest_locktime)] + _O(K.OP_CHECKLOCKTIMEVERIFY, K.OP_DROP)
-                    + [buyer_xonly] + _O(K.OP_CHECKSIG))
-
-
 class Tree:
     """A taproot tree of one, two or three leaves over NUMS. Three leaves sit
     as ((a, b), c)."""
@@ -347,19 +346,6 @@ def _spk(v):
     return b
 
 
-class Vesting:
-    """A destination that pays the buyer's key from `vest_locktime` on."""
-
-    def __init__(self, vest_locktime, buyer_xonly):
-        self.locktime = int(vest_locktime)
-        if not 0 < self.locktime <= 0xffffffff:
-            raise ValueError("the vesting time is a block height or a unix time")
-        self.buyer = _xonly(buyer_xonly, "the buyer key")
-        self.leaf = build_vest_leaf(self.locktime, self.buyer)
-        self.tree = Tree([("vest", self.leaf)])
-        self.script_pubkey = self.tree.script_pubkey
-
-
 def preimage_hash(preimage):
     return hashlib.sha256(bytes(preimage)).digest()
 
@@ -377,7 +363,8 @@ class LightningTerms:
     wallet checks a lock against: the BTC price (`btc_num`/`btc_den`
     satoshis per token atom, rounded up per lot), where the receiver answers,
     the lock's timeout, the bond, the fee the bond may pay on its way back,
-    and a vesting time when the tokens vest.
+    and a vesting time when the tokens vest: a unix time (a median time),
+    because an Arca vesting claim locks to a time, never to a height.
     """
 
     def __init__(self, receiver_xonly, receiver_url, btc_num, btc_den, bond_asset, bond_atoms,
@@ -394,8 +381,8 @@ class LightningTerms:
             raise ValueError("the bond must be larger than the fee it may pay on its way back")
         self.timeout_seconds = timeout_units(timeout_seconds) * SEQUENCE_UNIT_SECONDS
         self.vest_locktime = C._int(vest_locktime or 0, "vest_locktime")
-        if not 0 <= self.vest_locktime <= 0xffffffff:
-            raise ValueError("the vesting time is a block height or a unix time")
+        if not (self.vest_locktime == 0 or 500_000_000 <= self.vest_locktime <= 0xffffffff):
+            raise ValueError("the vesting time is a unix time")
 
     def sats_for(self, token_atoms):
         return -(-int(token_atoms) * self.btc_num // self.btc_den)
@@ -425,16 +412,20 @@ class LightningTerms:
 class LightningCovenant:
     """A Lightning sale as the rest of Levo sees a sale: the ordinary SELL and
     RECLAIM leaves (so a purchase in the sale's asset and the reclaim work as
-    for any sale) beside RESERVE."""
+    for any sale) beside RESERVE. A sale that vests has no SELL leaf
+    (`sell_leaf` is None): a direct purchase would hand over tokens that move
+    at once, so its lots leave only through the receiver."""
 
     capped = False
 
     def __init__(self, terms):
         self.terms = terms
         ln = terms.lightning
+        self.vests = bool(ln.vest_locktime)
         self.sale = LightningSale(terms.token_asset, ln.receiver_xonly, terms.min_lot,
-                                  terms.close_locktime, terms.reclaim_xonly, sell_terms=terms)
-        self.sell_leaf = self.sale.sell_leaf
+                                  terms.close_locktime, terms.reclaim_xonly,
+                                  sell_terms=None if self.vests else terms)
+        self.sell_leaf = getattr(self.sale, "sell_leaf", None)
         self.reclaim_leaf = self.sale.reclaim_leaf
         self.reserve_leaf = self.sale.reserve_leaf
         self.tap = self.sale.tree
@@ -445,6 +436,8 @@ class LightningCovenant:
         return self.script_pubkey.hex()
 
     def sell_witness(self):
+        if self.sell_leaf is None:
+            raise ValueError(NO_DIRECT_PURCHASE)
         return self.tap.witness("sell")
 
     def reclaim_witness(self, project_sig):
@@ -466,15 +459,13 @@ class LightningCovenant:
         return LotLock(self.sale, payment_hash, dest_spk, refund_spk, ln.bond_asset,
                        ln.fee_allowance, ln.timeout_seconds)
 
-    def destination(self, buyer_spk, buyer_xonly=None):
-        """Where a lot goes: the buyer's address, or, when the sale vests, the
-        vesting script for the buyer's key."""
-        vest = self.terms.lightning.vest_locktime
-        if not vest:
-            return bytes.fromhex(buyer_spk) if isinstance(buyer_spk, str) else bytes(buyer_spk)
-        if not buyer_xonly:
-            raise ValueError("this sale vests, so a lot is locked to the buyer's key: name it")
-        return Vesting(vest, buyer_xonly).script_pubkey
+    def destination(self, buyer_spk):
+        """Where a locked lot goes: the buyer's address."""
+        return bytes.fromhex(buyer_spk) if isinstance(buyer_spk, str) else bytes(buyer_spk)
+
+
+NO_DIRECT_PURCHASE = ("this sale vests, so it sells only over Lightning: the project pays each lot "
+                      "to the buyer's wallet, where it cannot move before the vesting date")
 
 
 # --- the transactions --------------------------------------------------------
@@ -524,6 +515,48 @@ def build_reserve(cov, sale_coin, token_atoms, lock, buyer_inputs, change_spk, f
             t.vout.append(TX.TxOut(asset, back, change_spk))
     t.vout.append(TX.TxOut(ln.bond_asset, int(fee_atoms), b""))
     return t, spent, bond_vout
+
+
+def build_stock(cov, sale_coin, token_atoms, to_spk, fee_asset, fee_coin_atoms, own_inputs,
+                change_spk, fee_atoms):
+    """A reservation that pays tokens out of the sale to the project's own
+    wallet (`to_spk`), unsigned: what a vesting sale's receiver pays its
+    vesting lots from. The sale coin at input 0, the receiver's coins after
+    it. Output 0 carries the tokens, output 1 the remainder (when any), then a
+    coin of `fee_coin_atoms` in `fee_asset` to the same wallet (the fee of the
+    board that brings the tokens in), the receiver's change, and the fee.
+    Returns the transaction and the outputs it spends, in input order."""
+    import tx as TX
+    token = cov.terms.token_asset
+    left = int(sale_coin["atoms"]) - int(token_atoms)
+    if int(token_atoms) < cov.terms.min_lot:
+        raise ValueError("a lot is at least the sale's minimum")
+    if left < 0:
+        raise ValueError("the sale holds fewer tokens than that")
+    if 0 < left < cov.terms.min_lot:
+        raise ValueError("that would leave less than the minimum in the sale; take it all")
+    t = TX.Transaction()
+    t.vin.append(TX.TxIn(sale_coin["txid"], sale_coin["vout"]))
+    spent = [(token, int(sale_coin["atoms"]), cov.script_pubkey)]
+    have = 0
+    for c in own_inputs:
+        if c["asset"] != fee_asset:
+            raise ValueError("the receiver's coins must be in the fee asset")
+        t.vin.append(TX.TxIn(c["txid"], c["vout"]))
+        spent.append((c["asset"], int(c["value_atoms"]), bytes.fromhex(c["script_pubkey"])))
+        have += int(c["value_atoms"])
+    need = int(fee_coin_atoms) + int(fee_atoms)
+    if have < need:
+        raise ValueError("the coins given hold %d atoms of the fee asset; %d are needed" % (have, need))
+    t.vout.append(TX.TxOut(token, int(token_atoms), bytes(to_spk)))
+    if left:
+        t.vout.append(TX.TxOut(token, left, cov.script_pubkey))
+    if fee_coin_atoms:
+        t.vout.append(TX.TxOut(fee_asset, int(fee_coin_atoms), bytes(to_spk)))
+    if have - need:
+        t.vout.append(TX.TxOut(fee_asset, have - need, change_spk))
+    t.vout.append(TX.TxOut(fee_asset, int(fee_atoms), b""))
+    return t, spent
 
 
 def build_claim(lock, reserve_txid, lot_vout, lot_atoms, bond_vout, bond_atoms, preimage, fee_atoms):

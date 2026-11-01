@@ -17,6 +17,19 @@ the purchase itself, so a buyer needs nothing but BTC:
      signature: the secret sends the lot to the buyer's address and the pot's
      remainder after its fee to the buyer too. Then it settles the payment.
 
+A sale that vests is delivered another way, so that what the buyer receives
+cannot move before the vesting date: the receiver pays the lot from the
+project's Arca wallet as a vesting claim (Arca's `vest-1` leaf) to the buyer's
+key, and settles only once the operator has released that claim, which from
+then on is the buyer's whatever the receiver does: nobody can move it before
+the vesting date, and only the buyer's key can after it (what nobody takes up
+by the deadline goes back to the project). The tokens reach that wallet from
+the sale itself: when it holds too few for a lot, the receiver moves the lot
+and a little more (the operator's fee) out of the sale to the wallet's own
+address and boards them, and pays the lot once they are in. A payment that
+cannot be backed so is failed back, and whatever was moved stays in the
+wallet for the next lot.
+
 The receiver is never paid without revealing the secret, and the secret alone
 delivers the lot: if it settled without delivering, the buyer, now holding the
 secret, can broadcast the same delivery (levod builds it) before the lock's
@@ -42,6 +55,12 @@ Settings, from the environment:
   LEVO_RECEIVER_INVOICE_EXPIRY   seconds an invoice stays payable (default 600)
   LEVO_RECEIVER_FEE_ATOMS    the fee of a lock and of a delivery, in the bond asset
                              (default: the sale's fee allowance)
+  LEVO_RECEIVER_ARCA         the project's Arca wallet, the `arca` command line with its
+                             directory, e.g. "arca --datadir /var/lib/levo-receiver/arca";
+                             needed only for a sale that vests
+  LEVO_RECEIVER_VEST_DAYS    days after the vesting date a buyer's wallet has to take a
+                             vesting lot up before it goes back to the project (default 30;
+                             the operator takes 7 to 400)
 
 The receiver's own coins, which pay those fees and fund the pots, rest at the
 taproot output of its key; `GET /health` names that address.
@@ -73,6 +92,24 @@ import tx as TX  # noqa: E402
 # A lot is never locked with less than this left between the invoice's expiry
 # and the lock's timeout.
 MIN_MARGIN_SECONDS = 1800
+
+# A vesting lot is paid as a vesting claim only while the vesting date is at
+# least this far ahead (median time): the claim's round must be final before
+# it, and the operator refuses a date that has passed. Past it, a lot is
+# delivered as any lot is, to the buyer's address.
+VEST_MARGIN_SECONDS = 3 * 3600
+
+# How long a paid vesting lot may wait for its tokens to come into the Arca
+# wallet before the payment goes back.
+VEST_PATIENCE_SECONDS = 3 * 3600
+
+# What a top-up moves out of the sale beyond the lot, in parts of the lot: the
+# operator's fee for a distribution is at most a hundredth of what it pays (the
+# wallet's own bound), and what is left stays for the next lot.
+STOCK_MARGIN_DIV = 50
+
+# The receiver's states of a vesting lot after its payment is held.
+VEST_STATES = ("stocking", "boarding", "distributing")
 
 
 class ReceiverError(ValueError):
@@ -112,9 +149,44 @@ class Cln:
         return self.call("holdinvoicecancel", payment_hash=payment_hash)
 
 
+class Arca:
+    """The project's Arca wallet, through the `arca` command line."""
+
+    def __init__(self, command):
+        self.cmd = shlex.split(command)
+
+    def call(self, *args, stdin=None, timeout=900):
+        r = subprocess.run(self.cmd + [str(a) for a in args], input=stdin, capture_output=True,
+                           text=True, timeout=timeout)
+        if r.returncode != 0:
+            raise ReceiverError("the Arca wallet refused %s: %s"
+                                % (args[0], (r.stderr or r.stdout).strip()[-400:]))
+        return json.loads(r.stdout)
+
+    def address(self):
+        return self.call("address")
+
+    def sync(self):
+        return self.call("sync")
+
+    def board(self, asset, atoms, fee_asset):
+        return self.call("board", asset, int(atoms), "--fee-asset", fee_asset)
+
+    def quote(self, asset, key, atoms):
+        return self.call("distribute", "-", "--asset", asset, "--quote",
+                         stdin="%s %d\n" % (key, int(atoms)))
+
+    def distribute(self, asset, key, atoms, vest, days, fee):
+        return self.call("distribute", "-", "--asset", asset, "--vest", int(vest), "--days",
+                         int(days), "--shown", str(fee), stdin="%s %d\n" % (key, int(atoms)))
+
+    def distributions(self):
+        return self.call("distributions")
+
+
 class Receiver:
     def __init__(self, secret, ln, node, sale_of, state_path, slugs=None, invoice_expiry=600,
-                 fee_atoms=None, now=time.time):
+                 fee_atoms=None, now=time.time, arca=None, vest_days=30):
         self.secret = int(secret, 16) if isinstance(secret, str) else int(secret)
         self.xonly = EC.xonly_pubkey(self.secret).hex()
         # The receiver's own coins rest at its key's taproot output, spent by key.
@@ -127,6 +199,10 @@ class Receiver:
         self.invoice_expiry = int(invoice_expiry)
         self.fee_atoms = fee_atoms
         self.now = now
+        self.arca = arca
+        self.vest_days = int(vest_days)
+        if not 7 <= self.vest_days <= 400:
+            raise ReceiverError("a vesting lot's take-up window is 7 to 400 days")
         self.lock = threading.RLock()
         self.lots = {}
         self.sale_coins = {}                 # slug -> the sale coin after this receiver's last lock
@@ -160,13 +236,34 @@ class Receiver:
 
     # --- an order ---------------------------------------------------------
 
-    def invoice(self, slug, token_atoms, dest_spk, refund_spk):
+    def _vests(self, terms):
+        """Whether a lot of this sale is paid as a vesting claim now: the sale
+        vests and its date is still far enough ahead."""
+        v = terms.lightning.vest_locktime
+        if not v:
+            return False
+        tip = self.node.call("getblockchaininfo")
+        return int(tip.get("mediantime", 0)) + VEST_MARGIN_SECONDS < v
+
+    def invoice(self, slug, token_atoms, dest_spk, refund_spk, buyer_key=None):
         terms, cov, _ = self._sale(slug)
         token_atoms = int(token_atoms)
         if token_atoms < terms.min_lot:
             raise ReceiverError("below the sale's minimum")
         L._witness(bytes.fromhex(dest_spk))
         L._witness(bytes.fromhex(refund_spk))
+        vest = None
+        if self._vests(terms):
+            if self.arca is None:
+                raise ReceiverError("this sale vests and this receiver has no Arca wallet to pay "
+                                    "vesting lots from")
+            k = bytes.fromhex(str(buyer_key or ""))
+            if len(k) != 33 or k[0] not in (2, 3):
+                raise ReceiverError("this sale vests: name the buyer's key (a compressed public "
+                                    "key) the lot is paid to")
+            if EC.lift_x(int.from_bytes(k[1:], "big")) is None:
+                raise ReceiverError("the buyer's key is not a public key")
+            vest = terms.lightning.vest_locktime
         sats = terms.lightning.sats_for(token_atoms)
         preimage = secrets.token_bytes(32)
         h = hashlib.sha256(preimage).hexdigest()
@@ -181,6 +278,8 @@ class Receiver:
                "refund_spk": refund_spk, "sats": sats, "bolt11": inv["bolt11"],
                "expires_at": inv["expires_at"], "state": "issued", "preimage": preimage.hex(),
                "created_at": int(self.now())}
+        if vest:
+            rec.update(vest=vest, buyer_key=str(buyer_key).lower())
         with self.lock:
             self.lots[h] = rec
             self._save()
@@ -196,7 +295,8 @@ class Receiver:
             out["held"] = self.ln.held(payment_hash).get("state") == "accepted"
         except Exception:
             pass
-        for k in ("reserve_txid", "bond_vout", "claim_txid", "rerest_txid", "error"):
+        for k in ("reserve_txid", "bond_vout", "claim_txid", "rerest_txid", "stock_txid",
+                  "distribution_id", "vest", "buyer_key", "error"):
             if rec.get(k) is not None:
                 out[k] = rec[k]
         if rec["state"] == "delivered":
@@ -209,8 +309,13 @@ class Receiver:
 
     def poll(self):
         done = []
+        if self.arca is not None and any(r["state"] in VEST_STATES[1:] for r in self.lots.values()):
+            try:
+                self.arca.sync()        # hands over forfeits, brings boards in
+            except Exception as e:
+                sys.stderr.write("receiver: the Arca wallet's sync failed: %s\n" % e)
         for h, rec in list(self.lots.items()):
-            if rec["state"] not in ("issued", "reserved"):
+            if rec["state"] not in ("issued", "reserved") + VEST_STATES:
                 continue
             try:
                 r = self._follow(h, rec)
@@ -225,9 +330,13 @@ class Receiver:
     def _follow(self, h, rec):
         held = self.ln.held(h)
         hstate = held.get("state")
+        if rec["state"] in VEST_STATES:
+            return self._follow_vest(h, rec, hstate)
         if rec["state"] == "issued":
             if hstate == "accepted" and int(held.get("received_msat") or 0) >= rec["sats"] * 1000:
                 try:
+                    if rec.get("vest"):
+                        return self._vest_begin(h, rec)
                     self._reserve(h, rec)
                 except Exception as e:
                     # A payment the receiver cannot back with a lock goes back.
@@ -301,6 +410,118 @@ class Receiver:
         self.sale_coins[rec["slug"]] = {"txid": txid, "vout": 1, "atoms": left} if left else None
         self.spent_own.update((c["txid"], c["vout"]) for c in own)
         rec.update(state="reserved", reserve_txid=txid, bond_vout=bond_vout)
+
+    # --- a vesting lot ------------------------------------------------------
+
+    def _fail_back(self, h, rec, why):
+        try:
+            self.ln.cancel(h)
+        except Exception:
+            pass
+        rec.update(state="cancelled", error=str(why)[:300])
+        return ("cancelled", h, str(why)[:120])
+
+    def _vest_begin(self, h, rec):
+        """A vesting lot's payment is held: pay the lot from the Arca wallet
+        when it holds enough, else move it there from the sale first."""
+        terms, cov, funding = self._sale(rec["slug"])
+        rec["paid_at"] = int(self.now())
+        try:
+            q = self.arca.quote(terms.token_asset, rec["buyer_key"], rec["token_atoms"])
+        except ReceiverError:
+            q = None
+        try:
+            if q is not None:
+                return self._distribute(h, rec, terms, q)
+            self._stock(h, rec, terms, cov, funding)
+        except Exception as e:
+            return self._fail_back(h, rec, e)
+        return ("stocking", h, rec["stock_txid"])
+
+    def _stock(self, h, rec, terms, cov, funding):
+        """Move the lot and its fee's margin out of the sale to the Arca
+        wallet's own address, with a coin for the board's fee."""
+        ln = terms.lightning
+        fee = self._fee(terms)
+        coin = self._sale_coin(rec["slug"], cov, funding)
+        lot = rec["token_atoms"]
+        need = lot + -(-lot // STOCK_MARGIN_DIV)
+        have = int(coin["atoms"])
+        if have < lot:
+            raise ReceiverError("the sale holds fewer tokens than this lot")
+        if have - need < terms.min_lot:
+            need = have                      # take it all rather than leave less than a lot
+        to = self.arca.address()
+        to_spk = bytes.fromhex(to["script_pubkey"])
+        own = self._own_coins(ln.bond_asset, ln.bond_atoms + fee)
+        t, spent = L.build_stock(cov, coin, need, to_spk, ln.bond_asset, ln.bond_atoms, own,
+                                 self.own_spk, fee)
+        genesis = self.node.call("getblockhash", 0)
+        sig = EC.schnorr_sign(TX.taproot_sighash(t, spent, 0, genesis, leaf_script=cov.reserve_leaf),
+                              self.secret)
+        t.vin[0].witness = cov.reserve_witness(sig)
+        for i in range(1, len(t.vin)):
+            t.vin[i].witness = [EC.schnorr_sign(TX.taproot_sighash(t, spent, i, genesis), self.secret)]
+        txid = self.node.call("sendrawtransaction", t.hex())
+        left = have - need
+        self.sale_coins[rec["slug"]] = {"txid": txid, "vout": 1, "atoms": left} if left else None
+        self.spent_own.update((c["txid"], c["vout"]) for c in own)
+        rec.update(state="stocking", stock_txid=txid, stock_atoms=need)
+
+    def _distribute(self, h, rec, terms, quote):
+        d = self.arca.distribute(terms.token_asset, rec["buyer_key"], rec["token_atoms"],
+                                 rec["vest"], self.vest_days, quote["fee"])
+        rec.update(state="distributing", distribution_id=d["distribution"])
+        return ("distributing", h, d["distribution"])
+
+    def _follow_vest(self, h, rec, hstate):
+        terms, cov, _ = self._sale(rec["slug"])
+        if rec["state"] != "distributing" and hstate != "accepted":
+            # The payment went away before the lot was paid: nothing is owed.
+            # What came into the Arca wallet stays there for the next lot.
+            rec.update(state="cancelled", error="the payment went away before the lot was paid")
+            return ("cancelled", h, None)
+        if rec["state"] == "stocking":
+            out = self.node.txout(rec["stock_txid"], 0)
+            if out is None or int(out.get("confirmations") or 0) < 1:
+                return self._patience(h, rec)
+            try:
+                self.arca.board(terms.token_asset, rec["stock_atoms"], terms.lightning.bond_asset)
+            except Exception as e:
+                return self._fail_back(h, rec, e)
+            rec["state"] = "boarding"
+            return ("boarding", h, None)
+        if rec["state"] == "boarding":
+            try:
+                q = self.arca.quote(terms.token_asset, rec["buyer_key"], rec["token_atoms"])
+            except ReceiverError:
+                return self._patience(h, rec)     # not in yet
+            try:
+                return self._distribute(h, rec, terms, q)
+            except Exception as e:
+                return self._fail_back(h, rec, e)
+        # distributing: settle once the operator has released the buyer's claim.
+        mine = None
+        for d in self.arca.distributions():
+            if d.get("distribution_id") == rec["distribution_id"]:
+                mine = d
+        if mine is None or mine.get("error"):
+            return None
+        states = [c.get("state") for c in mine.get("claims") or []]
+        if not states or any(s not in ("vesting", "open", "claimed") for s in states):
+            return None
+        if hstate == "accepted":
+            self.ln.settle(h, rec["preimage"])
+            rec["state"] = "delivered"
+            return ("delivered", h, rec["distribution_id"])
+        rec.update(state="delivered", error="the payment went away after the lot was paid")
+        return ("delivered", h, rec["distribution_id"])
+
+    def _patience(self, h, rec):
+        if self.now() - int(rec.get("paid_at") or self.now()) > VEST_PATIENCE_SECONDS:
+            return self._fail_back(h, rec, "the tokens did not come into the project's Arca wallet "
+                                           "in time")
+        return None
 
     def _sale_coin(self, slug, cov, funding):
         """The coin the sale's tokens rest at now: the one this receiver's last
@@ -399,7 +620,8 @@ def make_handler(rcv, hrp="tb"):
                 b = self._body()
                 if self.path == "/invoice":
                     return self._send(200, rcv.invoice(b["slug"], b["token_atoms"], b["dest_spk"],
-                                                       b.get("refund_spk") or b["dest_spk"]))
+                                                       b.get("refund_spk") or b["dest_spk"],
+                                                       b.get("buyer_key")))
                 return self._send(404, {"error": "no such path"})
             except (ReceiverError, ValueError, KeyError) as e:
                 return self._send(400, {"error": str(e)})
@@ -418,11 +640,13 @@ def main():
     hrp = env.get("LEVO_RECEIVER_HRP", "tb")
     slugs = [s.strip() for s in env.get("LEVO_RECEIVER_SLUGS", "").split(",") if s.strip()] or None
     fee = env.get("LEVO_RECEIVER_FEE_ATOMS")
+    arca = Arca(env["LEVO_RECEIVER_ARCA"]) if env.get("LEVO_RECEIVER_ARCA") else None
     rcv = Receiver(secret, Cln(env["LEVO_RECEIVER_LIGHTNING"]), node,
                    _levod_sales(env["LEVO_RECEIVER_LEVO"].rstrip("/")),
                    env.get("LEVO_RECEIVER_STATE", "receiver-state.json"), slugs,
                    int(env.get("LEVO_RECEIVER_INVOICE_EXPIRY", "600")),
-                   int(fee) if fee else None)
+                   int(fee) if fee else None, arca=arca,
+                   vest_days=int(env.get("LEVO_RECEIVER_VEST_DAYS", "30")))
 
     def loop():
         while True:

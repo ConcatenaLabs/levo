@@ -39,9 +39,6 @@ def test_frozen_addresses(t):
     t.eq(lock.bond.script_pubkey.hex(),
          "51209928e8a55b167fb431e02a017c870a071f9641efac33219c7eaf23844d58d184",
          "the bond lock is unchanged")
-    t.eq(L.Vesting(1_900_000_000, B).script_pubkey.hex(),
-         "51201f3cfda141f7940e8fd6427976d788c2c825b979faf01e68979b964d310444c1",
-         "the vesting destination is unchanged")
 
 
 def test_sell_leaf_is_the_covenants(t):
@@ -50,6 +47,34 @@ def test_sell_leaf_is_the_covenants(t):
     t.eq(s.sell_leaf, C.SaleCovenant(terms).sell_leaf,
          "the direct-settlement leaf is the ordinary sale's SELL leaf, byte for byte")
     t.ok(s.spk_hex != _sale().spk_hex, "and adding it gives a different address")
+
+
+def _ln_terms(vest):
+    ln = {"receiver_xonly": R.hex(), "receiver_url": "http://127.0.0.1:8098", "btc_num": 1,
+          "btc_den": 1, "bond_asset": "bb" * 32, "bond_atoms": 20000, "fee_allowance": 10000,
+          "vest_locktime": vest}
+    return C.SaleTerms("aa" * 32, "bb" * 32, 1, 4, "11" * 32, 100000, 1_000_000, RECLAIM.hex(),
+                       lightning=ln)
+
+
+def test_a_vesting_sale_has_no_sell_leaf(t):
+    vesting = C.derive(_ln_terms(1_900_000_000))
+    plain = C.derive(_ln_terms(0))
+    t.eq(vesting.sell_leaf, None, "a sale that vests has no SELL leaf")
+    t.eq(vesting.spk_hex, _sale().spk_hex,
+         "its address is RESERVE and RECLAIM alone, the frozen address above")
+    t.eq(plain.spk_hex, _sale(sell_terms=_ln_terms(0)).spk_hex,
+         "a sale that does not vest keeps its SELL leaf")
+    try:
+        vesting.sell_witness()
+        t.ok(False, "a direct purchase of a vesting sale is refused")
+    except ValueError as e:
+        t.ok("vests" in str(e), "a direct purchase of a vesting sale is refused")
+    try:
+        _ln_terms(800_000)
+        t.ok(False, "a vesting height is refused")
+    except ValueError:
+        t.ok(True, "a vesting time given as a block height is refused")
 
 
 def test_refusals(t):

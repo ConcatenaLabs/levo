@@ -201,3 +201,12 @@ export function tierSays(tier, paymentLabel, paymentDecimals = 8) {
   if (tier.may_list) lines.push('May list a project.')
   return lines.join(' ')
 }
+
+// Whether a Lightning sale's vesting date is still ahead by more than the
+// receiver's margin (three hours): its lots are then paid into the wallet the
+// buyer signed in with, where they cannot move before that date, rather than
+// to an address.
+export function vestsAhead(terms, now = Date.now()) {
+  const v = Number(((terms && terms.lightning) || {}).vest_locktime || 0)
+  return v > 0 && v * 1000 > now + 3 * 3600 * 1000
+}

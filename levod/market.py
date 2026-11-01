@@ -23,6 +23,7 @@ import time
 from urllib.parse import urlparse
 
 import address as ADDR
+import auth as AUTH
 import capped as CAP
 import covenant as C
 import leaves as LV
@@ -38,6 +39,13 @@ def _log_error(message):
     """One line per line, with the syslog priority systemd reads."""
     for line in str(message).rstrip().splitlines() or [""]:
         sys.stderr.write("<3>levod %s\n" % line)
+
+
+def _direct_purchase_allowed(sale):
+    """A sale that vests sells only through its receiver: its address has no
+    SELL leaf, so a direct purchase would build a spend the chain refuses."""
+    if not getattr(sale, "capped", False) and getattr(sale.cov, "sell_leaf", 1) is None:
+        raise PlatformError(LN.NO_DIRECT_PURCHASE)
 
 
 class PlatformError(ValueError):
@@ -1135,6 +1143,7 @@ class Platform:
         p = self._project(slug)
         if p.sale is None:
             raise PlatformError("this project has no sale")
+        _direct_purchase_allowed(p.sale)
         standing = self.stake.standing(account)
         tier = self.tier_for(p.sale, self.stake.policy.for_stake(standing["stake_atoms"]))
         height = self.height(strict=p.sale.close_is_height())
@@ -1268,13 +1277,31 @@ class Platform:
         code = str(body.get("token_address") or "")
         if code.lower().startswith("bitcoin:"):
             body = dict(body, token_address=code.split(":", 1)[1].split("?", 1)[0])
+        # A sale that vests pays each lot into the buyer's wallet as a holding
+        # that cannot move before the vesting date, named by the buyer's key:
+        # the key named, or else the one the buyer signed in with, which is a
+        # key of the wallet that signed (each of our wallets looks up what is
+        # paid to the keys it signs with). Its address is where a lot goes if
+        # the vesting date has passed by the time the payment arrives.
+        buyer_key = None
+        if ln.vest_locktime:
+            buyer_key = str(body.get("buyer_key") or account or "").lower()
+            if len(buyer_key) != 66 or buyer_key[:2] not in ("02", "03"):
+                raise PlatformError("this sale vests, so its tokens are paid to a key of your "
+                                    "wallet: sign in with the wallet that receives them")
+            try:
+                bytes.fromhex(buyer_key)
+            except ValueError:
+                raise PlatformError("the buyer key is not hex")
+            if not (body.get("token_address") or body.get("token_script_pubkey")):
+                body = dict(body, token_script_pubkey="0014" + AUTH.hash160(bytes.fromhex(buyer_key)).hex())
         buyer_spk = self._spk(body, "token_script_pubkey", "token_address", "where your tokens go")
-        try:
-            dest = sale.cov.destination(buyer_spk, body.get("buyer_key"))
-        except ValueError as e:
-            raise PlatformError(str(e))
-        inv = self._receiver(ln, "/invoice", {"slug": slug, "token_atoms": plan.token_atoms,
-                                               "dest_spk": dest.hex(), "refund_spk": buyer_spk})
+        dest = sale.cov.destination(buyer_spk)
+        req = {"slug": slug, "token_atoms": plan.token_atoms, "dest_spk": dest.hex(),
+               "refund_spk": buyer_spk}
+        if buyer_key:
+            req["buyer_key"] = buyer_key
+        inv = self._receiver(ln, "/invoice", req)
         sats = ln.sats_for(plan.token_atoms)
         if int(inv.get("amount_msat") or 0) != sats * 1000:
             raise PlatformError("the receiver's invoice is not for the published BTC price "
@@ -1284,19 +1311,23 @@ class Platform:
         lot = {"payment_hash": h, "account": account, "token_atoms": plan.token_atoms,
                "sats": sats, "bolt11": inv.get("bolt11"), "expires_at": inv.get("expires_at"),
                "dest_spk": dest.hex(), "refund_spk": buyer_spk, "created_at": int(time.time())}
+        if buyer_key:
+            lot["buyer_key"] = buyer_key
         with self.lock:
             sale.lots = (getattr(sale, "lots", []) + [lot])[-S.MAX_BUILDS:]
             self.save()
         return {"lot": self._lot_json(sale, lot),
                 "next": "pay the invoice from any Lightning wallet; the tokens are delivered "
-                        "to your address, and until they are, nobody has your BTC"}
+                        + ("to your wallet, where they cannot move before the vesting date"
+                           if buyer_key else "to your address")
+                        + ", and until they are, nobody has your BTC"}
 
     def _lot_json(self, sale, lot):
         ln = sale.terms.lightning
         out = {"payment_hash": lot["payment_hash"], "token_atoms": S.atoms_out(lot["token_atoms"]),
                "sats": lot["sats"], "bolt11": lot["bolt11"], "invoice_expires_at": lot["expires_at"],
                "lock_timeout_seconds": ln.timeout_seconds, "vest_locktime": ln.vest_locktime or None}
-        for k in ("reserve_txid", "claim_txid", "rerest_txid"):
+        for k in ("reserve_txid", "claim_txid", "rerest_txid", "distribution_id", "buyer_key"):
             if lot.get(k):
                 out[k] = lot[k]
         return out
@@ -1310,7 +1341,8 @@ class Platform:
         raise PlatformError("no such order on this sale")
 
     # The receiver's states, in the words a buyer reads.
-    LIGHTNING_STATES = {"issued": "awaiting_payment", "reserved": "paid", "delivered": "delivered",
+    LIGHTNING_STATES = {"issued": "awaiting_payment", "reserved": "paid", "stocking": "paid",
+                        "boarding": "paid", "distributing": "paid", "delivered": "delivered",
                         "returned": "returned", "expired": "expired", "cancelled": "refunded"}
 
     def lightning_status(self, slug, payment_hash):
@@ -1323,7 +1355,7 @@ class Platform:
         if state == "awaiting_payment" and rs.get("held"):
             state = "paid"
         changed = False
-        for k in ("reserve_txid", "bond_vout", "claim_txid", "rerest_txid"):
+        for k in ("reserve_txid", "bond_vout", "claim_txid", "rerest_txid", "distribution_id"):
             if rs.get(k) is not None and lot.get(k) != rs[k]:
                 lot[k] = rs[k]
                 changed = True
@@ -1358,6 +1390,7 @@ class Platform:
         p = self._project(slug)
         if p.sale is None or not p.sale.funding:
             raise PlatformError("this sale is not funded")
+        _direct_purchase_allowed(p.sale)
         if not isinstance(buyer, dict):
             raise PlatformError("buyer must be an object")
         standing = self.stake.standing(account)
@@ -2582,7 +2615,7 @@ class Platform:
                 "script_pubkey": p.sale.script_pubkey,
                 "internal_key": "NUMS -- there is no key path, so the project "
                                 "cannot spend the sale out from under buyers",
-                "sell_leaf": p.sale.cov.sell_leaf.hex(),
+                "sell_leaf": p.sale.cov.sell_leaf.hex() if p.sale.cov.sell_leaf else None,
                 "reclaim_leaf": p.sale.cov.reclaim_leaf.hex(),
             } if not p.sale.capped else {
                 "how": "rebuild the capped sale's address from these terms, its allocation list "

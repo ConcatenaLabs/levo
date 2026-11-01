@@ -184,8 +184,14 @@ function BuyPanel({ project, onBought }) {
           {project.sale && project.sale.terms.lightning && (
             <LightningBuy project={project} onSettled={onBought} />
           )}
-          <BuyFlow project={project} tier={tier} onSettled={onBought} />
-          <LeafBuy project={project} onTaken={onBought} />
+          {/* A sale that vests sells only over Lightning: its address has no
+              direct purchase, which would hand over tokens that move at once. */}
+          {!(project.sale && project.sale.terms.lightning && project.sale.terms.lightning.vest_locktime) && (
+            <>
+              <BuyFlow project={project} tier={tier} onSettled={onBought} />
+              <LeafBuy project={project} onTaken={onBought} />
+            </>
+          )}
         </>
       )}
     </div>
