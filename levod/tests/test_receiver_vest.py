@@ -97,12 +97,13 @@ class Arca:
     claims are each at least the smallest leaf, and the coins it spends leave
     no change below it (this wallet spends whole coins, in the order held)."""
 
-    def __init__(self, min_leaf=1000, fee=1000):
+    def __init__(self, min_leaf=1000, fee=1000, margins=0):
         self.coins_held = []
         self.calls = []
         self.claim_state = "pending"
         self.min_leaf = min_leaf
         self.fee = fee
+        self.margins = margins
 
     def address(self):
         return {"address": "tb1q", "script_pubkey": ARCA_SPK, "key": "55" * 32}
@@ -126,31 +127,46 @@ class Arca:
         self.coins_held.append(atoms)
         return {}
 
-    def _check(self, claims):
+    def _check(self, claims, distributing=False):
+        """As the wallet library (bark::arca claim.rs and pay.rs): every claim
+        at least the smallest leaf; one coin of exactly the claims and the fee
+        is given up as it is; otherwise the wallet first pays itself such a
+        coin out of round, which a quote only checks the live coins cover, and
+        a distribution pays from its coins in order, leaving margins for its
+        own fees out of the asset and no change below the smallest leaf."""
         if not self.coins_held:
             raise RCV.ReceiverError("the wallet holds no live coin of asset %s" % TOKEN)
         for k, v in claims:
             if v < self.min_leaf:
                 raise RCV.ReceiverError("a claim of %d is below the operator's smallest leaf" % v)
-        total = sum(v for _, v in claims)
-        fee = self.fee
-        held = 0
+        paid = sum(v for _, v in claims) + self.fee
+        if paid in self.coins_held:
+            return self.fee
+        live = sum(self.coins_held)
+        if live < paid:
+            raise RCV.ReceiverError("the wallet's live coins hold %d, and the claims and the fee take %d" % (live, paid))
+        if not distributing:
+            return self.fee
+        kept = 0
         for c in self.coins_held:
-            held += c
-            if held >= total + fee:
-                break
-        if held < total + fee:
-            raise RCV.ReceiverError("too little")
-        if 0 < held - total - fee < self.min_leaf:
+            kept += c
+            if kept >= paid + self.margins:
+                change = kept - paid - self.margins
+                if 0 < change < self.min_leaf:
+                    continue
+                return self.fee
+        if kept >= paid + self.margins:
             raise RCV.ReceiverError("the change would be below the operator's smallest leaf")
-        return fee
+        raise RCV.ReceiverError("the Arca wallet refused distribute: arca: refused: the wallet holds %d of asset %s in "
+                                "live coins, and paying %d takes %d with the margins its transactions leave for "
+                                "their fees" % (live, TOKEN, paid, paid + self.margins))
 
     def quote(self, asset, claims):
         self.calls.append(("quote", tuple(claims)))
         return {"fee": str(self._check(claims))}
 
     def distribute(self, asset, claims, vest, days, fee):
-        assert int(fee) == self._check(claims)
+        assert int(fee) == self._check(claims, distributing=True)
         self.calls.append(("distribute", asset, tuple(claims), vest, days, fee))
         return {"distribution": "d1"}
 
@@ -273,7 +289,7 @@ def test_a_leftover_coin_that_would_leave_change_below_a_leaf(t):
     # The live case: the wallet holds 10.2 tokens from a lot of 10 whose payment
     # went back, the smallest leaf is 0.01 token, and no fee: paying 10 from it
     # would leave 0.2 tokens of change, which the operator refuses.
-    arca = Arca(min_leaf=1_000_000, fee=0)
+    arca = Arca(min_leaf=1_000_000, fee=0, margins=720)
     arca.coins_held = [10_200_000]
     r, node, ln, arca = make(arca=arca, sale_atoms=100_000_000)
     h = r.invoice("s", 10_000_000, "0014" + "66" * 20, "0014" + "66" * 20, BUYER)["payment_hash"]
@@ -287,5 +303,6 @@ def test_a_leftover_coin_that_would_leave_change_below_a_leaf(t):
     out = r.poll()
     t.eq(out[0][0], "distributing", "then the lot is paid")
     d = [c for c in arca.calls if c[0] == "distribute"][-1]
-    t.eq(d[2], ((BUYER, 10_000_000), ("55" * 32, 11_400_000)),
-         "spending both coins whole: the lot to the buyer, the rest to the project")
+    t.eq(d[2], ((BUYER, 10_000_000), ("55" * 32, 11_400_000 - 720)),
+         "both coins spent: the lot to the buyer, the rest to the project less the margins of "
+         "the wallet's payment to itself (the live refusal: paying 21400000 takes 21400720)")
