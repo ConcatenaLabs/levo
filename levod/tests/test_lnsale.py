@@ -104,3 +104,18 @@ def test_timeouts(t):
     t.eq(L.timeout_units(512), 1, "512 s is one unit")
     t.eq(L.timeout_units(513), 2, "and a second more rounds up")
     t.eq(L.csv_value(85), (1 << 22) | 85, "a time-based relative lock sets bit 22")
+
+
+def test_a_vesting_date_at_most_27_days_ahead(t):
+    # arca#577: older wallets leave an allocation stuck when it is taken up more
+    # than 28 days after its round. Remove with that fix.
+    now = 1_800_000_000
+    L.check_vest_horizon(0, now)
+    L.check_vest_horizon(now + 27 * 86400, now)
+    t.ok(True, "no vesting, and a date exactly 27 days ahead, pass")
+    try:
+        L.check_vest_horizon(now + 27 * 86400 + 1, now)
+        t.ok(False, "a date more than 27 days ahead is refused")
+    except ValueError as e:
+        t.ok("27 days" in str(e) and "updated" in str(e),
+             "a date more than 27 days ahead is refused, saying why and when it lifts")

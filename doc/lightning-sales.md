@@ -77,6 +77,13 @@ after the vesting date, 30 by default) goes back to the project, as every
 Arca claim's lapse does. Within three hours of the vesting date, a lot is
 delivered as in any sale, to the buyer's address.
 
+For now a sale can vest at most 27 days ahead: Levo refuses to list a later
+date, and the receiver refuses to pay a lot that vests later. Wallets released
+before that was fixed (Ambra mobile 0.17.17 to 0.17.21, Ambra browser 0.5.82
+to 0.5.86) leave an allocation stuck when they take it up more than 28 days
+after the round that paid it (ConcatenaLabs/arca#577); the limit goes once
+those are gone.
+
 A sale that vests has no SELL leaf, so it sells only this way: a direct
 purchase would hand over tokens that move at once. The receiver's Arca wallet
 must be joined to an operator that serves the sale's token and builds batches
@@ -94,7 +101,7 @@ A Lightning sale is an ordinary listing whose terms add `lightning`:
 | `bond_asset`, `bond_atoms` | The fee pot each lock carries, in an asset nodes take fees in. The receiver funds it; what the delivery's fee leaves goes to the buyer, so keep it just above the allowance. |
 | `fee_allowance` | The most the pot may pay as the delivery's fee. |
 | `timeout_seconds` | How long a locked lot waits for its delivery before it may go back to the sale (default six hours). |
-| `vest_locktime` | Optional, a unix time: the tokens cannot move before it (see [A sale that vests](#a-sale-that-vests)). |
+| `vest_locktime` | Optional, a unix time at most 27 days ahead: the tokens cannot move before it (see [A sale that vests](#a-sale-that-vests)). |
 
 The rest of the terms are the ordinary sale's, so the same address also sells
 directly in the asset the sale settles in, through the SELL leaf, unless the

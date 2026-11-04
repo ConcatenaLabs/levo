@@ -870,6 +870,11 @@ class Platform:
         # listing one is always a mistake. The close is an absolute locktime:
         # below 500000000 it is a HEIGHT and above it a unix time, and both need
         # checking against the right clock.
+        if terms.lightning is not None:
+            try:
+                LN.check_vest_horizon(terms.lightning.vest_locktime, time.time())
+            except ValueError as e:
+                raise PlatformError(str(e))
         if terms.close_locktime >= 500_000_000:
             if terms.close_locktime <= time.time():
                 raise PlatformError("the sale's close time is already in the past")
