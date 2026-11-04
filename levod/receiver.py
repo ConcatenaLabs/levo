@@ -284,6 +284,11 @@ class Receiver:
                                     "key) the lot is paid to")
             if EC.lift_x(int.from_bytes(k[1:], "big")) is None:
                 raise ReceiverError("the buyer's key is not a public key")
+            try:
+                L.check_vest_horizon(terms.lightning.vest_locktime,
+                                     self.node.call("getblockchaininfo").get("mediantime", 0))
+            except ValueError as e:
+                raise ReceiverError(str(e))
             vest = terms.lightning.vest_locktime
         sats = terms.lightning.sats_for(token_atoms)
         preimage = secrets.token_bytes(32)

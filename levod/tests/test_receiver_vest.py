@@ -27,7 +27,7 @@ RECLAIM = EC.xonly_pubkey(int("22" * 32, 16))
 TOKEN, BOND = "aa" * 32, "bb" * 32
 BUYER = "02" + EC.xonly_pubkey(int("33" * 32, 16)).hex()
 NOW = 1_800_000_000
-VEST = NOW + 30 * 86400
+VEST = NOW + 20 * 86400
 ARCA_SPK = "0014" + "55" * 20
 
 
@@ -306,3 +306,13 @@ def test_a_leftover_coin_that_would_leave_change_below_a_leaf(t):
     t.eq(d[2], ((BUYER, 10_000_000), ("55" * 32, 11_400_000 - 720)),
          "both coins spent: the lot to the buyer, the rest to the project less the margins of "
          "the wallet's payment to itself (the live refusal: paying 21400000 takes 21400720)")
+
+
+def test_a_vesting_date_more_than_27_days_ahead_is_not_paid(t):
+    # arca#577: remove with that fix.
+    r, *_ = make(terms(vest=NOW + 27 * 86400 + 60))
+    try:
+        order(r)
+        t.ok(False, "the receiver refuses to pay a lot vesting more than 27 days ahead")
+    except RCV.ReceiverError as e:
+        t.ok("27 days" in str(e), "the receiver refuses to pay a lot vesting more than 27 days ahead")

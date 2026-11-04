@@ -464,6 +464,25 @@ class LightningCovenant:
         return bytes.fromhex(buyer_spk) if isinstance(buyer_spk, str) else bytes(buyer_spk)
 
 
+# The furthest ahead a sale's vesting date may be, from now. Wallets released
+# before arca#577 was fixed (Ambra mobile 0.17.17 to 0.17.21, Ambra browser
+# 0.5.82 to 0.5.86) leave a vesting allocation stuck when they take it up more
+# than 28 days after the round that paid it, so Levo makes no vesting payout
+# whose date is further ahead than that. Remove this limit with arca#577's fix,
+# once those versions are gone.
+MAX_VEST_AHEAD_SECONDS = 27 * 86400
+
+VEST_TOO_FAR = ("for now a sale can vest at most 27 days ahead: some wallets in use cannot yet take "
+                "up an allocation that vests later. The limit goes once they are updated")
+
+
+def check_vest_horizon(vest_locktime, now):
+    """Refuses a vesting date more than MAX_VEST_AHEAD_SECONDS after `now`
+    (unix seconds), with a sentence that says why (arca#577)."""
+    if vest_locktime and int(vest_locktime) > int(now) + MAX_VEST_AHEAD_SECONDS:
+        raise ValueError(VEST_TOO_FAR)
+
+
 NO_DIRECT_PURCHASE = ("this sale vests, so it sells only over Lightning: the project pays each lot "
                       "to the buyer's wallet, where it cannot move before the vesting date")
 
